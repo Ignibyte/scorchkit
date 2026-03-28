@@ -1,0 +1,49 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /srv/stacks/scorchkit/.claude/hooks/enforce-agent-scope.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash /srv/stacks/scorchkit/.claude/hooks/enforce-docs-before-code.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /srv/stacks/scorchkit/.claude/hooks/enforce-completion.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash /srv/stacks/scorchkit/.claude/hooks/enforce-quality.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash /srv/stacks/scorchkit/.claude/hooks/enforce-sast.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash /srv/stacks/scorchkit/.claude/hooks/enforce-tests-ran.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash /srv/stacks/scorchkit/.claude/hooks/enforce-pipeline-completion.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash /srv/stacks/scorchkit/.claude/hooks/enforce-pipeline-checklist.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

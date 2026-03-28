@@ -1,0 +1,281 @@
+use std::path::PathBuf;
+
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{generate, Shell};
+
+/// `ScorchKit` - Web Application Security Testing Toolkit
+#[derive(Parser, Debug)]
+#[command(name = "scorchkit", version, about, long_about = None)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+
+    /// Path to configuration file
+    #[arg(short, long, global = true)]
+    pub config: Option<PathBuf>,
+
+    /// Increase verbosity (-v, -vv, -vvv)
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
+    /// Suppress all output except findings
+    #[arg(short, long, global = true)]
+    pub quiet: bool,
+
+    /// Output format override
+    #[arg(short, long, global = true)]
+    pub output: Option<OutputFormat>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Run all default scans against a target
+    Run {
+        /// Target URL, domain, or IP
+        target: String,
+
+        /// Specific modules to run (comma-separated)
+        #[arg(short, long)]
+        modules: Option<String>,
+
+        /// Modules to skip (comma-separated)
+        #[arg(long)]
+        skip: Option<String>,
+
+        /// Run AI analysis after scan completes
+        #[arg(long)]
+        analyze: bool,
+
+        /// Scan profile: quick, standard, thorough
+        #[arg(long, default_value = "standard")]
+        profile: String,
+
+        /// HTTP proxy URL (e.g., `http://127.0.0.1:8080` for Burp Suite)
+        #[arg(long)]
+        proxy: Option<String>,
+
+        /// Restrict scope to URLs matching pattern (e.g., "*.example.com")
+        #[arg(long)]
+        scope: Option<String>,
+
+        /// Exclude URLs matching pattern from scanning
+        #[arg(long)]
+        exclude: Option<String>,
+
+        /// Associate scan with a project and persist results to the database
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Database URL override (takes precedence over config and `DATABASE_URL` env)
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+
+    /// Run reconnaissance modules only
+    Recon {
+        /// Target URL, domain, or IP
+        target: String,
+
+        /// Specific recon modules to run
+        #[arg(short, long)]
+        modules: Option<String>,
+    },
+
+    /// Run vulnerability scanner modules only
+    Scan {
+        /// Target URL, domain, or IP
+        target: String,
+
+        /// Specific scanner modules to run
+        #[arg(short, long)]
+        modules: Option<String>,
+    },
+
+    /// Run AI analysis on a previous scan report
+    Analyze {
+        /// Path to a JSON report file from a previous scan
+        report: PathBuf,
+
+        /// Analysis focus: summary, prioritize, remediate, filter
+        #[arg(short, long, default_value = "summary")]
+        focus: String,
+    },
+
+    /// Compare two scan reports
+    Diff {
+        /// Path to the baseline (older) scan report
+        baseline: PathBuf,
+        /// Path to the current (newer) scan report
+        current: PathBuf,
+    },
+
+    /// List available modules and their status
+    Modules {
+        /// Check which external tools are installed
+        #[arg(long)]
+        check_tools: bool,
+    },
+
+    /// Initialize a default config file
+    Init,
+
+    /// Check external tool installation status
+    Doctor,
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+
+    /// Manage the database schema
+    #[cfg(feature = "storage")]
+    Db {
+        #[command(subcommand)]
+        command: DbCommands,
+    },
+
+    /// Manage security assessment projects
+    #[cfg(feature = "storage")]
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommands,
+    },
+
+    /// Query and manage tracked vulnerability findings
+    #[cfg(feature = "storage")]
+    Finding {
+        #[command(subcommand)]
+        command: FindingCommands,
+    },
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum OutputFormat {
+    Terminal,
+    Json,
+    Html,
+    Sarif,
+}
+
+/// Database management subcommands.
+#[cfg(feature = "storage")]
+#[derive(Subcommand, Debug)]
+pub enum DbCommands {
+    /// Run pending database migrations
+    Migrate,
+}
+
+/// Project management subcommands.
+#[cfg(feature = "storage")]
+#[derive(Subcommand, Debug)]
+pub enum ProjectCommands {
+    /// Create a new project
+    Create {
+        /// Project name (must be unique)
+        name: String,
+
+        /// Optional project description
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+
+    /// List all projects
+    List,
+
+    /// Show project details
+    Show {
+        /// Project name or UUID
+        project: String,
+    },
+
+    /// Delete a project and all associated data
+    Delete {
+        /// Project name or UUID
+        project: String,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Manage project targets
+    Target {
+        #[command(subcommand)]
+        command: TargetCommands,
+    },
+}
+
+/// Target management subcommands.
+#[cfg(feature = "storage")]
+#[derive(Subcommand, Debug)]
+pub enum TargetCommands {
+    /// Add a target URL to a project
+    Add {
+        /// Project name
+        project: String,
+
+        /// Target URL
+        url: String,
+
+        /// Optional human-readable label
+        #[arg(short, long)]
+        label: Option<String>,
+    },
+
+    /// Remove a target from a project
+    Remove {
+        /// Project name
+        project: String,
+
+        /// Target UUID to remove
+        id: String,
+    },
+
+    /// List all targets for a project
+    List {
+        /// Project name
+        project: String,
+    },
+}
+
+/// Finding management subcommands.
+#[cfg(feature = "storage")]
+#[derive(Subcommand, Debug)]
+pub enum FindingCommands {
+    /// List findings for a project
+    List {
+        /// Project name
+        project: String,
+
+        /// Filter by severity (critical, high, medium, low, info)
+        #[arg(short, long)]
+        severity: Option<String>,
+
+        /// Filter by status (new, acknowledged, `false_positive`, remediated, verified)
+        #[arg(long)]
+        status: Option<String>,
+    },
+
+    /// Show details for a single finding
+    Show {
+        /// Finding UUID
+        id: String,
+    },
+
+    /// Update the lifecycle status of a finding
+    Status {
+        /// Finding UUID
+        id: String,
+
+        /// New status (new, acknowledged, `false_positive`, remediated, verified)
+        status: String,
+    },
+}
+
+/// Print shell completions to stdout.
+pub fn print_completions(shell: Shell) {
+    let mut cmd = Cli::command();
+    generate(shell, &mut cmd, "scorchkit", &mut std::io::stdout());
+}
