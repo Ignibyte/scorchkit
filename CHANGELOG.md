@@ -2,6 +2,26 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.5.0] - 2026-03-28
+
+### Added
+- **Structured AI analysis** — typed JSON responses for all 4 analysis modes (summary, prioritize, remediate, filter)
+- **17 structured types** — `SummaryAnalysis`, `PrioritizedAnalysis`, `RemediationAnalysis`, `FilterAnalysis` with shared enums (`ExploitabilityRating`, `EffortLevel`, `FindingClassification`)
+- **`StructuredAnalysis` enum** — wraps mode-specific types with `Raw` fallback for graceful degradation
+- **Multi-tier JSON extractor** — parses Claude responses via direct parse, code fence extraction, balanced block detection, or raw fallback
+- **Project history context** — `--project` flag on `analyze` injects scan trends and finding lifecycle stats into AI prompts
+- **`analyze-findings` MCP tool** — AI-powered project finding analysis with structured JSON output
+- **`ProjectContext` type** — scan history and finding trend data for context-aware analysis
+- **`storage::context::build_project_context()`** — aggregates project stats from PostgreSQL
+- 23 new tests (8 inline unit + 14 integration + 1 mcp-feature-gated)
+
+### Changed
+- `AiAnalysis` struct upgraded from raw text (`content: String`) to typed enum (`StructuredAnalysis`)
+- `AnalysisFocus` now derives `Serialize, Deserialize` with snake_case
+- `AnalysisFocus::from_str()` renamed to `parse()` to avoid shadowing `FromStr` trait
+- AI prompts now request JSON output with documented schemas
+- `print_analysis()` renders structured output per mode (risk scores, ranked lists, effort badges, classification tables)
+
 ## [0.4.0] - 2026-03-28
 
 ### Added
