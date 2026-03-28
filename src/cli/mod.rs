@@ -6,3 +6,5 @@ pub mod finding;
 #[cfg(feature = "storage")]
 pub mod project;
 pub mod runner;
+#[cfg(feature = "mcp")]
+pub mod serve;

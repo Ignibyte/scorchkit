@@ -2,6 +2,8 @@ pub mod ai;
 pub mod cli;
 pub mod config;
 pub mod engine;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 pub mod recon;
 pub mod report;
 pub mod runner;

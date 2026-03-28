@@ -2,6 +2,16 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.4.0] - 2026-03-28
+
+### Added
+- **MCP server** — `scorchkit serve` starts an MCP server on stdio transport (requires `mcp` feature)
+- **15 MCP tools** — list-modules, check-tools, scan, project-create, project-list, project-show, project-delete, project-scan, project-findings, finding-show, finding-update-status, target-add, target-list, target-remove, db-migrate
+- **`mcp` Cargo feature** — feature-gated MCP server (implies `storage`), built on `rmcp` v1.3 crate
+- **`ScorchKitServer`** — MCP server struct with `ServerHandler` impl and `#[tool_router]` dispatch
+- **Parameter types** — `schemars` v1.0 JSON Schema generation for all tool inputs
+- 17 new integration tests — one per MCP tool plus server infrastructure tests
+
 ## [0.3.0] - 2026-03-28
 
 ### Added

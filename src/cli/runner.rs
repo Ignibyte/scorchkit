@@ -119,6 +119,9 @@ pub async fn execute(cli: Cli) -> Result<()> {
 
         #[cfg(feature = "storage")]
         Commands::Finding { command } => run_finding_command(&config, command).await,
+
+        #[cfg(feature = "mcp")]
+        Commands::Serve => crate::cli::serve::run_serve(&config).await,
     }
 }
 

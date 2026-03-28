@@ -149,6 +149,10 @@ pub enum Commands {
         #[command(subcommand)]
         command: FindingCommands,
     },
+
+    /// Start the MCP server on stdio transport
+    #[cfg(feature = "mcp")]
+    Serve,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
