@@ -96,7 +96,9 @@ pub async fn execute(cli: Cli) -> Result<()> {
             .await
         }
 
-        Commands::Analyze { report, focus } => run_analyze(&config, &report, &focus).await,
+        Commands::Analyze { report, focus, project, database_url } => {
+            run_analyze(&config, &report, &focus, project.as_deref(), database_url.as_deref()).await
+        }
 
         Commands::Diff { baseline, current } => run_diff(&baseline, &current),
 
@@ -302,7 +304,7 @@ async fn run_scan(
     // AI analysis
     let should_analyze = analyze || config.ai.auto_analyze;
     if should_analyze && config.ai.enabled {
-        run_ai_analysis(config, &result, AnalysisFocus::Summary, quiet).await?;
+        run_ai_analysis(config, &result, AnalysisFocus::Summary, quiet, None).await?;
     }
 
     Ok(())
@@ -380,6 +382,8 @@ async fn run_analyze(
     config: &Arc<AppConfig>,
     report_path: &std::path::Path,
     focus_str: &str,
+    project_name: Option<&str>,
+    database_url: Option<&str>,
 ) -> Result<()> {
     if !report_path.exists() {
         return Err(ScorchError::Report(format!(
@@ -389,7 +393,7 @@ async fn run_analyze(
     }
 
     let result = report::json::load_report(report_path)?;
-    let focus = AnalysisFocus::from_str(focus_str);
+    let focus = AnalysisFocus::parse(focus_str);
 
     println!();
     println!(
@@ -399,7 +403,9 @@ async fn run_analyze(
         result.scan_id.dimmed()
     );
 
-    run_ai_analysis(config, &result, focus, false).await
+    let project_context = build_analyze_project_context(config, project_name, database_url).await?;
+
+    run_ai_analysis(config, &result, focus, false, project_context.as_ref()).await
 }
 
 fn run_doctor() -> Result<()> {
@@ -492,6 +498,7 @@ async fn run_ai_analysis(
     result: &ScanResult,
     focus: AnalysisFocus,
     quiet: bool,
+    project_context: Option<&crate::ai::types::ProjectContext>,
 ) -> Result<()> {
     if !config.ai.enabled {
         if !quiet {
@@ -520,7 +527,7 @@ async fn run_ai_analysis(
         );
     }
 
-    match ai.analyze(result, focus).await {
+    match ai.analyze(result, focus, project_context).await {
         Ok(analysis) => {
             analyst::print_analysis(&analysis);
         }
@@ -532,6 +539,46 @@ async fn run_ai_analysis(
     }
 
     Ok(())
+}
+
+/// Build project context for the analyze command when --project is specified.
+#[cfg(feature = "storage")]
+async fn build_analyze_project_context(
+    config: &Arc<AppConfig>,
+    project_name: Option<&str>,
+    database_url: Option<&str>,
+) -> Result<Option<crate::ai::types::ProjectContext>> {
+    let Some(name) = project_name else {
+        return Ok(None);
+    };
+
+    let pool = crate::storage::connect_from_config(&config.database, database_url).await?;
+    let project = crate::cli::project::resolve_project(&pool, name).await?;
+
+    let ctx =
+        crate::storage::context::build_project_context(&pool, project.id, &project.name).await?;
+
+    Ok(Some(ctx))
+}
+
+/// Stub for when storage feature is not compiled.
+#[cfg(not(feature = "storage"))]
+// JUSTIFICATION: Must match the async signature of the storage-enabled version
+// because the caller in run_analyze() always calls with .await.
+#[allow(clippy::unused_async)]
+async fn build_analyze_project_context(
+    _config: &Arc<AppConfig>,
+    project_name: Option<&str>,
+    _database_url: Option<&str>,
+) -> Result<Option<crate::ai::types::ProjectContext>> {
+    if project_name.is_some() {
+        return Err(ScorchError::Config(
+            "--project requires the 'storage' feature. Rebuild with: \
+             cargo build --features storage"
+                .to_string(),
+        ));
+    }
+    Ok(None)
 }
 
 fn list_modules(check_tools: bool) -> Result<()> {

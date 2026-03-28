@@ -17,6 +17,7 @@
 //! # }
 //! ```
 
+pub mod context;
 pub mod findings;
 pub mod migrate;
 pub mod models;

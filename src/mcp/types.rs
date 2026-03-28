@@ -109,3 +109,20 @@ pub struct FindingUpdateStatusParams {
     /// New status: new, acknowledged, `false_positive`, remediated, or verified.
     pub status: String,
 }
+
+/// Parameters for AI-powered analysis of project findings.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AnalyzeFindingsParams {
+    /// Project name or UUID containing the findings to analyze.
+    pub project: String,
+    /// Analysis focus: "summary", "prioritize", "remediate", or "filter".
+    #[serde(default = "default_focus")]
+    pub focus: String,
+    /// Optional scan UUID to analyze findings from a specific scan.
+    /// If omitted, analyzes all findings for the project.
+    pub scan_id: Option<String>,
+}
+
+fn default_focus() -> String {
+    "summary".to_string()
+}

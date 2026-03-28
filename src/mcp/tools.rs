@@ -13,15 +13,15 @@ use uuid::Uuid;
 
 use super::server::ScorchKitServer;
 use super::types::{
-    FindingListParams, FindingRefParams, FindingUpdateStatusParams, ProjectCreateParams,
-    ProjectDeleteParams, ProjectRefParams, ProjectScanParams, ScanParams, TargetAddParams,
-    TargetRemoveParams,
+    AnalyzeFindingsParams, FindingListParams, FindingRefParams, FindingUpdateStatusParams,
+    ProjectCreateParams, ProjectDeleteParams, ProjectRefParams, ProjectScanParams, ScanParams,
+    TargetAddParams, TargetRemoveParams,
 };
 use crate::engine::error::ScorchError;
 use crate::engine::scan_context::ScanContext;
 use crate::engine::target::Target;
 use crate::runner::orchestrator::Orchestrator;
-use crate::storage::{findings, projects, scans};
+use crate::storage::{context, findings, projects, scans};
 
 /// Helper to resolve a project by name or UUID.
 async fn resolve_project(
@@ -392,6 +392,92 @@ impl ScorchKitServer {
         crate::storage::migrate::run_migrations(&self.pool).await.map_err(|e| e.to_string())?;
         Ok("{\"success\": true, \"message\": \"Database migrations complete\"}".to_string())
     }
+
+    /// Analyze findings for a project using AI with structured output.
+    ///
+    /// Loads findings from the database, builds project context for trend
+    /// awareness, runs Claude analysis, and returns structured JSON results.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the project is not found, the AI analyst is
+    /// unavailable, or the analysis subprocess fails.
+    pub async fn do_analyze_findings(
+        &self,
+        params: AnalyzeFindingsParams,
+    ) -> Result<String, String> {
+        let project =
+            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+
+        let focus = crate::ai::prompts::AnalysisFocus::parse(&params.focus);
+
+        // Load findings: from specific scan or all project findings
+        let tracked_findings = if let Some(ref scan_id_str) = params.scan_id {
+            let scan_id = Uuid::parse_str(scan_id_str)
+                .map_err(|e| format!("invalid scan UUID '{scan_id_str}': {e}"))?;
+            findings::find_by_scan(&self.pool, scan_id).await.map_err(|e| e.to_string())?
+        } else {
+            findings::list_findings(&self.pool, project.id).await.map_err(|e| e.to_string())?
+        };
+
+        if tracked_findings.is_empty() {
+            return Ok("{\"analysis\": {\"type\": \"raw\", \"content\": \
+                       \"No findings to analyze.\"}, \"cost_usd\": null}"
+                .to_string());
+        }
+
+        // Convert tracked findings back to engine Findings via raw_finding JSON
+        let engine_findings: Vec<crate::engine::finding::Finding> = tracked_findings
+            .iter()
+            .filter_map(|tf| serde_json::from_value(tf.raw_finding.clone()).ok())
+            .collect();
+
+        // Build a minimal ScanResult for the analyzer
+        let scan_records =
+            scans::list_scans(&self.pool, project.id).await.map_err(|e| e.to_string())?;
+        let target_url = scan_records.first().map(|s| s.target_url.as_str()).unwrap_or("unknown");
+        let target = crate::engine::target::Target::parse(target_url).map_err(|e| e.to_string())?;
+        let scan_result = crate::engine::scan_result::ScanResult::new(
+            Uuid::new_v4().to_string(),
+            target,
+            chrono::Utc::now(),
+            engine_findings,
+            Vec::new(),
+            Vec::new(),
+        );
+
+        // Build project context for trend-aware analysis
+        let project_context = context::build_project_context(&self.pool, project.id, &project.name)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Run AI analysis
+        if !self.config.ai.enabled {
+            return Err("AI analysis is disabled in config".to_string());
+        }
+
+        let analyst = crate::ai::analyst::AiAnalyst::from_config(&self.config.ai);
+        if !analyst.is_available() {
+            return Err(
+                "claude CLI not found. Install Claude Code to enable AI analysis.".to_string()
+            );
+        }
+
+        let analysis = analyst
+            .analyze(&scan_result, focus, Some(&project_context))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let output = serde_json::json!({
+            "project": project.name,
+            "focus": analysis.focus.label(),
+            "analysis": analysis.analysis,
+            "cost_usd": analysis.cost_usd,
+            "model": analysis.model,
+        });
+
+        serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
+    }
 }
 
 /// `#[tool_router]` — thin wrappers that delegate to `do_*` public methods.
@@ -487,6 +573,16 @@ impl ScorchKitServer {
     #[tool(description = "Run pending database migrations")]
     async fn db_migrate(&self) -> Result<String, String> {
         self.do_db_migrate().await
+    }
+
+    #[tool(
+        description = "Analyze project findings using AI with structured JSON output (summary/prioritize/remediate/filter)"
+    )]
+    async fn analyze_findings(
+        &self,
+        params: Parameters<AnalyzeFindingsParams>,
+    ) -> Result<String, String> {
+        self.do_analyze_findings(params.0).await
     }
 }
 

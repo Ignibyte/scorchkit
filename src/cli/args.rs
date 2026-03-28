@@ -99,6 +99,14 @@ pub enum Commands {
         /// Analysis focus: summary, prioritize, remediate, filter
         #[arg(short, long, default_value = "summary")]
         focus: String,
+
+        /// Enrich analysis with project history context (requires storage feature)
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Database URL override for project context (takes precedence over config)
+        #[arg(long)]
+        database_url: Option<String>,
     },
 
     /// Compare two scan reports

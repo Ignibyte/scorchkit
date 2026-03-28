@@ -1,8 +1,14 @@
+use std::fmt::Write;
+
+use serde::{Deserialize, Serialize};
+
+use crate::ai::types::ProjectContext;
 use crate::engine::finding::Finding;
 use crate::engine::scan_result::ScanResult;
 
 /// Analysis focus modes.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AnalysisFocus {
     /// Executive summary with business impact.
     Summary,
@@ -15,7 +21,12 @@ pub enum AnalysisFocus {
 }
 
 impl AnalysisFocus {
-    pub fn from_str(s: &str) -> Self {
+    /// Parse a focus mode from a user-supplied string.
+    ///
+    /// Accepts common aliases; defaults to [`AnalysisFocus::Summary`] for
+    /// unrecognized input.
+    #[must_use]
+    pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "prioritize" | "priority" | "prio" => Self::Prioritize,
             "remediate" | "remediation" | "fix" => Self::Remediate,
@@ -24,7 +35,9 @@ impl AnalysisFocus {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    /// Human-readable label for display.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
         match self {
             Self::Summary => "Executive Summary",
             Self::Prioritize => "Prioritized Risk Assessment",
@@ -34,18 +47,23 @@ impl AnalysisFocus {
     }
 }
 
-/// Build the full prompt for Claude based on findings and focus mode.
-pub fn build_prompt(result: &ScanResult, focus: AnalysisFocus) -> String {
+/// Build the full prompt for Claude based on findings, focus mode, and
+/// optional project history context.
+#[must_use]
+pub fn build_prompt(
+    result: &ScanResult,
+    focus: AnalysisFocus,
+    project_context: Option<&ProjectContext>,
+) -> String {
     let findings_json = serialize_findings_compact(&result.findings);
     let target = &result.target.raw;
     let summary = &result.summary;
 
-    let system_context = format!(
+    let mut system_context = format!(
         "You are a senior penetration tester and application security expert. \
          You are analyzing the results of an automated web security scan against {target}.\n\n\
          Scan summary: {total} findings ({critical} critical, {high} high, {medium} medium, \
-         {low} low, {info} info) from {modules} modules.\n\n\
-         Findings (JSON):\n{findings_json}",
+         {low} low, {info} info) from {modules} modules.",
         total = summary.total_findings,
         critical = summary.critical,
         high = summary.high,
@@ -55,54 +73,164 @@ pub fn build_prompt(result: &ScanResult, focus: AnalysisFocus) -> String {
         modules = result.modules_run.len(),
     );
 
-    let task = match focus {
-        AnalysisFocus::Summary => {
-            "Provide an executive summary of these security findings.\n\n\
-             Structure your response as:\n\
-             1. **Overall Risk Assessment** - One paragraph summarizing the security posture\n\
-             2. **Key Risks** - The 3-5 most important findings and why they matter to the business\n\
-             3. **Attack Scenarios** - Brief realistic attack scenarios an adversary could execute\n\
-             4. **Recommended Actions** - Prioritized list of what to fix first and why\n\n\
-             Write for a technical audience but keep it concise. No filler."
-        }
-        AnalysisFocus::Prioritize => {
-            "Analyze these findings and rank them by real-world exploitability.\n\n\
-             For each finding, assess:\n\
-             1. **Exploitation difficulty** - How easy is this to exploit? (trivial/moderate/difficult)\n\
-             2. **Impact** - What can an attacker gain? (data theft, account takeover, RCE, etc.)\n\
-             3. **Attack chains** - Can this finding be combined with others for greater impact?\n\
-             4. **Priority rank** - Number each finding from highest to lowest priority\n\n\
-             Group findings that form natural attack chains. \
-             Flag any findings that are likely more severe than their automated severity suggests."
-        }
-        AnalysisFocus::Remediate => {
-            "Provide specific, actionable remediation steps for each finding.\n\n\
-             For each finding:\n\
-             1. **What to do** - Exact configuration change, code fix, or architectural change needed\n\
-             2. **Where** - Which file, config, or service to modify (based on the detected tech stack)\n\
-             3. **Example** - Show the actual config snippet, header value, or code change\n\
-             4. **Verification** - How to verify the fix worked\n\n\
-             Tailor recommendations to the detected technology stack. \
-             Be specific enough that a developer can implement the fix directly."
-        }
-        AnalysisFocus::Filter => {
-            "Review these findings and identify likely false positives.\n\n\
-             For each finding, assess:\n\
-             1. **Confidence** - How likely is this a true positive? (high/medium/low)\n\
-             2. **Reasoning** - Why you believe it's real or false positive\n\
-             3. **Verification steps** - How to manually confirm or deny this finding\n\n\
-             Common false positive patterns to watch for:\n\
-             - Generic 404 pages that return 200 status codes\n\
-             - WAF/CDN artifacts that look like misconfigurations\n\
-             - Cookie flags on non-session cookies (analytics, preferences)\n\
-             - Admin panels that are actually login redirects\n\
-             - Self-signed certs on internal/staging environments behind a reverse proxy\n\n\
-             Flag definite false positives and explain why."
-        }
-    };
+    if let Some(ctx) = project_context {
+        system_context.push_str(&format_project_context(ctx));
+    }
+
+    let _ = write!(system_context, "\n\nFindings (JSON):\n{findings_json}");
+
+    let task = build_task_instructions(focus);
 
     format!("{system_context}\n\n---\n\nTASK:\n{task}")
 }
+
+/// Format project history context for injection into the prompt.
+fn format_project_context(ctx: &ProjectContext) -> String {
+    let trends = &ctx.finding_trends;
+    let status = &trends.by_status;
+
+    let mut section = format!(
+        "\n\n--- PROJECT HISTORY ---\n\
+         Project: {name}\n\
+         Total scans: {scans}",
+        name = ctx.project_name,
+        scans = ctx.total_scans,
+    );
+
+    if let Some(ref date) = ctx.latest_scan_date {
+        let _ = write!(section, "\nLatest scan: {date}");
+    }
+
+    let _ = write!(
+        section,
+        "\nTracked findings: {total}\n\
+         Status breakdown: {new} new, {ack} acknowledged, {fp} false positive, \
+         {rem} remediated, {ver} verified",
+        total = trends.total_tracked,
+        new = status.new,
+        ack = status.acknowledged,
+        fp = status.false_positive,
+        rem = status.remediated,
+        ver = status.verified,
+    );
+
+    section
+}
+
+/// Build focus-specific task instructions requesting JSON output.
+fn build_task_instructions(focus: AnalysisFocus) -> String {
+    match focus {
+        AnalysisFocus::Summary => SUMMARY_TASK.to_string(),
+        AnalysisFocus::Prioritize => PRIORITIZE_TASK.to_string(),
+        AnalysisFocus::Remediate => REMEDIATE_TASK.to_string(),
+        AnalysisFocus::Filter => FILTER_TASK.to_string(),
+    }
+}
+
+const SUMMARY_TASK: &str = "\
+Provide an executive summary of these security findings.
+
+You MUST respond with a single JSON object (no markdown, no commentary outside the JSON).
+
+Use this exact schema:
+{
+  \"risk_score\": <number 0.0-10.0>,
+  \"executive_summary\": \"<1-2 paragraphs>\",
+  \"key_findings\": [
+    {
+      \"finding_index\": <number>,
+      \"severity\": \"<critical|high|medium|low|info>\",
+      \"title\": \"<finding title>\",
+      \"business_impact\": \"<why this matters>\",
+      \"exploitability\": \"<critical|high|medium|low|theoretical>\"
+    }
+  ],
+  \"attack_surface\": \"<attack surface assessment>\",
+  \"business_impact\": \"<overall business impact>\"
+}
+
+Include the 3-5 most important findings in key_findings. Write for a technical audience. No filler.";
+
+const PRIORITIZE_TASK: &str = "\
+Analyze these findings and rank them by real-world exploitability.
+
+You MUST respond with a single JSON object (no markdown, no commentary outside the JSON).
+
+Use this exact schema:
+{
+  \"prioritized_findings\": [
+    {
+      \"finding_index\": <number>,
+      \"title\": \"<finding title>\",
+      \"severity\": \"<critical|high|medium|low|info>\",
+      \"exploitability\": \"<critical|high|medium|low|theoretical>\",
+      \"business_impact_score\": <number 0.0-10.0>,
+      \"effort_to_exploit\": \"<trivial|low|medium|high|major>\",
+      \"rationale\": \"<why this ranking>\"
+    }
+  ],
+  \"attack_chains\": [
+    {
+      \"name\": \"<chain name>\",
+      \"finding_indices\": [<numbers>],
+      \"combined_impact\": \"<what attacker achieves>\",
+      \"likelihood\": \"<high|medium|low>\"
+    }
+  ],
+  \"recommended_fix_order\": [<finding indices in fix priority order>]
+}
+
+Rank from highest to lowest priority. Group findings that form natural attack chains.";
+
+const REMEDIATE_TASK: &str = "\
+Provide specific, actionable remediation steps for each finding.
+
+You MUST respond with a single JSON object (no markdown, no commentary outside the JSON).
+
+Use this exact schema:
+{
+  \"remediations\": [
+    {
+      \"finding_index\": <number>,
+      \"title\": \"<finding title>\",
+      \"severity\": \"<critical|high|medium|low|info>\",
+      \"fix_description\": \"<exact fix needed>\",
+      \"code_example\": \"<config/code snippet or null>\",
+      \"effort\": \"<trivial|low|medium|high|major>\",
+      \"priority\": <number, 1=highest>,
+      \"verification_steps\": [\"<step1>\", \"<step2>\"]
+    }
+  ],
+  \"quick_wins\": [<finding indices for easy fixes>],
+  \"total_estimated_effort\": \"<human-readable estimate>\"
+}
+
+Tailor fixes to the detected technology stack. Be specific enough to implement directly.";
+
+const FILTER_TASK: &str = "\
+Review these findings and identify likely false positives.
+
+You MUST respond with a single JSON object (no markdown, no commentary outside the JSON).
+
+Use this exact schema:
+{
+  \"findings\": [
+    {
+      \"finding_index\": <number>,
+      \"title\": \"<finding title>\",
+      \"classification\": \"<confirmed|likely_true|uncertain|likely_false_positive|false_positive>\",
+      \"confidence\": <number 0.0-1.0>,
+      \"rationale\": \"<reasoning>\"
+    }
+  ],
+  \"false_positive_count\": <number>,
+  \"confirmed_count\": <number>,
+  \"uncertain_count\": <number>
+}
+
+Common false positive patterns: generic 404 pages returning 200, WAF/CDN artifacts, \
+cookie flags on non-session cookies, admin panels behind login redirects, \
+self-signed certs on internal envs behind reverse proxies.";
 
 /// Serialize findings to a compact JSON format for the prompt.
 fn serialize_findings_compact(findings: &[Finding]) -> String {
