@@ -3,6 +3,8 @@
 //! Each struct represents the input schema for one or more MCP tools.
 //! They derive `Deserialize` for JSON-RPC parameter parsing and
 //! `JsonSchema` for automatic schema generation by the `rmcp` macros.
+//! Field `///` doc comments become `description` fields in the generated
+//! JSON Schema, helping Claude understand each parameter's purpose.
 
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -10,14 +12,24 @@ use serde::Deserialize;
 /// Parameters for the `scan` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ScanParams {
-    /// Target URL, domain, or IP address to scan.
+    /// Target URL, domain, or IP address to scan. Examples: "https://example.com",
+    /// "example.com" (defaults to HTTPS), "192.168.1.1". Must be a host the user
+    /// has authorized for testing.
     pub target: String,
-    /// Scan profile: "quick", "standard", or "thorough".
+    /// Scan profile controlling which modules run. "quick" = 4 recon modules
+    /// (headers, tech, ssl, misconfig) for fast initial assessment. "standard" =
+    /// all 20 built-in modules covering OWASP Top 10. "thorough" = all 41
+    /// modules including external tools (requires tools installed). Defaults to
+    /// "standard".
     #[serde(default = "default_profile")]
     pub profile: String,
-    /// Comma-separated list of specific module IDs to run.
+    /// Comma-separated list of specific module IDs to run, ignoring the profile.
+    /// Example: "headers,ssl,xss". Get valid IDs from list_modules. Use when you
+    /// want to run only specific checks based on plan_scan recommendations.
     pub modules: Option<String>,
-    /// Comma-separated list of module IDs to skip.
+    /// Comma-separated list of module IDs to exclude from the profile. Example:
+    /// "nmap,nuclei" to skip slow external tools. Takes effect after profile
+    /// filtering.
     pub skip: Option<String>,
 }
 
@@ -28,25 +40,29 @@ fn default_profile() -> String {
 /// Parameters for creating a new project.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProjectCreateParams {
-    /// Project name (must be unique).
+    /// Unique project name. Use descriptive names like "example-com-assessment"
+    /// or "client-webapp-2024". Referenced by name in all other project tools.
     pub name: String,
-    /// Optional project description.
+    /// Optional description of the project scope and purpose. Helps identify
+    /// the project later.
     pub description: Option<String>,
 }
 
 /// Parameters that reference a project by name or UUID.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProjectRefParams {
-    /// Project name or UUID.
+    /// Project name or UUID. Use the human-readable name (e.g., "my-project")
+    /// rather than the UUID for convenience.
     pub project: String,
 }
 
 /// Parameters for deleting a project.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProjectDeleteParams {
-    /// Project name or UUID.
+    /// Project name or UUID to delete.
     pub project: String,
-    /// If true, delete without confirmation. Defaults to false.
+    /// Must be set to true to confirm deletion. Without force=true, returns a
+    /// warning instead of deleting. This prevents accidental data loss.
     #[serde(default)]
     pub force: bool,
 }
@@ -54,11 +70,14 @@ pub struct ProjectDeleteParams {
 /// Parameters for scanning within a project context.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProjectScanParams {
-    /// Project name or UUID.
+    /// Project name or UUID. Results will be persisted under this project with
+    /// automatic finding deduplication.
     pub project: String,
-    /// Target URL to scan.
+    /// Target URL to scan. Must be a URL the user has authorized for testing.
     pub target: String,
-    /// Scan profile: "quick", "standard", or "thorough".
+    /// Scan profile: "quick" for fast recon (4 modules), "standard" for full
+    /// built-in assessment (20 modules), "thorough" for all modules including
+    /// external tools (41 modules). Defaults to "standard".
     #[serde(default = "default_profile")]
     pub profile: String,
 }
@@ -66,60 +85,69 @@ pub struct ProjectScanParams {
 /// Parameters for adding a target to a project.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TargetAddParams {
-    /// Project name or UUID.
+    /// Project name or UUID to add the target to.
     pub project: String,
-    /// Target URL to add.
+    /// Target URL to register. Example: "https://example.com". This URL will
+    /// be available for project_scan operations.
     pub url: String,
-    /// Optional human-readable label for the target.
+    /// Optional human-readable label for the target, such as "production API"
+    /// or "staging frontend".
     pub label: Option<String>,
 }
 
 /// Parameters for removing a target from a project.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TargetRemoveParams {
-    /// Project name or UUID.
+    /// Project name or UUID containing the target.
     pub project: String,
-    /// Target UUID to remove.
+    /// Target UUID to remove. Get target UUIDs from target_list.
     pub id: String,
 }
 
 /// Parameters for listing findings with optional filters.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FindingListParams {
-    /// Project name or UUID.
+    /// Project name or UUID to list findings for.
     pub project: String,
-    /// Filter by severity (critical, high, medium, low, info).
+    /// Filter findings by severity level. Valid values: "critical", "high",
+    /// "medium", "low", "info". Omit to return all severities.
     pub severity: Option<String>,
-    /// Filter by status (new, acknowledged, `false_positive`, remediated, verified).
+    /// Filter findings by lifecycle status. Valid values: "new",
+    /// "acknowledged", "false_positive", "remediated", "verified". Omit to
+    /// return all statuses.
     pub status: Option<String>,
 }
 
 /// Parameters that reference a single finding by UUID.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FindingRefParams {
-    /// Finding UUID.
+    /// Finding UUID. Get finding UUIDs from project_findings results.
     pub id: String,
 }
 
 /// Parameters for updating a finding's lifecycle status.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FindingUpdateStatusParams {
-    /// Finding UUID.
+    /// Finding UUID to update. Get from project_findings results.
     pub id: String,
-    /// New status: new, acknowledged, `false_positive`, remediated, or verified.
+    /// New lifecycle status. Valid transitions: "new" -> "acknowledged" ->
+    /// "remediated" -> "verified", or "new"/"acknowledged" -> "false_positive".
     pub status: String,
 }
 
 /// Parameters for creating a recurring scan schedule.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ScheduleScanParams {
-    /// Project name or UUID.
+    /// Project name or UUID to create the schedule for.
     pub project: String,
-    /// Target URL to scan on schedule.
+    /// Target URL to scan on the recurring schedule.
     pub target: String,
-    /// Cron expression (e.g., "0 0 * * *" for daily at midnight).
+    /// Standard 5-field cron expression defining the recurrence pattern. Examples:
+    /// "0 0 * * *" (daily at midnight), "0 */6 * * *" (every 6 hours),
+    /// "0 9 * * 1" (Mondays at 9am).
     pub cron: String,
-    /// Scan profile: "quick", "standard", or "thorough".
+    /// Scan profile for scheduled runs. "quick", "standard", or "thorough".
+    /// Defaults to "standard".
     #[serde(default = "default_profile")]
     pub profile: String,
 }
@@ -127,14 +155,17 @@ pub struct ScheduleScanParams {
 /// Parameters for AI-guided scan planning.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PlanScanParams {
-    /// Target URL, domain, or IP address for scan planning.
+    /// Target URL, domain, or IP address to plan a scan for. The planner will
+    /// run recon modules first, then recommend which scanner modules to use
+    /// based on the target's tech stack and attack surface.
     pub target: String,
 }
 
 /// Parameters for retrieving project security posture metrics.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProjectStatusParams {
-    /// Project name or UUID.
+    /// Project name or UUID to get posture metrics for. The project should have
+    /// at least one completed scan for meaningful metrics.
     pub project: String,
 }
 
@@ -143,11 +174,16 @@ pub struct ProjectStatusParams {
 pub struct AnalyzeFindingsParams {
     /// Project name or UUID containing the findings to analyze.
     pub project: String,
-    /// Analysis focus: "summary", "prioritize", "remediate", or "filter".
+    /// Analysis focus mode. "summary" = executive overview with 0-10 risk score.
+    /// "prioritize" = findings ranked by exploitability with attack chains.
+    /// "remediate" = fix steps with effort estimates and code examples.
+    /// "filter" = false positive classification with confidence scores.
+    /// Defaults to "summary".
     #[serde(default = "default_focus")]
     pub focus: String,
-    /// Optional scan UUID to analyze findings from a specific scan.
-    /// If omitted, analyzes all findings for the project.
+    /// Optional scan UUID to analyze findings from a specific scan only. If
+    /// omitted, analyzes all findings across all scans for the project. Get
+    /// scan UUIDs from project_show.
     pub scan_id: Option<String>,
 }
 
