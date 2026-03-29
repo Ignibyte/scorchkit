@@ -11,6 +11,7 @@ mod redirect;
 mod sensitive;
 mod ssl;
 mod ssrf;
+mod upload;
 mod waf;
 mod xss;
 mod xxe;
@@ -35,6 +36,7 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(jwt::JwtModule),
         Box::new(redirect::RedirectModule),
         Box::new(sensitive::SensitiveDataModule),
+        Box::new(upload::UploadModule),
         Box::new(api_schema::ApiSchemaModule),
         Box::new(ratelimit::RateLimitModule),
     ]

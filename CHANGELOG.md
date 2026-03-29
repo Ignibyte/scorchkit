@@ -2,6 +2,19 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.14.0] - 2026-03-29
+
+### Added
+- **File upload vulnerability testing module** — `src/scanner/upload.rs` implementing `UploadModule`
+- **Upload form discovery** — HTML parsing for `<input type="file">` with action URL resolution and hidden field extraction
+- **9 upload bypass payloads** — PHP, JSP, double extension (.php.jpg), content-type mismatch, polyglot GIF+PHP, null byte filename, path traversal, SVG XSS, HTML upload
+- **Heuristic acceptance detection** — status code + body keyword analysis to determine if uploads were accepted
+- 8 new unit tests for form discovery, payload generation, acceptance heuristic
+- ScorchKit now has 44 modules (22 built-in + 22 external tool wrappers)
+
+### Changed
+- `reqwest` dependency now includes `multipart` feature for file upload submission
+
 ## [0.13.0] - 2026-03-29
 
 ### Added
