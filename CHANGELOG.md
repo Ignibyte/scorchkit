@@ -2,6 +2,14 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.18.0] - 2026-03-29
+
+### Added
+- **Subdomain takeover detection module** — `src/scanner/subtakeover.rs` probing 15 common subdomains against 8 cloud provider fingerprints (GitHub Pages, Heroku, AWS S3, Azure, Shopify, Fastly, Pantheon, Tumblr)
+- **Access control testing module** — `src/scanner/acl.rs` testing admin path discovery (20 paths), HTTP method override bypass, path traversal auth bypass (8 variants), and forced browsing to sequential API resource IDs
+- 7 new unit tests (4 subtakeover + 3 ACL)
+- ScorchKit now has 51 modules (29 built-in + 22 external tool wrappers)
+
 ## [0.17.0] - 2026-03-29
 
 ### Added

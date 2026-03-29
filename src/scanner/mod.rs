@@ -1,3 +1,4 @@
+mod acl;
 mod api_schema;
 mod auth;
 mod cmdi;
@@ -14,6 +15,7 @@ mod redirect;
 mod sensitive;
 mod ssl;
 mod ssrf;
+mod subtakeover;
 mod upload;
 mod waf;
 mod websocket;
@@ -45,6 +47,8 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(upload::UploadModule),
         Box::new(websocket::WebSocketModule),
         Box::new(graphql::GraphQLModule),
+        Box::new(subtakeover::SubdomainTakeoverModule),
+        Box::new(acl::AclModule),
         Box::new(api_schema::ApiSchemaModule),
         Box::new(ratelimit::RateLimitModule),
     ]
