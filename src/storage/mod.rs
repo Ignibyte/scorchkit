@@ -19,6 +19,7 @@
 
 pub mod context;
 pub mod findings;
+pub mod metrics;
 pub mod migrate;
 pub mod models;
 pub mod projects;

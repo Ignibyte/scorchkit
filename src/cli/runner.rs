@@ -152,6 +152,9 @@ async fn run_project_command(
         args::ProjectCommands::Delete { project, force } => {
             crate::cli::project::delete(&pool, &project, force).await
         }
+        args::ProjectCommands::Status { project } => {
+            crate::cli::project::status(&pool, &project).await
+        }
         args::ProjectCommands::Target { command: target_cmd } => {
             run_target_command(&pool, target_cmd).await
         }
