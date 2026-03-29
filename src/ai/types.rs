@@ -268,6 +268,77 @@ pub struct StatusBreakdown {
     pub verified: usize,
 }
 
+// ── Scan planning types ────────────────────────────────────────────────
+
+/// AI-generated scan plan based on recon analysis.
+///
+/// Produced by [`crate::ai::planner::ScanPlanner`] after Claude analyzes
+/// reconnaissance results and the available module catalog.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanPlan {
+    /// The target being scanned.
+    pub target: String,
+    /// Modules Claude recommends running, ordered by priority.
+    pub recommendations: Vec<ModuleRecommendation>,
+    /// Modules Claude recommends skipping, with justification.
+    pub skipped_modules: Vec<SkippedModule>,
+    /// Claude's high-level strategy description.
+    pub overall_strategy: String,
+    /// Rough time estimate for executing the plan.
+    pub estimated_scan_time: Option<String>,
+}
+
+/// A recommended scan module with priority and rationale.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModuleRecommendation {
+    /// Module ID — must match a registered module.
+    pub module_id: String,
+    /// Execution priority (1 = first).
+    pub priority: u32,
+    /// Why this module should run against this target.
+    pub rationale: String,
+    /// Module category (recon, scanner).
+    pub category: String,
+}
+
+/// A module Claude recommends skipping, with justification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkippedModule {
+    /// Module ID.
+    pub module_id: String,
+    /// Why Claude recommends skipping this module.
+    pub reason: String,
+}
+
+/// Result of validating a scan plan against registered modules.
+#[derive(Debug, Clone)]
+pub struct PlanValidation {
+    /// Recommendations with valid (registered) module IDs.
+    pub valid_recommendations: Vec<ModuleRecommendation>,
+    /// Module IDs that were in the plan but don't match any registered module.
+    pub unknown_modules: Vec<String>,
+}
+
+/// Validate a scan plan's module recommendations against a list of known module IDs.
+///
+/// Moves recommendations with unrecognized `module_id` values into the
+/// `unknown_modules` list, preserving only valid ones.
+#[must_use]
+pub fn validate_plan(plan: &ScanPlan, known_ids: &[&str]) -> PlanValidation {
+    let mut valid = Vec::new();
+    let mut unknown = Vec::new();
+
+    for rec in &plan.recommendations {
+        if known_ids.contains(&rec.module_id.as_str()) {
+            valid.push(rec.clone());
+        } else {
+            unknown.push(rec.module_id.clone());
+        }
+    }
+
+    PlanValidation { valid_recommendations: valid, unknown_modules: unknown }
+}
+
 // ── Updated AiAnalysis ──────────────────────────────────────────────────
 
 /// Complete result from an AI analysis session.

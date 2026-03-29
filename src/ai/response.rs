@@ -8,8 +8,8 @@ use serde::de::DeserializeOwned;
 
 use crate::ai::prompts::AnalysisFocus;
 use crate::ai::types::{
-    AiAnalysis, FilterAnalysis, PrioritizedAnalysis, RemediationAnalysis, StructuredAnalysis,
-    SummaryAnalysis,
+    AiAnalysis, FilterAnalysis, PrioritizedAnalysis, RemediationAnalysis, ScanPlan,
+    StructuredAnalysis, SummaryAnalysis,
 };
 
 /// Parse the Claude CLI JSON output into an [`AiAnalysis`].
@@ -150,6 +150,28 @@ fn extract_json_block(text: &str) -> Option<&str> {
     }
 
     None
+}
+
+/// Parse a Claude CLI response into a [`ScanPlan`].
+///
+/// Extracts the result text from the Claude CLI JSON envelope, then
+/// attempts to parse it into a `ScanPlan`. Returns an empty plan if
+/// parsing fails (graceful degradation).
+#[must_use]
+pub fn parse_plan_response(output: &str, target: &str) -> ScanPlan {
+    let content = if let Ok(json) = serde_json::from_str::<serde_json::Value>(output) {
+        json["result"].as_str().or_else(|| json["content"].as_str()).unwrap_or(output).to_string()
+    } else {
+        output.to_string()
+    };
+
+    try_extract::<ScanPlan>(&content).unwrap_or_else(|| ScanPlan {
+        target: target.to_string(),
+        recommendations: Vec::new(),
+        skipped_modules: Vec::new(),
+        overall_strategy: "Plan parsing failed — using empty plan.".to_string(),
+        estimated_scan_time: None,
+    })
 }
 
 #[cfg(test)]

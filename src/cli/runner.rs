@@ -25,6 +25,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
             modules,
             skip,
             analyze,
+            plan,
             profile,
             proxy,
             scope,
@@ -55,6 +56,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 cli.output,
                 cli.quiet,
                 analyze,
+                plan,
                 &profile,
                 project.as_deref(),
                 database_url.as_deref(),
@@ -72,6 +74,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 cli.output,
                 cli.quiet,
                 false,
+                false,
                 "standard",
                 None,
                 None,
@@ -88,6 +91,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 Some(ModuleCategory::Scanner),
                 cli.output,
                 cli.quiet,
+                false,
                 false,
                 "standard",
                 None,
@@ -208,6 +212,7 @@ async fn run_scan(
     output_format: Option<OutputFormat>,
     quiet: bool,
     analyze: bool,
+    plan: bool,
     profile: &str,
     project_name: Option<&str>,
     database_url: Option<&str>,
@@ -243,6 +248,38 @@ async fn run_scan(
         println!();
     }
 
+    // AI-guided scan planning runs before the main orchestrator (it uses its own recon pass)
+    let ai_plan = if plan && config.ai.enabled {
+        let planner = crate::ai::planner::ScanPlanner::from_config(&config.ai);
+        if planner.is_available() {
+            if !quiet {
+                println!("{} Running AI-guided scan planning...", "AI".cyan().bold());
+            }
+            match planner.plan(&target, config).await {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    if !quiet {
+                        println!(
+                            "{} Scan planning failed: {e} — falling back to '{profile}' profile",
+                            "note:".yellow(),
+                        );
+                    }
+                    None
+                }
+            }
+        } else {
+            if !quiet {
+                println!(
+                    "{} claude CLI not found — falling back to '{profile}' profile",
+                    "note:".yellow(),
+                );
+            }
+            None
+        }
+    } else {
+        None
+    };
+
     let http_client = build_http_client(config)?;
     let ctx = ScanContext::new(target, Arc::clone(config), http_client);
 
@@ -253,7 +290,32 @@ async fn run_scan(
 
     let mut orchestrator = Orchestrator::new(ctx);
     orchestrator.register_default_modules();
-    orchestrator.apply_profile(profile);
+
+    // Apply AI plan or fall back to profile
+    if let Some(ref scan_plan) = ai_plan {
+        if !quiet {
+            println!(
+                "{} Plan: {} module{} recommended — {}",
+                "AI".cyan().bold(),
+                scan_plan.recommendations.len(),
+                if scan_plan.recommendations.len() == 1 { "" } else { "s" },
+                scan_plan.overall_strategy.dimmed(),
+            );
+            println!();
+        }
+        if scan_plan.recommendations.is_empty() {
+            if !quiet {
+                println!("{} Empty plan — falling back to '{}' profile", "note:".yellow(), profile,);
+            }
+            orchestrator.apply_profile(profile);
+        } else {
+            let planned_ids: Vec<String> =
+                scan_plan.recommendations.iter().map(|r| r.module_id.clone()).collect();
+            orchestrator.filter_by_ids(&planned_ids);
+        }
+    } else {
+        orchestrator.apply_profile(profile);
+    }
 
     if let Some(category) = category_filter {
         orchestrator.filter_by_category(category);

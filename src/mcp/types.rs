@@ -110,6 +110,13 @@ pub struct FindingUpdateStatusParams {
     pub status: String,
 }
 
+/// Parameters for AI-guided scan planning.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PlanScanParams {
+    /// Target URL, domain, or IP address for scan planning.
+    pub target: String,
+}
+
 /// Parameters for retrieving project security posture metrics.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProjectStatusParams {

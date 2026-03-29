@@ -180,6 +180,17 @@ fn test_run_project_flag_in_help() {
         .stdout(predicate::str::contains("--database-url"));
 }
 
+/// Verify the `--plan` flag is visible in `run --help`.
+#[test]
+fn test_cli_plan_flag_in_help() {
+    Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["run", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--plan"));
+}
+
 /// Verify the `project status` subcommand is visible in help when the
 /// `storage` feature is compiled.
 #[cfg(feature = "storage")]
