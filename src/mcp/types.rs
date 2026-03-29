@@ -110,6 +110,13 @@ pub struct FindingUpdateStatusParams {
     pub status: String,
 }
 
+/// Parameters for retrieving project security posture metrics.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ProjectStatusParams {
+    /// Project name or UUID.
+    pub project: String,
+}
+
 /// Parameters for AI-powered analysis of project findings.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AnalyzeFindingsParams {

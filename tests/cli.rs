@@ -179,3 +179,17 @@ fn test_run_project_flag_in_help() {
         .stdout(predicate::str::contains("--project"))
         .stdout(predicate::str::contains("--database-url"));
 }
+
+/// Verify the `project status` subcommand is visible in help when the
+/// `storage` feature is compiled.
+#[cfg(feature = "storage")]
+#[test]
+fn test_cli_project_status_subcommand() {
+    Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["project", "status", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("posture"))
+        .stdout(predicate::str::contains("project"));
+}

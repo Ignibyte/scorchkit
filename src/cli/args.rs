@@ -212,6 +212,12 @@ pub enum ProjectCommands {
         force: bool,
     },
 
+    /// Show security posture metrics and trend analysis
+    Status {
+        /// Project name or UUID
+        project: String,
+    },
+
     /// Manage project targets
     Target {
         #[command(subcommand)]

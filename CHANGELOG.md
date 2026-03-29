@@ -2,6 +2,24 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.6.0] - 2026-03-29
+
+### Added
+- **Posture metrics dashboard** — `scorchkit project status <name>` shows security posture at a glance
+- **`TrendDirection` enum** — computed trend (Improving/Declining/Stable) from resolved vs active finding ratio
+- **Severity breakdown** — finding counts grouped by severity, ordered critical to info
+- **Status breakdown** — finding counts grouped by lifecycle status
+- **Regression detection** — identifies findings marked remediated/verified that reappeared in the latest scan
+- **Top unresolved findings** — top 10 active findings ranked by severity priority
+- **`project-status` MCP tool** — returns posture metrics as typed JSON for AI consumption
+- **`PostureMetrics` types** — `ScanSummary`, `FindingSummary`, `SeverityCount`, `StatusCount`, `RegressionFinding`, `UnresolvedFinding`
+- **`build_posture_metrics()`** — aggregate SQL queries computing all metrics on-the-fly (no new migrations)
+- 14 new tests (13 storage-gated + 1 mcp-gated + 1 cli integration)
+
+### Changed
+- `ProjectCommands` now includes `Status` subcommand
+- MCP server exposes 16 tools (was 15)
+
 ## [0.5.0] - 2026-03-28
 
 ### Added

@@ -14,14 +14,14 @@ use uuid::Uuid;
 use super::server::ScorchKitServer;
 use super::types::{
     AnalyzeFindingsParams, FindingListParams, FindingRefParams, FindingUpdateStatusParams,
-    ProjectCreateParams, ProjectDeleteParams, ProjectRefParams, ProjectScanParams, ScanParams,
-    TargetAddParams, TargetRemoveParams,
+    ProjectCreateParams, ProjectDeleteParams, ProjectRefParams, ProjectScanParams,
+    ProjectStatusParams, ScanParams, TargetAddParams, TargetRemoveParams,
 };
 use crate::engine::error::ScorchError;
 use crate::engine::scan_context::ScanContext;
 use crate::engine::target::Target;
 use crate::runner::orchestrator::Orchestrator;
-use crate::storage::{context, findings, projects, scans};
+use crate::storage::{context, findings, metrics, projects, scans};
 
 /// Helper to resolve a project by name or UUID.
 async fn resolve_project(
@@ -393,6 +393,23 @@ impl ScorchKitServer {
         Ok("{\"success\": true, \"message\": \"Database migrations complete\"}".to_string())
     }
 
+    /// Get security posture metrics and trend analysis for a project.
+    ///
+    /// Returns aggregate metrics including severity/status breakdowns,
+    /// regression detection, trend direction, and top unresolved findings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the project is not found or the database fails.
+    pub async fn do_project_status(&self, params: ProjectStatusParams) -> Result<String, String> {
+        let project =
+            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let posture = metrics::build_posture_metrics(&self.pool, project.id, &project.name)
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string_pretty(&posture).map_err(|e| e.to_string())
+    }
+
     /// Analyze findings for a project using AI with structured output.
     ///
     /// Loads findings from the database, builds project context for trend
@@ -573,6 +590,16 @@ impl ScorchKitServer {
     #[tool(description = "Run pending database migrations")]
     async fn db_migrate(&self) -> Result<String, String> {
         self.do_db_migrate().await
+    }
+
+    #[tool(
+        description = "Get security posture metrics, trend analysis, regressions, and top unresolved findings for a project"
+    )]
+    async fn project_status(
+        &self,
+        params: Parameters<ProjectStatusParams>,
+    ) -> Result<String, String> {
+        self.do_project_status(params.0).await
     }
 
     #[tool(

@@ -210,6 +210,153 @@ pub async fn target_list(pool: &PgPool, project_ref: &str) -> Result<()> {
     Ok(())
 }
 
+/// Show posture metrics and trend analysis for a project.
+///
+/// Renders a colored terminal dashboard showing scan summary, finding
+/// breakdown by severity and status, regression alerts, trend direction,
+/// and top unresolved findings.
+///
+/// # Errors
+///
+/// Returns an error if the project is not found or the database query fails.
+pub async fn status(pool: &PgPool, project_ref: &str) -> Result<()> {
+    let project = resolve_project(pool, project_ref).await?;
+    let metrics =
+        crate::storage::metrics::build_posture_metrics(pool, project.id, &project.name).await?;
+
+    println!();
+    println!("{}  {}", "Security Posture".bold().underline(), metrics.project_name.cyan().bold());
+    println!("{}", "━".repeat(60).dimmed());
+
+    // Scan summary
+    println!();
+    println!("  {}", "Scan History".bold());
+    println!("    Total scans:   {}", metrics.scan_summary.total_scans.to_string().cyan());
+    println!("    Last 30 days:  {}", metrics.scan_summary.scans_last_30_days.to_string().cyan());
+    if let Some(ref date) = metrics.scan_summary.latest_scan_date {
+        println!("    Latest scan:   {}", date.cyan());
+    } else {
+        println!("    Latest scan:   {}", "none".dimmed());
+    }
+
+    // Finding summary
+    println!();
+    println!("  {}", "Finding Summary".bold());
+    println!("    Total:    {}", metrics.finding_summary.total_findings.to_string().cyan());
+    println!(
+        "    Active:   {}",
+        format_count_colored(metrics.finding_summary.active_findings, true)
+    );
+    println!(
+        "    Resolved: {}",
+        format_count_colored(metrics.finding_summary.resolved_findings, false)
+    );
+
+    // Severity breakdown
+    if !metrics.severity_breakdown.is_empty() {
+        println!();
+        println!("  {}", "By Severity".bold());
+        for sc in &metrics.severity_breakdown {
+            let label = format_severity_colored(&sc.severity);
+            println!("    {:<12} {}", label, sc.count);
+        }
+    }
+
+    // Status breakdown
+    if !metrics.status_breakdown.is_empty() {
+        println!();
+        println!("  {}", "By Status".bold());
+        for sc in &metrics.status_breakdown {
+            println!("    {:<16} {}", sc.status, sc.count);
+        }
+    }
+
+    // Trend
+    println!();
+    println!("  {}", "Trend".bold());
+    let trend_display = match metrics.trend {
+        crate::storage::metrics::TrendDirection::Improving => {
+            metrics.trend.label().green().bold().to_string()
+        }
+        crate::storage::metrics::TrendDirection::Declining => {
+            metrics.trend.label().red().bold().to_string()
+        }
+        crate::storage::metrics::TrendDirection::Stable => {
+            metrics.trend.label().yellow().bold().to_string()
+        }
+    };
+    println!("    Direction: {trend_display}");
+    println!(
+        "    MTTR:      {}",
+        metrics.mttr_days.map_or_else(
+            || "n/a (requires status change tracking)".dimmed().to_string(),
+            |d| format!("{d:.1} days"),
+        )
+    );
+
+    // Regressions
+    if !metrics.regressions.is_empty() {
+        println!();
+        println!("  {} ({})", "Regressions".red().bold(), metrics.regressions.len());
+        for r in &metrics.regressions {
+            println!(
+                "    {} {} [{}] was {}",
+                format_severity_colored(&r.severity),
+                r.title,
+                r.module_id.dimmed(),
+                r.previous_status.yellow()
+            );
+        }
+    }
+
+    // Top unresolved
+    if !metrics.top_unresolved.is_empty() {
+        println!();
+        println!("  {}", "Top Unresolved".bold());
+        for f in &metrics.top_unresolved {
+            println!(
+                "    {} {} ({}, seen {}x, since {})",
+                format_severity_colored(&f.severity),
+                f.title,
+                f.status.dimmed(),
+                f.seen_count,
+                f.first_seen.dimmed(),
+            );
+        }
+    }
+
+    println!();
+    Ok(())
+}
+
+/// Format a severity label with appropriate color.
+fn format_severity_colored(severity: &str) -> String {
+    match severity {
+        "critical" => "critical".red().bold().to_string(),
+        "high" => "high".red().to_string(),
+        "medium" => "medium".yellow().to_string(),
+        "low" => "low".green().to_string(),
+        "info" => "info".blue().to_string(),
+        other => other.dimmed().to_string(),
+    }
+}
+
+/// Format a count with color based on whether high values are bad.
+fn format_count_colored(count: usize, high_is_bad: bool) -> String {
+    let s = count.to_string();
+    if count == 0 {
+        if high_is_bad {
+            s.green().to_string()
+        } else {
+            s.dimmed().to_string()
+        }
+    } else if high_is_bad {
+        s.yellow().to_string()
+    } else {
+        s.green().to_string()
+    }
+}
+
 /// Resolve a project reference (name or UUID) to a `Project`.
 ///
 /// # Errors
