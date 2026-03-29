@@ -12,43 +12,47 @@ The tool targets OWASP Top 10 web vulnerabilities and integrates Claude AI for i
 ## System Architecture
 
 ```
-                        ┌──────────────┐
-                        │   CLI (clap) │
-                        │   args.rs    │
-                        └──────┬───────┘
-                               │
-                        ┌──────▼───────┐
-                        │   Runner     │
-                        │  runner.rs   │
-                        └──────┬───────┘
-                               │
-                 ┌─────────────▼─────────────┐
-                 │      Orchestrator          │
-                 │    orchestrator.rs         │
-                 │                           │
-                 │  ┌─────┐ ┌─────┐ ┌─────┐ │
-                 │  │Mod 1│ │Mod 2│ │Mod N│ │  ← ScanModule trait
-                 │  └──┬──┘ └──┬──┘ └──┬──┘ │
-                 └─────┼───────┼───────┼─────┘
-                       │       │       │
-              ┌────────▼──┐ ┌──▼────┐ ┌▼──────────┐
-              │  Built-in │ │ HTTP  │ │  External  │
-              │  Analysis │ │ Reqs  │ │  Tool Exec │
-              └───────────┘ └───────┘ └────────────┘
-                       │       │       │
-                       └───────┼───────┘
-                               │
-                        ┌──────▼───────┐
-                        │  Vec<Finding>│
-                        └──────┬───────┘
-                               │
-                 ┌─────────────▼─────────────┐
-                 │                           │
-          ┌──────▼──────┐          ┌─────────▼────────┐
-          │   Report    │          │   AI Analysis     │
-          │ (term/json) │          │ (claude -p)       │
-          └─────────────┘          └──────────────────┘
+     ┌──────────────┐              ┌──────────────────┐
+     │   CLI (clap) │              │   MCP Server     │
+     │   args.rs    │              │  (rmcp stdio)    │
+     └──────┬───────┘              │  20 tools        │
+            │                      │  6 resources     │
+     ┌──────▼───────┐              └──────┬───────────┘
+     │   Runner     │                     │
+     │  runner.rs   │                     │
+     └──────┬───────┘                     │
+            │                             │
+            └──────────┬──────────────────┘
+                       │
+          ┌────────────▼────────────────┐
+          │        Orchestrator         │
+          │      orchestrator.rs        │
+          │                             │
+          │  ┌─────┐ ┌─────┐ ┌───────┐ │
+          │  │Mod 1│ │Mod 2│ │ Mod N │ │  ← ScanModule trait
+          │  └──┬──┘ └──┬──┘ └───┬───┘ │
+          └─────┼───────┼────────┼──────┘
+                │       │        │
+       ┌────────▼──┐ ┌──▼────┐ ┌─▼──────────┐
+       │  Built-in │ │ HTTP  │ │  External   │
+       │  Analysis │ │ Reqs  │ │  Tool Exec  │
+       └───────────┘ └───────┘ └─────────────┘
+                │       │        │
+                └───────┼────────┘
+                        │
+                 ┌──────▼───────┐
+                 │ Vec<Finding> │
+                 └──────┬───────┘
+                        │
+          ┌─────────────▼─────────────┐
+          │                           │
+   ┌──────▼──────┐  ┌────────▼─────┐  ┌──────▼──────┐
+   │   Report    │  │ AI Analysis  │  │   Storage   │
+   │ (term/json) │  │ (claude -p)  │  │ (PostgreSQL)│
+   └─────────────┘  └──────────────┘  └─────────────┘
 ```
+
+The CLI and MCP server are two entry points into the same engine. The CLI dispatches commands directly; the MCP server exposes the same operations as tools that AI assistants call conversationally. Both share the Orchestrator for scanning and the Storage layer for persistence. See [mcp.md](mcp.md) for MCP server details.
 
 ## Data Flow
 
