@@ -110,6 +110,20 @@ pub struct FindingUpdateStatusParams {
     pub status: String,
 }
 
+/// Parameters for creating a recurring scan schedule.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScheduleScanParams {
+    /// Project name or UUID.
+    pub project: String,
+    /// Target URL to scan on schedule.
+    pub target: String,
+    /// Cron expression (e.g., "0 0 * * *" for daily at midnight).
+    pub cron: String,
+    /// Scan profile: "quick", "standard", or "thorough".
+    #[serde(default = "default_profile")]
+    pub profile: String,
+}
+
 /// Parameters for AI-guided scan planning.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PlanScanParams {

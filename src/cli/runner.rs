@@ -126,6 +126,9 @@ pub async fn execute(cli: Cli) -> Result<()> {
         #[cfg(feature = "storage")]
         Commands::Finding { command } => run_finding_command(&config, command).await,
 
+        #[cfg(feature = "storage")]
+        Commands::Schedule { command } => run_schedule_command(&config, command).await,
+
         #[cfg(feature = "mcp")]
         Commands::Serve => crate::cli::serve::run_serve(&config).await,
     }
@@ -197,6 +200,29 @@ async fn run_finding_command(
         args::FindingCommands::Status { id, status } => {
             crate::cli::finding::update_status(&pool, &id, &status).await
         }
+    }
+}
+
+/// Dispatch schedule subcommands.
+#[cfg(feature = "storage")]
+async fn run_schedule_command(
+    config: &Arc<AppConfig>,
+    command: args::ScheduleCommands,
+) -> Result<()> {
+    let pool = crate::storage::connect_from_config(&config.database, None).await?;
+
+    match command {
+        args::ScheduleCommands::Create { project, target, cron, profile } => {
+            crate::cli::schedule::create(&pool, &project, &target, &cron, &profile).await
+        }
+        args::ScheduleCommands::List { project } => {
+            crate::cli::schedule::list(&pool, &project).await
+        }
+        args::ScheduleCommands::Show { id } => crate::cli::schedule::show(&pool, &id).await,
+        args::ScheduleCommands::Enable { id } => crate::cli::schedule::enable(&pool, &id).await,
+        args::ScheduleCommands::Disable { id } => crate::cli::schedule::disable(&pool, &id).await,
+        args::ScheduleCommands::Delete { id } => crate::cli::schedule::delete(&pool, &id).await,
+        args::ScheduleCommands::RunDue => crate::cli::schedule::run_due(&pool, config).await,
     }
 }
 

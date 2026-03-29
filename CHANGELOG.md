@@ -2,6 +2,24 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.8.0] - 2026-03-29
+
+### Added
+- **Scan scheduling** — `scorchkit schedule create/list/show/enable/disable/delete` for recurring scans per project
+- **`schedule run-due`** — explicitly triggers all overdue schedules (wire into system cron for automation)
+- **`ScanSchedule` model** — project_id, target_url, profile, cron_expression, enabled, last_run, next_run
+- **`storage/schedules.rs`** — CRUD + `find_due_schedules()` + `mark_schedule_run()` + `compute_next_run()`
+- **`croner` crate** — lightweight cron expression parsing (5/6/7-field support)
+- **Migration `002_scan_schedules.sql`** — `scan_schedules` table with partial index on `next_run WHERE enabled`
+- **`schedule-scan` MCP tool** — create recurring scan schedules via MCP (19th tool)
+- **`run-due-scans` MCP tool** — trigger due scan execution via MCP (20th tool, was 19)
+- 8 new tests (6 storage-gated + 1 mcp-gated + 2 CLI integration)
+
+### Changed
+- `Commands` enum now includes `Schedule` subcommand (storage feature-gated)
+- MCP server exposes 19 tools (was 17)
+- New `croner` dependency added to `storage` feature
+
 ## [0.7.0] - 2026-03-29
 
 ### Added
