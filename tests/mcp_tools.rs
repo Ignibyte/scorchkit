@@ -675,3 +675,23 @@ async fn test_server_capabilities_include_resources() {
     let info = server.get_info();
     assert!(info.capabilities.resources.is_some(), "server capabilities should include resources");
 }
+
+/// Verify `get_info()` instructions contain the rich methodology guide,
+/// not the old minimal placeholder string.
+#[tokio::test]
+async fn test_server_uses_rich_instructions() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool);
+    use rmcp::handler::server::ServerHandler;
+    let info = server.get_info();
+    let instructions = info.instructions.as_deref().unwrap_or("");
+    assert!(
+        instructions.contains("Engagement Workflow"),
+        "instructions should contain the engagement workflow"
+    );
+    assert!(
+        instructions.contains("project_create"),
+        "instructions should reference project_create tool"
+    );
+    assert!(instructions.len() > 1000, "instructions should be substantial");
+}

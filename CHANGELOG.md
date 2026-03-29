@@ -2,6 +2,22 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.10.0] - 2026-03-29
+
+### Added
+- **Rich MCP system instructions** — comprehensive pentest methodology delivered to Claude on connection
+- **7-step engagement workflow** — PTES-adapted: project setup, recon, AI planning, targeted scan, analysis, triage, reporting
+- **Tool reference** — all 20 MCP tools documented by category with decision guidance in instructions
+- **Scan profile guide** — quick/standard/thorough selection criteria for Claude
+- **Finding interpretation framework** — severity levels, lifecycle states, prioritization strategy
+- **Safety constraints** — scope enforcement, authorization checks, user-directed triage
+- **`src/mcp/instructions.rs`** — `pub const INSTRUCTIONS` (~4.5KB) referenced by `ServerInfo`
+- 5 new tests (4 unit for instruction content validation + 1 integration)
+
+### Changed
+- `ServerInfo.instructions` upgraded from 2-line placeholder to comprehensive methodology guide
+- MCP server now teaches Claude the complete pentest workflow on connection
+
 ## [0.9.0] - 2026-03-29
 
 ### Added

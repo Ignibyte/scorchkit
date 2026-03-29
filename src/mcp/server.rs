@@ -45,12 +45,7 @@ impl ServerHandler for ScorchKitServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().enable_resources().build())
             .with_server_info(Implementation::new("scorchkit", env!("CARGO_PKG_VERSION")))
-            .with_instructions(
-                "ScorchKit security testing toolkit. Use the available tools to manage \
-             projects, run scans, and track vulnerability findings. Browse project \
-             data via resources."
-                    .to_string(),
-            )
+            .with_instructions(super::instructions::INSTRUCTIONS.to_string())
     }
 
     async fn list_resources(
