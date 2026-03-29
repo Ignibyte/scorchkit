@@ -2,6 +2,17 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.19.0] - 2026-03-29
+
+### Added
+- **Professional PDF pentest report generation** — `src/report/pdf.rs` with `--format pdf` CLI flag
+- **6-section professional layout** — cover page, executive summary with risk rating, scope & methodology, risk matrix, detailed findings with evidence/remediation/OWASP/CWE, appendix with module list
+- **Print-optimized CSS** — A4 page size, `@page` rules with page numbers, page breaks per section, professional color scheme
+- **`weasyprint` integration** — HTML-to-PDF conversion via subprocess with stdin piping (no temp files)
+- **`OutputFormat::Pdf`** variant in CLI args with dispatch in runner
+- 8 new unit tests for HTML template structure, severity counts, finding details, print CSS, risk matrix, risk rating, categories, HTML escaping
+- ScorchKit now supports 5 output formats: terminal, json, html, sarif, pdf
+
 ## [0.18.0] - 2026-03-29
 
 ### Added

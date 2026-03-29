@@ -180,6 +180,7 @@ pub enum OutputFormat {
     Json,
     Html,
     Sarif,
+    Pdf,
 }
 
 /// Database management subcommands.

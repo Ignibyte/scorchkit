@@ -375,6 +375,12 @@ async fn run_scan(
                 println!("\n{} {}", "SARIF report saved:".green().bold(), path.display());
             }
         }
+        Some(OutputFormat::Pdf) => {
+            let path = report::pdf::save_report(&result, &config.report)?;
+            if !quiet {
+                println!("\n{} {}", "PDF report saved:".green().bold(), path.display());
+            }
+        }
         _ => {}
     }
 
