@@ -162,6 +162,13 @@ pub enum Commands {
         command: FindingCommands,
     },
 
+    /// Manage recurring scan schedules
+    #[cfg(feature = "storage")]
+    Schedule {
+        #[command(subcommand)]
+        command: ScheduleCommands,
+    },
+
     /// Start the MCP server on stdio transport
     #[cfg(feature = "mcp")]
     Serve,
@@ -294,6 +301,60 @@ pub enum FindingCommands {
         /// New status (new, acknowledged, `false_positive`, remediated, verified)
         status: String,
     },
+}
+
+/// Schedule management subcommands.
+#[cfg(feature = "storage")]
+#[derive(Subcommand, Debug)]
+pub enum ScheduleCommands {
+    /// Create a recurring scan schedule
+    Create {
+        /// Project name
+        project: String,
+
+        /// Target URL to scan
+        target: String,
+
+        /// Cron expression (e.g., "0 0 * * *" for daily at midnight)
+        cron: String,
+
+        /// Scan profile (quick, standard, thorough)
+        #[arg(long, default_value = "standard")]
+        profile: String,
+    },
+
+    /// List schedules for a project
+    List {
+        /// Project name
+        project: String,
+    },
+
+    /// Show details for a single schedule
+    Show {
+        /// Schedule UUID
+        id: String,
+    },
+
+    /// Enable a disabled schedule
+    Enable {
+        /// Schedule UUID
+        id: String,
+    },
+
+    /// Disable an active schedule
+    Disable {
+        /// Schedule UUID
+        id: String,
+    },
+
+    /// Delete a schedule
+    Delete {
+        /// Schedule UUID
+        id: String,
+    },
+
+    /// Execute all schedules that are due
+    RunDue,
 }
 
 /// Print shell completions to stdout.

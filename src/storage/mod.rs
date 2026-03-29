@@ -24,6 +24,7 @@ pub mod migrate;
 pub mod models;
 pub mod projects;
 pub mod scans;
+pub mod schedules;
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;

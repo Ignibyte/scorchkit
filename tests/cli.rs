@@ -204,3 +204,30 @@ fn test_cli_project_status_subcommand() {
         .stdout(predicate::str::contains("posture"))
         .stdout(predicate::str::contains("project"));
 }
+
+/// Verify `schedule create --help` shows expected fields when
+/// the `storage` feature is compiled.
+#[cfg(feature = "storage")]
+#[test]
+fn test_cli_schedule_create_in_help() {
+    Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["schedule", "create", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CRON"))
+        .stdout(predicate::str::contains("TARGET"))
+        .stdout(predicate::str::contains("PROJECT"));
+}
+
+/// Verify `schedule run-due --help` works when storage feature is compiled.
+#[cfg(feature = "storage")]
+#[test]
+fn test_cli_schedule_run_due_in_help() {
+    Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["schedule", "run-due", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("due"));
+}

@@ -15,13 +15,13 @@ use super::server::ScorchKitServer;
 use super::types::{
     AnalyzeFindingsParams, FindingListParams, FindingRefParams, FindingUpdateStatusParams,
     PlanScanParams, ProjectCreateParams, ProjectDeleteParams, ProjectRefParams, ProjectScanParams,
-    ProjectStatusParams, ScanParams, TargetAddParams, TargetRemoveParams,
+    ProjectStatusParams, ScanParams, ScheduleScanParams, TargetAddParams, TargetRemoveParams,
 };
 use crate::engine::error::ScorchError;
 use crate::engine::scan_context::ScanContext;
 use crate::engine::target::Target;
 use crate::runner::orchestrator::Orchestrator;
-use crate::storage::{context, findings, metrics, projects, scans};
+use crate::storage::{context, findings, metrics, projects, scans, schedules};
 
 /// Helper to resolve a project by name or UUID.
 async fn resolve_project(
@@ -393,6 +393,67 @@ impl ScorchKitServer {
         Ok("{\"success\": true, \"message\": \"Database migrations complete\"}".to_string())
     }
 
+    /// Create a recurring scan schedule for a project.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the project is not found, the cron expression
+    /// is invalid, or the database fails.
+    pub async fn do_schedule_scan(&self, params: ScheduleScanParams) -> Result<String, String> {
+        let project =
+            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let schedule = schedules::create_schedule(
+            &self.pool,
+            project.id,
+            &params.target,
+            &params.profile,
+            &params.cron,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        serde_json::to_string_pretty(&schedule).map_err(|e| e.to_string())
+    }
+
+    /// Find and execute all due scan schedules.
+    ///
+    /// Returns a summary of executed scans and their results.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails. Individual scan
+    /// failures are captured in the results, not propagated.
+    pub async fn do_run_due_scans(&self) -> Result<String, String> {
+        let due = schedules::find_due_schedules(&self.pool).await.map_err(|e| e.to_string())?;
+
+        if due.is_empty() {
+            return Ok("{\"executed\": 0, \"message\": \"No schedules are due\"}".to_string());
+        }
+
+        let mut results = Vec::new();
+        for schedule in &due {
+            let outcome = match crate::cli::schedule::run_due(&self.pool, &self.config).await {
+                Ok(()) => serde_json::json!({
+                    "schedule_id": schedule.id.to_string(),
+                    "target": &schedule.target_url,
+                    "status": "success",
+                }),
+                Err(e) => serde_json::json!({
+                    "schedule_id": schedule.id.to_string(),
+                    "target": &schedule.target_url,
+                    "status": "error",
+                    "error": e.to_string(),
+                }),
+            };
+            results.push(outcome);
+        }
+
+        let output = serde_json::json!({
+            "executed": due.len(),
+            "results": results,
+        });
+        serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
+    }
+
     /// Get security posture metrics and trend analysis for a project.
     ///
     /// Returns aggregate metrics including severity/status breakdowns,
@@ -625,6 +686,19 @@ impl ScorchKitServer {
     #[tool(description = "Run pending database migrations")]
     async fn db_migrate(&self) -> Result<String, String> {
         self.do_db_migrate().await
+    }
+
+    #[tool(description = "Create a recurring scan schedule for a project (cron-based)")]
+    async fn schedule_scan(
+        &self,
+        params: Parameters<ScheduleScanParams>,
+    ) -> Result<String, String> {
+        self.do_schedule_scan(params.0).await
+    }
+
+    #[tool(description = "Execute all scan schedules that are due (triggered, not daemon)")]
+    async fn run_due_scans(&self) -> Result<String, String> {
+        self.do_run_due_scans().await
     }
 
     #[tool(

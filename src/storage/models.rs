@@ -171,6 +171,33 @@ impl fmt::Display for VulnStatus {
     }
 }
 
+/// A recurring scan schedule for a project.
+///
+/// Defines a target URL, scan profile, and cron expression for
+/// automated recurring scans. Schedules are triggered explicitly
+/// via `schedule run-due` CLI or `run-due-scans` MCP tool.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ScanSchedule {
+    /// Unique schedule identifier.
+    pub id: Uuid,
+    /// The project this schedule belongs to.
+    pub project_id: Uuid,
+    /// Target URL to scan.
+    pub target_url: String,
+    /// Scan profile (quick, standard, thorough).
+    pub profile: String,
+    /// Cron expression defining the recurrence pattern.
+    pub cron_expression: String,
+    /// Whether this schedule is active.
+    pub enabled: bool,
+    /// When this schedule was last executed.
+    pub last_run: Option<DateTime<Utc>>,
+    /// When this schedule should next execute.
+    pub next_run: DateTime<Utc>,
+    /// When this schedule was created.
+    pub created_at: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
