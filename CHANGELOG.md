@@ -2,6 +2,21 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.9.0] - 2026-03-29
+
+### Added
+- **MCP resources** — browsable read-only resources for project data via MCP protocol
+- **Resource URI scheme** — `scorchkit://projects`, `scorchkit://projects/{id}`, `.../scans`, `.../findings` with hierarchical paths
+- **5 resource templates** — parameterized URI patterns for project, scan, and finding resources
+- **Dynamic resource list** — `list_resources` returns projects collection + per-project resources from database
+- **`src/mcp/resources.rs`** — resource business logic with `do_list_resources()`, `do_list_resource_templates()`, `do_read_resource()`
+- **URI parser** — `parse_resource_uri()` with `ResourceKind` enum for type-safe dispatch
+- 21 new tests (10 unit tests for URI parsing/templates + 11 integration tests for resource operations)
+
+### Changed
+- MCP server capabilities now include `resources` alongside `tools`
+- `ServerHandler` impl overrides `list_resources`, `list_resource_templates`, `read_resource`
+
 ## [0.8.0] - 2026-03-29
 
 ### Added
