@@ -2,6 +2,19 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.16.0] - 2026-03-29
+
+### Added
+- **GraphQL deep security testing module** — `src/scanner/graphql.rs` implementing `GraphQLModule`
+- **GraphQL endpoint discovery** — probes 10 common paths (`/graphql`, `/api/graphql`, `/gql`, etc.) via `{ __typename }` query
+- **Introspection detection** — tests if full schema introspection is enabled, counts exposed types
+- **Query depth abuse** — sends 15-level nested queries to detect missing depth limits
+- **Batch query abuse** — tests batch query support (25 queries in one request) for DoS potential
+- **Field suggestion leaks** — detects "Did you mean" information disclosure on misspelled fields
+- **Mutation enumeration** — discovers exposed mutations via targeted introspection
+- 8 new unit tests for query building, response analysis, and endpoint detection
+- ScorchKit now has 46 modules (25 built-in + 22 external tool wrappers) — milestone: 100 default tests
+
 ## [0.15.0] - 2026-03-29
 
 ### Added

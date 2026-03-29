@@ -2,6 +2,7 @@ mod api_schema;
 mod auth;
 mod cmdi;
 mod csrf;
+mod graphql;
 mod idor;
 mod injection;
 mod jwt;
@@ -39,6 +40,7 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(sensitive::SensitiveDataModule),
         Box::new(upload::UploadModule),
         Box::new(websocket::WebSocketModule),
+        Box::new(graphql::GraphQLModule),
         Box::new(api_schema::ApiSchemaModule),
         Box::new(ratelimit::RateLimitModule),
     ]
