@@ -407,3 +407,271 @@ async fn test_tool_db_migrate() {
     assert!(result.is_ok(), "db_migrate should succeed");
     assert!(result.unwrap().contains("success"));
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// MCP Resource Tests
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Verify `do_list_resources` returns at least the static projects
+/// collection resource.
+#[tokio::test]
+async fn test_resource_list_resources() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool);
+    let result = server.do_list_resources().await;
+    assert!(result.is_ok(), "do_list_resources should succeed");
+    let list = result.unwrap();
+    // At minimum, the static "All Projects" resource must be present
+    assert!(
+        list.resources.iter().any(|r| r.raw.uri == "scorchkit://projects"),
+        "should contain the projects collection resource"
+    );
+}
+
+/// Verify `do_list_resource_templates` returns exactly 5 templates.
+#[tokio::test]
+async fn test_resource_list_templates() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool);
+    let result = server.do_list_resource_templates();
+    assert_eq!(result.resource_templates.len(), 5, "should return 5 resource templates");
+}
+
+/// Verify reading `scorchkit://projects` returns a JSON array of projects.
+#[tokio::test]
+async fn test_resource_read_projects() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool.clone());
+    let name = unique_name("res-projects");
+
+    storage::projects::create_project(&pool, &name, "").await.unwrap();
+
+    let result = server.do_read_resource("scorchkit://projects").await;
+    assert!(result.is_ok(), "reading projects should succeed");
+    let read = result.unwrap();
+    assert_eq!(read.contents.len(), 1, "should return one content block");
+
+    // Cleanup
+    let project = storage::projects::get_project_by_name(&pool, &name).await.unwrap().unwrap();
+    storage::projects::delete_project(&pool, project.id).await.unwrap();
+}
+
+/// Verify reading `scorchkit://projects/{id}` returns project details
+/// with targets, scan_count, and finding_count fields.
+#[tokio::test]
+async fn test_resource_read_project() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool.clone());
+    let name = unique_name("res-project");
+
+    let project = storage::projects::create_project(&pool, &name, "resource test").await.unwrap();
+    let uri = format!("scorchkit://projects/{}", project.id);
+
+    let result = server.do_read_resource(&uri).await;
+    assert!(result.is_ok(), "reading single project should succeed");
+    let read = result.unwrap();
+    let text = match &read.contents[0] {
+        rmcp::model::ResourceContents::TextResourceContents { text, .. } => text,
+        _ => panic!("expected text resource content"),
+    };
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(json["project"]["name"], name);
+    assert!(json.get("scan_count").is_some());
+    assert!(json.get("finding_count").is_some());
+
+    // Cleanup
+    storage::projects::delete_project(&pool, project.id).await.unwrap();
+}
+
+/// Verify reading `scorchkit://projects/{id}/scans` returns scan history.
+#[tokio::test]
+async fn test_resource_read_scans() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool.clone());
+    let name = unique_name("res-scans");
+
+    let project = storage::projects::create_project(&pool, &name, "").await.unwrap();
+    let now = chrono::Utc::now();
+    storage::scans::save_scan(
+        &pool,
+        project.id,
+        "https://example.com",
+        "quick",
+        now,
+        Some(now),
+        &[],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+
+    let uri = format!("scorchkit://projects/{}/scans", project.id);
+    let result = server.do_read_resource(&uri).await;
+    assert!(result.is_ok(), "reading project scans should succeed");
+    let read = result.unwrap();
+    let text = match &read.contents[0] {
+        rmcp::model::ResourceContents::TextResourceContents { text, .. } => text,
+        _ => panic!("expected text resource content"),
+    };
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+    assert_eq!(parsed.len(), 1, "should return one scan");
+
+    // Cleanup
+    storage::projects::delete_project(&pool, project.id).await.unwrap();
+}
+
+/// Verify reading `scorchkit://projects/{id}/scans/{scan_id}` returns
+/// a single scan record.
+#[tokio::test]
+async fn test_resource_read_scan() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool.clone());
+    let name = unique_name("res-scan");
+
+    let project = storage::projects::create_project(&pool, &name, "").await.unwrap();
+    let now = chrono::Utc::now();
+    let scan = storage::scans::save_scan(
+        &pool,
+        project.id,
+        "https://example.com",
+        "standard",
+        now,
+        Some(now),
+        &["headers".to_string()],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+
+    let uri = format!("scorchkit://projects/{}/scans/{}", project.id, scan.id);
+    let result = server.do_read_resource(&uri).await;
+    assert!(result.is_ok(), "reading single scan should succeed");
+    let read = result.unwrap();
+    let text = match &read.contents[0] {
+        rmcp::model::ResourceContents::TextResourceContents { text, .. } => text,
+        _ => panic!("expected text resource content"),
+    };
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(json["profile"], "standard");
+
+    // Cleanup
+    storage::projects::delete_project(&pool, project.id).await.unwrap();
+}
+
+/// Verify reading `scorchkit://projects/{id}/findings` returns tracked
+/// findings for a project.
+#[tokio::test]
+async fn test_resource_read_findings() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool.clone());
+    let name = unique_name("res-findings");
+
+    let project = storage::projects::create_project(&pool, &name, "").await.unwrap();
+    let now = chrono::Utc::now();
+    let scan = storage::scans::save_scan(
+        &pool,
+        project.id,
+        "https://example.com",
+        "standard",
+        now,
+        Some(now),
+        &[],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+    let findings_data =
+        vec![Finding::new("xss", Severity::High, "XSS Found", "desc", "https://example.com")];
+    storage::findings::save_findings(&pool, project.id, scan.id, &findings_data).await.unwrap();
+
+    let uri = format!("scorchkit://projects/{}/findings", project.id);
+    let result = server.do_read_resource(&uri).await;
+    assert!(result.is_ok(), "reading project findings should succeed");
+    let read = result.unwrap();
+    let text = match &read.contents[0] {
+        rmcp::model::ResourceContents::TextResourceContents { text, .. } => text,
+        _ => panic!("expected text resource content"),
+    };
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+    assert_eq!(parsed.len(), 1, "should return one finding");
+
+    // Cleanup
+    storage::projects::delete_project(&pool, project.id).await.unwrap();
+}
+
+/// Verify reading `scorchkit://projects/{id}/findings/{finding_id}`
+/// returns a single finding's details.
+#[tokio::test]
+async fn test_resource_read_finding() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool.clone());
+    let name = unique_name("res-finding");
+
+    let project = storage::projects::create_project(&pool, &name, "").await.unwrap();
+    let now = chrono::Utc::now();
+    let scan = storage::scans::save_scan(
+        &pool,
+        project.id,
+        "https://example.com",
+        "standard",
+        now,
+        Some(now),
+        &[],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+    let findings_data =
+        vec![Finding::new("ssl", Severity::Medium, "Weak TLS", "desc", "https://example.com")];
+    storage::findings::save_findings(&pool, project.id, scan.id, &findings_data).await.unwrap();
+    let all = storage::findings::list_findings(&pool, project.id).await.unwrap();
+    let finding_id = all[0].id;
+
+    let uri = format!("scorchkit://projects/{}/findings/{}", project.id, finding_id);
+    let result = server.do_read_resource(&uri).await;
+    assert!(result.is_ok(), "reading single finding should succeed");
+    let read = result.unwrap();
+    let text = match &read.contents[0] {
+        rmcp::model::ResourceContents::TextResourceContents { text, .. } => text,
+        _ => panic!("expected text resource content"),
+    };
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(json["title"], "Weak TLS");
+
+    // Cleanup
+    storage::projects::delete_project(&pool, project.id).await.unwrap();
+}
+
+/// Verify reading an invalid URI returns an error.
+#[tokio::test]
+async fn test_resource_read_invalid_uri() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool);
+    let result = server.do_read_resource("http://example.com").await;
+    assert!(result.is_err(), "invalid URI should return an error");
+}
+
+/// Verify reading a non-existent project returns a not-found error.
+#[tokio::test]
+async fn test_resource_read_not_found() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool);
+    let fake_id = uuid::Uuid::new_v4();
+    let uri = format!("scorchkit://projects/{fake_id}");
+    let result = server.do_read_resource(&uri).await;
+    assert!(result.is_err(), "non-existent project should return an error");
+}
+
+/// Verify `get_info()` capabilities include resources.
+#[tokio::test]
+async fn test_server_capabilities_include_resources() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool);
+    use rmcp::handler::server::ServerHandler;
+    let info = server.get_info();
+    assert!(info.capabilities.resources.is_some(), "server capabilities should include resources");
+}
