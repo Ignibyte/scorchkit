@@ -2,6 +2,17 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.12.0] - 2026-03-29
+
+### Added
+- **Interactsh OOB callback integration** — detect blind SSRF, XXE, RCE, and SQLi via out-of-band callbacks
+- **`src/engine/oob.rs`** — shared OOB infrastructure: `InteractshSession` (subprocess lifecycle), `OobInteraction` (callback data), `BlindPayload`/`BlindCategory` (payload templates), correlation matching
+- **`src/tools/interactsh.rs`** — `InteractshModule` implementing `ScanModule` with `requires_external_tool("interactsh-client")`
+- 4 blind vulnerability categories with targeted payloads: SSRF (URL injection), XXE (entity injection), RCE (command injection via nslookup/curl/backtick), SQLi (DNS exfiltration via LOAD_FILE)
+- Correlation via subdomain prefix: `{correlation_id}.{base_domain}` matches callbacks to originating payloads
+- 10 new unit tests for interaction parsing, URL generation, correlation matching, payload generation
+- ScorchKit now has 42 modules (20 built-in + 22 external tool wrappers)
+
 ## [0.11.0] - 2026-03-29
 
 ### Changed
