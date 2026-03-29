@@ -2,6 +2,24 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.7.0] - 2026-03-29
+
+### Added
+- **AI-guided scan planning** — `scorchkit run <url> --plan` runs recon first, then Claude decides which modules to use
+- **`ScanPlanner`** — two-phase flow: recon modules gather target intelligence, Claude analyzes findings + module catalog to build a targeted `ScanPlan`
+- **`ScanPlan` types** — `ModuleRecommendation` (module_id, priority, rationale), `SkippedModule` (module_id, reason), `PlanValidation`
+- **`validate_plan()`** — validates Claude's module recommendations against registered modules, catches hallucinated IDs
+- **`plan-scan` MCP tool** — returns structured plan JSON without executing (plan-then-execute workflow)
+- **`build_module_catalog()`** — serializes all 41 modules into a compact catalog for Claude's planning prompt
+- **`parse_plan_response()`** — multi-tier JSON extractor with empty-plan fallback for graceful degradation
+- **Graceful fallback** — if planning fails for any reason, scan continues with standard profile
+- 14 new tests (12 default + 1 mcp-gated + 1 CLI integration)
+
+### Changed
+- `Commands::Run` now accepts `--plan` flag for AI-guided scanning
+- MCP server exposes 17 tools (was 16)
+- `run_scan()` restructured to support pre-orchestrator AI planning phase
+
 ## [0.6.0] - 2026-03-29
 
 ### Added

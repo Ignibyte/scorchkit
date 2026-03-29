@@ -232,6 +232,89 @@ Common false positive patterns: generic 404 pages returning 200, WAF/CDN artifac
 cookie flags on non-session cookies, admin panels behind login redirects, \
 self-signed certs on internal envs behind reverse proxies.";
 
+// ── Scan planning prompt ───────────────────────────────────────────────
+
+/// Build a planning prompt from recon findings, target info, and module catalog.
+#[must_use]
+pub fn build_planning_prompt(
+    target: &str,
+    recon_findings: &[Finding],
+    module_catalog: &str,
+) -> String {
+    let recon_json = serialize_findings_compact(recon_findings);
+
+    let mut prompt = format!(
+        "You are a senior penetration tester planning a targeted security scan.\n\n\
+         Target: {target}\n\n\
+         The following reconnaissance has already been performed. \
+         Based on these recon findings, decide which scan modules to run next.\n\n\
+         RECON FINDINGS:\n{recon_json}\n\n\
+         AVAILABLE MODULES:\n{module_catalog}\n\n\
+         ---\n\nTASK:\n"
+    );
+
+    let _ = write!(prompt, "{PLANNING_TASK}");
+    prompt
+}
+
+/// Build a compact JSON catalog of available modules for the planning prompt.
+///
+/// Each entry contains the module's id, name, description, category, and
+/// whether it requires an external tool.
+#[must_use]
+pub fn build_module_catalog(
+    modules: &[Box<dyn crate::engine::module_trait::ScanModule>],
+) -> String {
+    let catalog: Vec<serde_json::Value> = modules
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "id": m.id(),
+                "name": m.name(),
+                "description": m.description(),
+                "category": m.category().to_string(),
+                "requires_external_tool": m.requires_external_tool(),
+            })
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&catalog).unwrap_or_else(|_| "[]".to_string())
+}
+
+const PLANNING_TASK: &str = "\
+Based on the recon findings above, create a scan plan selecting the most relevant modules.
+
+You MUST respond with a single JSON object (no markdown, no commentary outside the JSON).
+
+Use this exact schema:
+{
+  \"target\": \"<the target URL>\",
+  \"recommendations\": [
+    {
+      \"module_id\": \"<exact module ID from the catalog>\",
+      \"priority\": <number, 1=highest>,
+      \"rationale\": \"<why this module is relevant for this target>\",
+      \"category\": \"<recon|scanner>\"
+    }
+  ],
+  \"skipped_modules\": [
+    {
+      \"module_id\": \"<module ID>\",
+      \"reason\": \"<why this module is not relevant>\"
+    }
+  ],
+  \"overall_strategy\": \"<1-2 sentence description of the scanning approach>\",
+  \"estimated_scan_time\": \"<rough estimate or null>\"
+}
+
+Guidelines:
+- Only recommend modules from the AVAILABLE MODULES catalog. Use exact module IDs.
+- Prioritize modules that target the detected technology stack and attack surface.
+- Skip modules that are irrelevant to the detected tech (e.g., skip wpscan if not WordPress).
+- Order by priority: critical security checks first, then enumeration, then edge cases.
+- If external tools are required but the target warrants them, still recommend them.
+- Include recon modules only if deeper recon is warranted (e.g., subdomain enumeration for large scope).";
+
 /// Serialize findings to a compact JSON format for the prompt.
 fn serialize_findings_compact(findings: &[Finding]) -> String {
     // Build a compact representation to minimize token usage

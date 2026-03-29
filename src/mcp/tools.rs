@@ -14,7 +14,7 @@ use uuid::Uuid;
 use super::server::ScorchKitServer;
 use super::types::{
     AnalyzeFindingsParams, FindingListParams, FindingRefParams, FindingUpdateStatusParams,
-    ProjectCreateParams, ProjectDeleteParams, ProjectRefParams, ProjectScanParams,
+    PlanScanParams, ProjectCreateParams, ProjectDeleteParams, ProjectRefParams, ProjectScanParams,
     ProjectStatusParams, ScanParams, TargetAddParams, TargetRemoveParams,
 };
 use crate::engine::error::ScorchError;
@@ -410,6 +410,34 @@ impl ScorchKitServer {
         serde_json::to_string_pretty(&posture).map_err(|e| e.to_string())
     }
 
+    /// Run AI-guided scan planning: recon first, then Claude decides modules.
+    ///
+    /// Returns a structured [`ScanPlan`] as JSON without executing the scan.
+    /// The MCP client can inspect and approve the plan before calling `scan`
+    /// or `project-scan` to execute.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target URL is invalid, AI is disabled, or
+    /// the Claude CLI is unavailable.
+    pub async fn do_plan_scan(&self, params: PlanScanParams) -> Result<String, String> {
+        if !self.config.ai.enabled {
+            return Err("AI is disabled in config — scan planning requires AI".to_string());
+        }
+
+        let planner = crate::ai::planner::ScanPlanner::from_config(&self.config.ai);
+        if !planner.is_available() {
+            return Err(
+                "claude CLI not found. Install Claude Code to enable AI scan planning.".to_string()
+            );
+        }
+
+        let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
+        let plan = planner.plan(&target, &self.config).await.map_err(|e| e.to_string())?;
+
+        serde_json::to_string_pretty(&plan).map_err(|e| e.to_string())
+    }
+
     /// Analyze findings for a project using AI with structured output.
     ///
     /// Loads findings from the database, builds project context for trend
@@ -513,6 +541,13 @@ impl ScorchKitServer {
     #[tool(description = "Run a security scan against a target URL")]
     async fn scan(&self, params: Parameters<ScanParams>) -> Result<String, String> {
         self.do_scan(params.0).await
+    }
+
+    #[tool(
+        description = "AI-guided scan planning: run recon then let Claude decide which modules to use (returns plan, does not execute)"
+    )]
+    async fn plan_scan(&self, params: Parameters<PlanScanParams>) -> Result<String, String> {
+        self.do_plan_scan(params.0).await
     }
 
     #[tool(description = "Create a new security assessment project")]

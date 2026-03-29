@@ -46,6 +46,10 @@ pub enum Commands {
         #[arg(long)]
         analyze: bool,
 
+        /// Use AI-guided scan planning (recon first, then Claude decides modules)
+        #[arg(long)]
+        plan: bool,
+
         /// Scan profile: quick, standard, thorough
         #[arg(long, default_value = "standard")]
         profile: String,
