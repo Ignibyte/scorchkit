@@ -2,6 +2,19 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.13.0] - 2026-03-29
+
+### Added
+- **Authentication & session management testing module** — `src/scanner/auth.rs` implementing `AuthSessionModule`
+- **Session ID entropy analysis** — Shannon entropy scoring to detect predictable session IDs (< 3.0 bits/char threshold)
+- **Session fixation detection** — compares pre-auth vs post-auth session cookies to detect unchanged session IDs
+- **Logout invalidation testing** — probes common logout paths then verifies session is actually invalidated
+- **Session expiry analysis** — flags excessive `Max-Age` (> 24h) and far-future `Expires` dates
+- **Multiple session cookie detection** — identifies fragmented session management (> 1 session cookie)
+- **Credential-gated tests** — fixation and logout require `AuthConfig` credentials; passive checks run regardless
+- 11 new unit tests for entropy, fixation, expiry, cookie parsing, credential detection
+- ScorchKit now has 43 modules (21 built-in + 22 external tool wrappers)
+
 ## [0.12.0] - 2026-03-29
 
 ### Added
