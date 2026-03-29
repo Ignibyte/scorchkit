@@ -2,6 +2,15 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.17.0] - 2026-03-29
+
+### Added
+- **CORS deep analysis module** — `src/scanner/cors.rs` testing subdomain wildcards, internal network origin bypass, preflight cache abuse, method allowlist analysis, sensitive header exposure
+- **CSP bypass detection module** — `src/scanner/csp.rs` testing missing critical directives (`base-uri`, `object-src`, `frame-ancestors`), permissive `script-src` (`data:`, `blob:`, `https:`), `report-uri` information leaks, wildcard `default-src`
+- First merged pipeline — two modules (#16 + #17) in one pipeline
+- 12 new unit tests (5 CORS + 7 CSP)
+- ScorchKit now has 49 modules (27 built-in + 22 external tool wrappers)
+
 ## [0.16.0] - 2026-03-29
 
 ### Added

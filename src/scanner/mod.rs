@@ -1,6 +1,8 @@
 mod api_schema;
 mod auth;
 mod cmdi;
+mod cors;
+mod csp;
 mod csrf;
 mod graphql;
 mod idor;
@@ -25,6 +27,8 @@ use crate::engine::module_trait::ScanModule;
 pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
     vec![
         Box::new(auth::AuthSessionModule),
+        Box::new(cors::CorsModule),
+        Box::new(csp::CspModule),
         Box::new(waf::WafModule),
         Box::new(ssl::SslModule),
         Box::new(misconfig::MisconfigModule),
