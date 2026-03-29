@@ -589,29 +589,48 @@ impl ScorchKitServer {
 /// `#[tool_router]` — thin wrappers that delegate to `do_*` public methods.
 #[tool_router(vis = "pub(crate)")]
 impl ScorchKitServer {
-    #[tool(description = "List all available scan modules")]
+    #[tool(
+        description = "List all 41 available scan modules with their categories, descriptions, \
+        and external tool requirements. Use this first to understand what scanning capabilities \
+        are available. Returns JSON array. Use check_tools to verify external tool installation."
+    )]
     async fn list_modules(&self) -> String {
         self.do_list_modules()
     }
 
-    #[tool(description = "Check which external security tools are installed")]
+    #[tool(description = "Check which external security tools (nmap, nuclei, sqlmap, etc.) are \
+        installed on the system. Call this before using the 'thorough' scan profile to know \
+        which external tool wrappers will be available. Returns JSON array with tool name and \
+        installed status.")]
     async fn check_tools(&self) -> String {
         self.do_check_tools()
     }
 
-    #[tool(description = "Run a security scan against a target URL")]
+    #[tool(description = "Run a security scan against a target URL without project persistence. \
+        Use for quick ad-hoc testing when you don't need to track results over time. Set \
+        profile to 'quick' for fast recon (4 modules: headers, tech, ssl, misconfig), \
+        'standard' for all 20 built-in modules, or 'thorough' for all 41 including external \
+        tools. Use 'modules' to run only specific module IDs, or 'skip' to exclude specific \
+        ones. Prefer project_scan when you want results persisted and deduplicated. Returns \
+        JSON with findings array, summary statistics, and scan metadata.")]
     async fn scan(&self, params: Parameters<ScanParams>) -> Result<String, String> {
         self.do_scan(params.0).await
     }
 
-    #[tool(
-        description = "AI-guided scan planning: run recon then let Claude decide which modules to use (returns plan, does not execute)"
-    )]
+    #[tool(description = "AI-guided scan planning: runs recon modules first to gather target \
+        intelligence, then uses Claude to analyze the tech stack and recommend which scanner \
+        modules to run. Returns a structured plan with module recommendations, priorities, and \
+        rationale — does NOT execute the scan. Review the plan, then use project_scan with the \
+        recommended modules. Requires AI to be enabled in config. Falls back gracefully if \
+        Claude CLI is unavailable.")]
     async fn plan_scan(&self, params: Parameters<PlanScanParams>) -> Result<String, String> {
         self.do_plan_scan(params.0).await
     }
 
-    #[tool(description = "Create a new security assessment project")]
+    #[tool(description = "Create a new security assessment project for tracking scans, findings, \
+        and security posture over time. Projects are the foundation for persistent scanning — \
+        create one before using project_scan. The name must be unique. After creating, use \
+        target_add to register URLs to scan. Returns the created project as JSON with its UUID.")]
     async fn project_create(
         &self,
         params: Parameters<ProjectCreateParams>,
@@ -619,17 +638,29 @@ impl ScorchKitServer {
         self.do_project_create(params.0).await
     }
 
-    #[tool(description = "List all security assessment projects")]
+    #[tool(
+        description = "List all security assessment projects. Use to discover existing projects \
+        before creating a new one. Returns JSON array of projects with name, description, and \
+        timestamps. You can reference projects by name (not UUID) in all other project tools."
+    )]
     async fn project_list(&self) -> Result<String, String> {
         self.do_project_list().await
     }
 
-    #[tool(description = "Show project details including targets, scans, and findings")]
+    #[tool(
+        description = "Show detailed information about a project including registered targets, \
+        recent scans, and finding counts. Use to get an overview before running scans or \
+        analyzing findings. Accepts project name or UUID. Returns JSON with project metadata, \
+        targets array, scan count, finding count, and the 5 most recent scans."
+    )]
     async fn project_show(&self, params: Parameters<ProjectRefParams>) -> Result<String, String> {
         self.do_project_show(params.0).await
     }
 
-    #[tool(description = "Delete a project and all associated data (requires force=true)")]
+    #[tool(description = "Delete a project and ALL associated data (targets, scans, findings, \
+        schedules). This is destructive and irreversible. Set force=true to confirm deletion — \
+        without it, returns a warning instead. Use only when the user explicitly asks to remove \
+        a project.")]
     async fn project_delete(
         &self,
         params: Parameters<ProjectDeleteParams>,
@@ -637,12 +668,23 @@ impl ScorchKitServer {
         self.do_project_delete(params.0).await
     }
 
-    #[tool(description = "Run a scan within a project, persisting results to the database")]
+    #[tool(description = "Run a security scan within a project, automatically persisting results \
+        to the database. Findings are deduplicated across scans — the same vulnerability found \
+        again increments seen_count instead of creating a duplicate. This is the primary \
+        scanning tool for tracked assessments. Use profile 'quick' for recon, 'standard' for \
+        full assessment, 'thorough' for deep dive. Returns JSON with scan ID, finding counts \
+        (total, new, updated), and summary.")]
     async fn project_scan(&self, params: Parameters<ProjectScanParams>) -> Result<String, String> {
         self.do_project_scan(params.0).await
     }
 
-    #[tool(description = "List vulnerability findings for a project")]
+    #[tool(
+        description = "List vulnerability findings for a project. Filter by severity (critical, \
+        high, medium, low, info) or by lifecycle status (new, acknowledged, false_positive, \
+        remediated, verified). Without filters, returns all findings. Use after project_scan to \
+        review results. Each finding includes module ID, severity, title, description, affected \
+        target, evidence, and remediation guidance. Returns JSON array."
+    )]
     async fn project_findings(
         &self,
         params: Parameters<FindingListParams>,
@@ -650,14 +692,19 @@ impl ScorchKitServer {
         self.do_project_findings(params.0).await
     }
 
-    #[tool(description = "Show details for a single vulnerability finding")]
+    #[tool(description = "Show full details for a single vulnerability finding by UUID. Use when \
+        you need the complete evidence, remediation guidance, OWASP category, CWE ID, and raw \
+        finding data for a specific issue. Get finding UUIDs from project_findings. Returns \
+        JSON with all finding fields.")]
     async fn finding_show(&self, params: Parameters<FindingRefParams>) -> Result<String, String> {
         self.do_finding_show(params.0).await
     }
 
-    #[tool(
-        description = "Update the lifecycle status of a finding (new/acknowledged/false_positive/remediated/verified)"
-    )]
+    #[tool(description = "Update the lifecycle status of a vulnerability finding. Transition \
+        through: new (just found) -> acknowledged (confirmed real) -> remediated (fix applied) \
+        -> verified (fix confirmed by rescan). Or mark as false_positive to exclude from active \
+        counts. Only update status when the user directs you to — do not auto-triage findings. \
+        Returns confirmation with the new status.")]
     async fn finding_update_status(
         &self,
         params: Parameters<FindingUpdateStatusParams>,
@@ -665,17 +712,25 @@ impl ScorchKitServer {
         self.do_finding_update_status(params.0).await
     }
 
-    #[tool(description = "Add a target URL to a project")]
+    #[tool(description = "Add a target URL to a project for tracking. Targets represent the URLs \
+        that will be scanned within a project. Add targets before running project_scan. Each \
+        target can have an optional human-readable label. Returns the created target with its \
+        UUID.")]
     async fn target_add(&self, params: Parameters<TargetAddParams>) -> Result<String, String> {
         self.do_target_add(params.0).await
     }
 
-    #[tool(description = "List all targets for a project")]
+    #[tool(description = "List all registered target URLs for a project. Use to see what targets \
+        are configured before scanning. Returns JSON array of targets with URL, label, and \
+        creation timestamp.")]
     async fn target_list(&self, params: Parameters<ProjectRefParams>) -> Result<String, String> {
         self.do_target_list(params.0).await
     }
 
-    #[tool(description = "Remove a target from a project")]
+    #[tool(
+        description = "Remove a target URL from a project by target UUID. Get target UUIDs from \
+        target_list. Does not delete any scan data or findings associated with the target."
+    )]
     async fn target_remove(
         &self,
         params: Parameters<TargetRemoveParams>,
@@ -683,12 +738,22 @@ impl ScorchKitServer {
         self.do_target_remove(params.0).await
     }
 
-    #[tool(description = "Run pending database migrations")]
+    #[tool(
+        description = "Run pending database migrations to initialize or update the schema. Call \
+        this on first use before any project or scan operations. Safe to call multiple times — \
+        already-applied migrations are skipped. Returns success confirmation."
+    )]
     async fn db_migrate(&self) -> Result<String, String> {
         self.do_db_migrate().await
     }
 
-    #[tool(description = "Create a recurring scan schedule for a project (cron-based)")]
+    #[tool(
+        description = "Create a recurring scan schedule for a project using a cron expression. \
+        Schedules are not executed automatically — use run_due_scans to trigger overdue \
+        schedules (wire into system cron for automation). Example cron: '0 0 * * *' for daily \
+        at midnight, '0 */6 * * *' for every 6 hours. Returns the created schedule with next \
+        run time."
+    )]
     async fn schedule_scan(
         &self,
         params: Parameters<ScheduleScanParams>,
@@ -696,14 +761,19 @@ impl ScorchKitServer {
         self.do_schedule_scan(params.0).await
     }
 
-    #[tool(description = "Execute all scan schedules that are due (triggered, not daemon)")]
+    #[tool(description = "Execute all scan schedules that are currently due. This is an explicit \
+        trigger, not a background daemon — call it when you want overdue schedules to run. \
+        Each schedule runs independently; individual failures don't abort the batch. Returns \
+        JSON with execution count and per-schedule results.")]
     async fn run_due_scans(&self) -> Result<String, String> {
         self.do_run_due_scans().await
     }
 
-    #[tool(
-        description = "Get security posture metrics, trend analysis, regressions, and top unresolved findings for a project"
-    )]
+    #[tool(description = "Get security posture metrics and trend analysis for a project. Returns \
+        aggregate data: severity breakdown (critical to info), status breakdown (new to \
+        verified), regression detection (previously remediated findings that reappeared), trend \
+        direction (improving/declining/stable), and top 10 unresolved findings ranked by \
+        severity. Use after scanning to assess overall security health. Returns structured JSON.")]
     async fn project_status(
         &self,
         params: Parameters<ProjectStatusParams>,
@@ -711,9 +781,12 @@ impl ScorchKitServer {
         self.do_project_status(params.0).await
     }
 
-    #[tool(
-        description = "Analyze project findings using AI with structured JSON output (summary/prioritize/remediate/filter)"
-    )]
+    #[tool(description = "Analyze project findings using Claude AI with structured JSON output. \
+        Set focus to: 'summary' for executive overview with risk score, 'prioritize' for \
+        findings ranked by exploitability with attack chains, 'remediate' for fix steps with \
+        effort estimates and code examples, or 'filter' for false positive classification with \
+        confidence scores. Optionally specify scan_id to analyze a specific scan's findings \
+        instead of all project findings. Requires AI enabled in config.")]
     async fn analyze_findings(
         &self,
         params: Parameters<AnalyzeFindingsParams>,

@@ -2,6 +2,13 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.11.0] - 2026-03-29
+
+### Changed
+- **Expanded all 20 MCP tool descriptions** — upgraded from terse one-liners to 2-4 sentence guidance blocks with when-to-use, key parameters, output format, and next-step recommendations
+- **Expanded all parameter descriptions in `types.rs`** — `///` doc comments on `JsonSchema` fields now include valid values, examples, and decision guidance (schemars converts these to JSON Schema `description` fields)
+- Claude now receives richer context for each tool call: what the tool does, when to choose it over alternatives, which parameters matter, and what to do with the results
+
 ## [0.10.0] - 2026-03-29
 
 ### Added
