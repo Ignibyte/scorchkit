@@ -1,5 +1,6 @@
 mod crawler;
 mod discovery;
+mod dns;
 mod headers;
 mod subdomain;
 mod tech;
@@ -15,5 +16,6 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(discovery::DiscoveryModule),
         Box::new(subdomain::SubdomainModule),
         Box::new(crawler::CrawlerModule),
+        Box::new(dns::DnsSecurityModule),
     ]
 }

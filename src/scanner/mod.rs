@@ -1,4 +1,5 @@
 mod acl;
+mod api;
 mod api_schema;
 mod auth;
 mod cmdi;
@@ -49,6 +50,7 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(graphql::GraphQLModule),
         Box::new(subtakeover::SubdomainTakeoverModule),
         Box::new(acl::AclModule),
+        Box::new(api::ApiSecurityModule),
         Box::new(api_schema::ApiSchemaModule),
         Box::new(ratelimit::RateLimitModule),
     ]

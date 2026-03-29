@@ -2,6 +2,14 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.20.0] - 2026-03-29
+
+### Added
+- **REST API security testing module** — `src/scanner/api.rs` implementing OWASP API Top 10: mass assignment, excessive data exposure, shadow API discovery, auth endpoint rate limiting, content negotiation confusion
+- **DNS & email security recon module** — `src/recon/dns.rs` using DNS-over-HTTPS (Cloudflare `DoH` JSON API): SPF record analysis with permissiveness detection, DMARC policy enforcement check, MX record discovery
+- 6 new unit tests (3 API + 3 DNS)
+- ScorchKit now has 53 modules (31 built-in + 22 external tool wrappers) and 7 recon modules
+
 ## [0.19.0] - 2026-03-29
 
 ### Added
