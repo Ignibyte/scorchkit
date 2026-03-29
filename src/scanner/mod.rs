@@ -13,6 +13,7 @@ mod ssl;
 mod ssrf;
 mod upload;
 mod waf;
+mod websocket;
 mod xss;
 mod xxe;
 
@@ -37,6 +38,7 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(redirect::RedirectModule),
         Box::new(sensitive::SensitiveDataModule),
         Box::new(upload::UploadModule),
+        Box::new(websocket::WebSocketModule),
         Box::new(api_schema::ApiSchemaModule),
         Box::new(ratelimit::RateLimitModule),
     ]

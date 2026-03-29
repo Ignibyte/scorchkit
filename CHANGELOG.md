@@ -2,6 +2,18 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.15.0] - 2026-03-29
+
+### Added
+- **WebSocket security testing module** — `src/scanner/websocket.rs` implementing `WebSocketModule`
+- **WS endpoint discovery** — probes 19 common WebSocket paths (`/ws`, `/socket.io`, `/cable`, `/hub`, `/signalr`, `/graphql`, etc.)
+- **CSWSH detection** — Cross-Site WebSocket Hijacking via spoofed Origin header validation
+- **Unencrypted WS detection** — flags `ws://` endpoints when HTTPS is available
+- **Unauthenticated WS access** — detects WebSocket endpoints accepting connections without credentials
+- **`tokio-tungstenite`** — new async WebSocket client dependency (MIT/Apache-2.0, `rustls-tls-native-roots` feature)
+- 6 new unit tests for URL conversion, path generation, upgrade response detection
+- ScorchKit now has 45 modules (23 built-in + 22 external tool wrappers)
+
 ## [0.14.0] - 2026-03-29
 
 ### Added
