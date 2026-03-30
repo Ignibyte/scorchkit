@@ -2,6 +2,15 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.21.0] - 2026-03-29
+
+### Added
+- **Katana web crawler wrapper** — `src/tools/katana.rs` for JS-rendered endpoint discovery via headless browsing
+- **Gau passive URL discovery wrapper** — `src/tools/gau.rs` for historical URL collection from Wayback Machine, Common Crawl
+- **ParamSpider parameter mining wrapper** — `src/tools/paramspider.rs` for discovering URLs with injectable query parameters
+- 6 new unit tests (2 per wrapper for output parsing + empty handling)
+- ScorchKit now has 56 modules (31 built-in + 25 external tool wrappers)
+
 ## [0.20.0] - 2026-03-29
 
 ### Added

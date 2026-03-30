@@ -5,13 +5,16 @@ pub mod dalfox;
 pub mod droopescan;
 pub mod feroxbuster;
 pub mod ffuf;
+pub mod gau;
 pub mod httpx;
 pub mod hydra;
 pub mod interactsh;
+pub mod katana;
 pub mod metasploit;
 pub mod nikto;
 pub mod nmap;
 pub mod nuclei;
+pub mod paramspider;
 pub mod sqlmap;
 pub mod sslyze;
 pub mod subfinder;
@@ -49,5 +52,8 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(arjun::ArjunModule),
         Box::new(cewl::CewlModule),
         Box::new(droopescan::DroopescanModule),
+        Box::new(katana::KatanaModule),
+        Box::new(gau::GauModule),
+        Box::new(paramspider::ParamSpiderModule),
     ]
 }
