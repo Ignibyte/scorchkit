@@ -2,6 +2,15 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.28.0] - 2026-03-30
+
+### Added
+- **Agent SDK support** — `src/agent/` module for autonomous pentest operations via Claude Agent SDK
+- **PTES-based agent system prompt** — 7-phase pentest methodology (pre-engagement through remediation) with built-in safety constraints: scope enforcement, no exploitation, evidence preservation, rate limiting
+- **AgentConfig** — authorized targets, max scan depth, project persistence, safety constraints. Builder pattern with `with_depth()`, `with_project()`, `with_database_url()`
+- **Manifest generator** — `generate_manifest()` produces JSON config for Claude Agent SDK clients (Python/TypeScript) with MCP server connection, system prompt, and safety rules
+- 5 new unit tests + 1 doctest
+
 ## [0.27.0] - 2026-03-30
 
 ### Added
