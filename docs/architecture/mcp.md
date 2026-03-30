@@ -22,7 +22,7 @@ MCP server via the `rmcp` crate (v1.3), feature-gated behind the `mcp` Cargo fea
          │   args.rs    │         │   (rmcp stdio)   │
          └──────┬───────┘         └──────┬───────────┘
                 │                        │
-                │  Commands              │  Tools (20) + Resources (6)
+                │  Commands              │  Tools (24) + Resources (6) + Prompts (5)
                 │                        │
          ┌──────▼───────┐        ┌───────▼──────────┐
          │   Runner     │        │ ScorchKitServer   │
@@ -67,8 +67,9 @@ impl ServerHandler for ScorchKitServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
-                .enable_tools()          // 20 MCP tools
+                .enable_tools()          // 24 MCP tools
                 .enable_resources()      // 6 browsable resources
+                .enable_prompts()        // 5 prompt templates
                 .build()
         )
     }
@@ -99,7 +100,7 @@ async fn project_list(&self) -> Result<String, String> {
 
 This pattern keeps business logic testable without needing to pipe JSON-RPC through stdio.
 
-## Tools (20)
+## Tools (24)
 
 ### Scanning
 
@@ -149,6 +150,15 @@ This pattern keeps business logic testable without needing to pipe JSON-RPC thro
 | Tool | Description |
 |------|-------------|
 | `analyze_findings` | Analyze findings using AI with structured JSON output (summary/prioritize/remediate/filter) |
+
+### Engagement
+
+| Tool | Description |
+|------|-------------|
+| `auto_scan` | One-shot full scan engagement with optional project persistence |
+| `target_intelligence` | Recon-only consolidated briefing (headers, tech, DNS, WAF, etc.) |
+| `scan_progress` | Post-hoc scan status check for a project's most recent scan |
+| `correlate_findings` | Rule-based attack chain detection across project findings |
 
 ### Infrastructure
 
@@ -219,6 +229,22 @@ The `list_resources()` method is dynamic — it queries the database for current
 ### No Subscription Support
 
 ScorchKit is a CLI/MCP tool, not a long-running service. Data changes only when scans are explicitly triggered. Push notifications would add complexity with no benefit.
+
+## Prompts (5)
+
+Prompt templates give MCP clients structured starting points for common security assessment workflows. Exposed via `list_prompts` and `get_prompt` in the `ServerHandler` implementation.
+
+### Implementation (`src/mcp/prompts.rs`)
+
+Prompts are defined as compile-time constants in a `PROMPTS` array. The `ScorchKitServer` exposes `do_list_prompts()` and `do_get_prompt()` methods that map prompt names to multi-step workflow instructions. Each prompt returns a `GetPromptResult` with a system message guiding Claude through the appropriate tool sequence.
+
+| Prompt | Description | Required Argument |
+|--------|-------------|-------------------|
+| `full-web-assessment` | Run a complete web application security assessment against a target | `target` (URL) |
+| `investigate-finding` | Deep dive into a specific security finding with reproduction steps | `finding_id` (UUID) |
+| `remediation-plan` | Generate a prioritized remediation plan for a project's findings | `project` (name or UUID) |
+| `compare-scans` | Analyze what changed between two scans of the same target | `project` (name or UUID) |
+| `executive-summary` | Generate a client-ready executive summary of a project's security posture | `project` (name or UUID) |
 
 ## Transport
 
@@ -296,9 +322,11 @@ pub mod storage;
 src/mcp/
   mod.rs          Module declarations
   server.rs       ScorchKitServer struct, ServerHandler impl, serve() entry point
-  tools.rs        20 tool methods (do_* business logic + #[tool] wrappers)
+  tools.rs        24 tool methods (do_* business logic + #[tool] wrappers)
   resources.rs    Resource methods (do_list_resources, do_read_resource, URI parsing)
+  prompts.rs      5 prompt templates (do_list_prompts, do_get_prompt)
   types.rs        Parameter structs (Deserialize + JsonSchema) for all tool inputs
+  instructions.rs Rich system instructions with pentest methodology
 ```
 
 ## Testing Strategy

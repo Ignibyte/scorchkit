@@ -119,6 +119,11 @@ Add to the `register_modules()` function in the same `mod.rs`:
 pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
     vec![
         Box::new(headers::HeadersModule),
+        Box::new(tech::TechModule),
+        Box::new(discovery::DiscoveryModule),
+        Box::new(subdomain::SubdomainModule),
+        Box::new(crawler::CrawlerModule),
+        Box::new(dns::DnsSecurityModule),
         Box::new(my_module::MyModule),  // Add this line
     ]
 }
@@ -180,6 +185,17 @@ fn parse_nmap_output(xml: &str, target_url: &str) -> Result<Vec<Finding>> {
 
 Same as built-in modules. The orchestrator will check tool availability before running and skip gracefully if the tool isn't installed.
 
+## Module Counts
+
+ScorchKit ships with 63 modules across four categories:
+
+| Category | Count | Location |
+|----------|-------|----------|
+| Recon | 6 | `src/recon/` — headers, tech, discovery, subdomain, crawler, dns |
+| Scanner | 24 | `src/scanner/` — ssl, misconfig, csrf, injection, cmdi, xss, ssrf, xxe, idor, jwt, redirect, sensitive, api-schema, ratelimit, cors-deep, csp-deep, auth-session, upload, websocket, graphql, subtakeover, acl, api-security, waf |
+| Tools | 32 | `src/tools/` — amass, arjun, cewl, dalfox, dnsrecon, dnsx, droopescan, enum4linux, feroxbuster, ffuf, gau, gobuster, httpx, hydra, interactsh, katana, metasploit, nikto, nmap, nuclei, paramspider, prowler, sqlmap, sslyze, subfinder, testssl, theharvester, trivy, trufflehog, wafw00f, wpscan, zap |
+| User Plugins | variable | Loaded from TOML files via `runner::plugin::load_plugins()` |
+
 ## What the Orchestrator Provides
 
 Your module receives a `ScanContext` with:
@@ -197,10 +213,12 @@ Your module receives a `ScanContext` with:
 1. **`module_id` must match `id()`** - This links findings to their source module
 2. **Include OWASP category** when applicable - e.g., `"A05:2021 Security Misconfiguration"`
 3. **Include CWE ID** when there's a direct mapping
-4. **Evidence should be raw data** - the actual header value, response snippet, or tool output
-5. **Remediation should be actionable** - specific header to add, config to change, etc.
-6. **Return empty vec for clean scans** - don't create "info" findings just to say "everything OK"
-7. **Return `Err` only for infrastructure failures** - tool not responding, network down, parse error. NOT for "no vulnerabilities found"
+4. **Use `.with_compliance()`** when OWASP/CWE is set - auto-maps to NIST/PCI-DSS/SOC2/HIPAA via `engine::compliance`
+5. **Use `.with_http_evidence()`** for PoC replay - attach the full request/response pair via `engine::evidence::HttpEvidence`
+6. **Evidence should be raw data** - the actual header value, response snippet, or tool output
+7. **Remediation should be actionable** - specific header to add, config to change, etc.
+8. **Return empty vec for clean scans** - don't create "info" findings just to say "everything OK"
+9. **Return `Err` only for infrastructure failures** - tool not responding, network down, parse error. NOT for "no vulnerabilities found"
 
 ## Conventions
 

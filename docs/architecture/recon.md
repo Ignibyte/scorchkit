@@ -6,10 +6,13 @@ Reconnaissance modules gather information about the target without active exploi
 
 ```
 recon/
-  mod.rs         Module registration
-  headers.rs     HTTP security header analysis (implemented)
-  tech.rs        Technology fingerprinting (Phase 3)
-  discovery.rs   Directory/endpoint discovery (Phase 3)
+  mod.rs         Module registration (6 modules)
+  headers.rs     HTTP security header analysis
+  tech.rs        Technology fingerprinting
+  discovery.rs   Directory/endpoint discovery
+  subdomain.rs   Subdomain enumeration via DNS brute-force
+  crawler.rs     Web crawler for endpoint/form/parameter discovery
+  dns.rs         DNS and email security checks via DoH
 ```
 
 ## Registration
@@ -17,11 +20,21 @@ recon/
 `recon/mod.rs` declares submodules and registers them:
 
 ```rust
+mod crawler;
+mod discovery;
+mod dns;
 mod headers;
+mod subdomain;
+mod tech;
 
 pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
     vec![
         Box::new(headers::HeadersModule),
+        Box::new(tech::TechModule),
+        Box::new(discovery::DiscoveryModule),
+        Box::new(subdomain::SubdomainModule),
+        Box::new(crawler::CrawlerModule),
+        Box::new(dns::DnsSecurityModule),
     ]
 }
 ```
@@ -63,27 +76,67 @@ All findings reference **OWASP A05:2021 Security Misconfiguration**.
 - `extract_max_age(hsts_value) -> Option<u64>` - Parses the max-age directive from an HSTS header value
 - `has_csp_frame_ancestors(headers) -> bool` - Checks if CSP includes a frame-ancestors directive (suppresses X-Frame-Options finding if present)
 
-## Planned: Tech Fingerprinting (`tech.rs`)
+## Tech Fingerprinting (`tech.rs`)
 
 **ID:** `tech`
+**Name:** Technology Fingerprinting
 **Category:** Recon
+**External tool:** None (built-in)
+**Description:** Detect server technologies, frameworks, and CMS platforms
 
-Will detect server technologies by analyzing:
+Detects server technologies by analyzing:
 - `Server` header value
 - `X-Powered-By` header
 - HTML `<meta name="generator">` tags
-- Cookie name patterns (JSESSIONID → Java, PHPSESSID → PHP, etc.)
+- Cookie name patterns (JSESSIONID -> Java, PHPSESSID -> PHP, etc.)
 - Response body framework signatures
-- Common file paths (/wp-admin → WordPress, etc.)
+- Common file paths (/wp-admin -> WordPress, etc.)
 
-## Planned: Directory Discovery (`discovery.rs`)
+## Directory Discovery (`discovery.rs`)
 
 **ID:** `discovery`
+**Name:** Directory & File Discovery
 **Category:** Recon
+**External tool:** None (built-in)
+**Description:** Discover sensitive files, directories, and exposed endpoints
 
-Two modes:
-1. **Built-in** - checks a small wordlist of common sensitive paths:
-   - `/.git/HEAD`, `/.env`, `/robots.txt`, `/sitemap.xml`
-   - `/admin`, `/wp-admin`, `/.well-known/security.txt`
-   - `/server-status`, `/server-info`, `/phpinfo.php`
-2. **External** - wraps `feroxbuster` for deep recursive directory brute-forcing
+Checks a wordlist of common sensitive paths:
+- `/.git/HEAD`, `/.env`, `/robots.txt`, `/sitemap.xml`
+- `/admin`, `/wp-admin`, `/.well-known/security.txt`
+- `/server-status`, `/server-info`, `/phpinfo.php`
+
+## Subdomain Enumeration (`subdomain.rs`)
+
+**ID:** `subdomain`
+**Name:** Subdomain Enumeration
+**Category:** Recon
+**External tool:** None (built-in)
+**Description:** Enumerate subdomains via DNS brute-force with common wordlist
+
+Enumerates subdomains of the target domain by DNS-resolving common subdomain prefixes (www, mail, api, admin, etc.) against the target domain. Reports discovered subdomains as informational findings. Requires the target to have a domain (IP targets are skipped).
+
+## Web Crawler (`crawler.rs`)
+
+**ID:** `crawler`
+**Name:** Web Crawler
+**Category:** Recon
+**External tool:** None (built-in)
+**Description:** Crawl the target to discover endpoints, forms, and parameters
+
+Crawls the target starting from the root URL, following links up to depth 3 and visiting up to 100 pages. Discovers endpoints, forms, and URL parameters by parsing HTML with the `scraper` crate. Stays within the target domain boundary.
+
+## DNS & Email Security (`dns.rs`)
+
+**ID:** `dns-security`
+**Name:** DNS & Email Security
+**Category:** Recon
+**External tool:** None (built-in, uses DNS-over-HTTPS)
+**Description:** Check SPF, DMARC, DNSSEC, and MX records via DNS-over-HTTPS
+
+Queries DNS records via Cloudflare's DNS-over-HTTPS JSON API to check:
+- **SPF** - Permissive `+all` or missing SPF records
+- **DMARC** - Missing or weak policy enforcement (`p=none`)
+- **DNSSEC** - Whether DNSSEC validation is enabled
+- **MX** - Presence and configuration of mail exchange records
+
+Uses the existing `reqwest` HTTP client for DoH queries, requiring no DNS crate dependency.

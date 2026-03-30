@@ -14,6 +14,10 @@ engine/
   module_trait.rs    ScanModule trait + ModuleCategory enum
   scan_context.rs    ScanContext (shared state for modules)
   scan_result.rs     ScanResult + ScanSummary (aggregated output)
+  compliance.rs      OWASP/CWE to NIST/PCI-DSS/SOC2/HIPAA mapping
+  evidence.rs        HttpEvidence struct for request/response capture
+  scope.rs           ScopeRule enum for scope management
+  oob.rs             Out-of-band callback infrastructure (Interactsh)
 ```
 
 ## ScorchError (`error.rs`)
@@ -106,6 +110,8 @@ pub struct Finding {
     pub remediation: Option<String>, // How to fix it
     pub owasp_category: Option<String>, // e.g., "A05:2021 Security Misconfiguration"
     pub cwe_id: Option<u32>,         // e.g., 319
+    pub compliance: Option<Vec<String>>, // NIST/PCI-DSS/SOC2/HIPAA controls
+    pub http_evidence: Option<HttpEvidence>, // Full request/response PoC
     pub timestamp: DateTime<Utc>,
 }
 ```
@@ -117,6 +123,9 @@ Finding::new("headers", Severity::High, "Missing HSTS", "description...", "https
     .with_remediation("Add Strict-Transport-Security header")
     .with_owasp("A05:2021 Security Misconfiguration")
     .with_cwe(319)
+    .with_compliance(vec!["NIST SC-8".to_string(), "PCI-DSS 4.1".to_string()])
+    .with_http_evidence(HttpEvidence::new("GET", "https://target.com", 200)
+        .with_response_body("<html>...</html>"))
 ```
 
 Optional fields skip serialization when `None` (via `#[serde(skip_serializing_if)]`).
@@ -181,3 +190,86 @@ pub struct ScanSummary {
 ```
 
 `ScanSummary::from_findings()` computes counts automatically. `ScanResult::new()` sets `completed_at` to now and computes the summary.
+
+## Compliance Mapping (`compliance.rs`)
+
+Maps OWASP Top 10 and CWE identifiers to compliance framework controls across four frameworks:
+
+- **NIST 800-53** (e.g., AC-3, SI-10, SC-8)
+- **PCI-DSS 4.0** (e.g., 6.2.4, 8.2, 4.1)
+- **SOC2 TSC** (e.g., CC6.1, CC7.1)
+- **HIPAA** (e.g., 164.312(a)(1), 164.312(d))
+
+### Functions
+
+```rust
+/// Look up controls for an OWASP category (e.g., "A01:2021 Broken Access Control").
+pub fn compliance_for_owasp(owasp_id: &str) -> Vec<&'static str>
+
+/// Look up controls for a CWE ID (e.g., 79 for XSS).
+pub fn compliance_for_cwe(cwe_id: u32) -> Vec<&'static str>
+```
+
+All ten OWASP A01-A10 categories are mapped. Common CWEs (79, 89, 200, 287, 311, 319, 352, 521, 522, 601, 798, 918, 1104) have explicit mappings. Unknown identifiers return empty vec.
+
+Used by the `Finding` builder's `.with_compliance()` method. Modules can auto-populate compliance by looking up their OWASP/CWE references.
+
+## HttpEvidence (`evidence.rs`)
+
+Captures full HTTP request/response pairs for attaching to findings as proof-of-concept evidence.
+
+```rust
+pub struct HttpEvidence {
+    pub method: String,
+    pub url: String,
+    pub request_headers: HashMap<String, String>,
+    pub request_body: Option<String>,
+    pub status_code: u16,
+    pub response_headers: HashMap<String, String>,
+    pub response_body: Option<String>,    // Truncated to 10KB max
+    pub truncated: bool,
+}
+```
+
+**Builder pattern:**
+```rust
+HttpEvidence::new("GET", "https://example.com/xss?q=<script>", 200)
+    .with_request_headers(headers)
+    .with_request_body("POST body")
+    .with_response_headers(resp_headers)
+    .with_response_body("<html>...</html>")
+```
+
+Response bodies exceeding 10KB are automatically truncated with the `truncated` flag set to `true`. Empty maps and `None` fields are skipped during JSON serialization.
+
+Attached to findings via `Finding::with_http_evidence(evidence)`.
+
+## Scope Management (`scope.rs`)
+
+Provides structured scope rules for controlling which targets are in scope for scanning.
+
+```rust
+pub enum ScopeRule {
+    Exact(String),                    // "example.com"
+    Wildcard(String),                 // "*.example.com"
+    Cidr { network: u32, mask: u32 }, // "192.168.1.0/24"
+}
+```
+
+### Functions
+
+```rust
+/// Parse a scope rule string, auto-detecting the type.
+/// - "*.example.com" → Wildcard
+/// - "192.168.1.0/24" → Cidr
+/// - Everything else → Exact
+ScopeRule::parse(input: &str) -> Option<Self>
+
+/// Check if a host matches this rule.
+ScopeRule::matches(&self, host: &str) -> bool
+
+/// Check if a URL's host is in scope. Empty rules = everything in scope.
+pub fn is_in_scope(url: &str, rules: &[ScopeRule]) -> bool
+```
+
+Wildcard matching requires a dot separator (e.g., `*.example.com` matches `sub.example.com` but not `example.com`). CIDR matching parses the host as an IPv4 address and applies the subnet mask. Non-IP hosts never match CIDR rules.
