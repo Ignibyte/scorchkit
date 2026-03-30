@@ -2,6 +2,15 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.27.0] - 2026-03-30
+
+### Added
+- **Plugin system for user-defined scan modules** — `src/runner/plugin.rs` with TOML-based plugin definitions. Users create `.toml` files defining custom scan modules with command, args (`{target}` placeholder substitution), output format (lines/json_lines/json), and default severity. `PluginModule` implements `ScanModule` trait seamlessly
+- **Plugin loader** — `load_plugins()` discovers `.toml` files from configurable `plugins_dir`, validates and registers them alongside built-in modules
+- **Orchestrator integration** — plugins auto-loaded in `register_default_modules()` when `plugins_dir` is set in config
+- **`plugins_dir`** config option in `ScanConfig` for specifying the plugin directory
+- 6 new unit tests (TOML parsing, metadata, arg substitution, line/JSON parsing, empty dir)
+
 ## [0.26.0] - 2026-03-30
 
 ### Added

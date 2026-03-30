@@ -36,6 +36,12 @@ impl Orchestrator {
 
     pub fn register_default_modules(&mut self) {
         self.modules = all_modules();
+
+        // Load user-defined plugins if configured
+        if let Some(ref plugins_dir) = self.ctx.config.scan.plugins_dir {
+            let plugins = super::plugin::load_plugins(plugins_dir);
+            self.modules.extend(plugins);
+        }
     }
 
     pub fn filter_by_category(&mut self, category: ModuleCategory) {
