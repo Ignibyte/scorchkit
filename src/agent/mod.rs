@@ -21,6 +21,7 @@
 
 pub mod config;
 pub mod prompt;
+pub mod runner;
 
 use config::AgentConfig;
 use prompt::AGENT_SYSTEM_PROMPT;

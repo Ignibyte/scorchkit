@@ -1,8 +1,10 @@
 pub mod args;
 #[cfg(feature = "storage")]
 pub mod db;
+pub mod doctor;
 #[cfg(feature = "storage")]
 pub mod finding;
+pub mod init;
 #[cfg(feature = "storage")]
 pub mod project;
 pub mod runner;

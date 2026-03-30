@@ -108,9 +108,23 @@ pub async fn execute(cli: Cli) -> Result<()> {
 
         Commands::Modules { check_tools } => list_modules(check_tools),
 
-        Commands::Init => init_config(),
+        Commands::Init { target, project, database_url } => {
+            super::init::run_init(target.as_deref(), project.as_deref(), database_url.as_deref())
+                .await
+        }
 
-        Commands::Doctor => run_doctor(),
+        Commands::Doctor { deep } => super::doctor::run_doctor(deep),
+
+        Commands::Agent { target, depth, project, database_url } => {
+            crate::agent::runner::run_autonomous(
+                &config,
+                &target,
+                &depth,
+                project.as_deref(),
+                database_url.as_deref(),
+            )
+            .await
+        }
 
         Commands::Completions { shell } => {
             args::print_completions(shell);
@@ -161,6 +175,9 @@ async fn run_project_command(
         }
         args::ProjectCommands::Status { project } => {
             crate::cli::project::status(&pool, &project).await
+        }
+        args::ProjectCommands::Intelligence { project } => {
+            crate::cli::project::intelligence(&pool, &project).await
         }
         args::ProjectCommands::Target { command: target_cmd } => {
             run_target_command(&pool, target_cmd).await
@@ -441,6 +458,15 @@ async fn persist_scan_results(
         crate::storage::findings::save_findings(&pool, project.id, scan.id, &result.findings)
             .await?;
 
+    // Update project intelligence with scan results
+    if let Err(e) =
+        crate::storage::intelligence::update_intelligence(&pool, project.id, result).await
+    {
+        if !quiet {
+            println!("\n{} Intelligence update failed: {e}", "warning:".yellow().bold());
+        }
+    }
+
     if !quiet {
         let updated = result.findings.len() - new_count;
         println!(
@@ -503,83 +529,6 @@ async fn run_analyze(
     let project_context = build_analyze_project_context(config, project_name, database_url).await?;
 
     run_ai_analysis(config, &result, focus, false, project_context.as_ref()).await
-}
-
-fn run_doctor() -> Result<()> {
-    println!();
-    println!("{}", "ScorchKit Doctor".bold().underline());
-    println!();
-
-    let tools: &[(&str, &str, &str)] = &[
-        // (binary, display name, category)
-        ("nmap", "Nmap", "Network"),
-        ("nikto", "Nikto", "Web Scanner"),
-        ("nuclei", "Nuclei", "Web Scanner"),
-        ("zap.sh", "OWASP ZAP", "Web Scanner"),
-        ("wpscan", "WPScan", "CMS Scanner"),
-        ("droopescan", "Droopescan", "CMS Scanner"),
-        ("sqlmap", "SQLMap", "Injection"),
-        ("dalfox", "Dalfox", "XSS"),
-        ("feroxbuster", "Feroxbuster", "Discovery"),
-        ("ffuf", "ffuf", "Fuzzer"),
-        ("arjun", "Arjun", "Param Discovery"),
-        ("cewl", "CeWL", "Wordlist"),
-        ("sslyze", "SSLyze", "TLS/SSL"),
-        ("testssl.sh", "testssl.sh", "TLS/SSL"),
-        ("amass", "Amass", "Subdomain"),
-        ("subfinder", "Subfinder", "Subdomain"),
-        ("httpx", "httpx", "HTTP Probe"),
-        ("theHarvester", "theHarvester", "OSINT"),
-        ("wafw00f", "wafw00f", "WAF Detection"),
-        ("hydra", "Hydra", "Credentials"),
-        ("msfconsole", "Metasploit", "Exploit"),
-        ("claude", "Claude Code", "AI Analysis"),
-    ];
-
-    let mut installed = 0;
-    let mut missing = 0;
-
-    for &(binary, name, category) in tools {
-        let available = is_tool_available(binary);
-        if available {
-            installed += 1;
-            println!(
-                "  {} {:<20} {:<16} {}",
-                "OK".green().bold(),
-                name,
-                category.dimmed(),
-                which_path(binary).dimmed()
-            );
-        } else {
-            missing += 1;
-            println!("  {} {:<20} {}", "--".red(), name, category.dimmed());
-        }
-    }
-
-    println!();
-    println!("  {}/{} tools installed", installed.to_string().green().bold(), installed + missing);
-
-    if missing > 0 {
-        println!("  See {} for install instructions", "docs/tools-checklist.md".cyan());
-    }
-
-    println!();
-    Ok(())
-}
-
-fn which_path(tool: &str) -> String {
-    std::process::Command::new("which")
-        .arg(tool)
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default()
 }
 
 fn run_diff(baseline_path: &std::path::Path, current_path: &std::path::Path) -> Result<()> {
@@ -714,18 +663,6 @@ fn list_modules(check_tools: bool) -> Result<()> {
     Ok(())
 }
 
-fn init_config() -> Result<()> {
-    let path = std::path::Path::new("config.toml");
-    if path.exists() {
-        println!("{} config.toml already exists", "warning:".yellow().bold());
-        return Ok(());
-    }
-    let content = AppConfig::default_toml()?;
-    std::fs::write(path, content)?;
-    println!("{} config.toml created", "success:".green().bold());
-    Ok(())
-}
-
 fn build_http_client(config: &AppConfig) -> Result<reqwest::Client> {
     let mut headers = reqwest::header::HeaderMap::new();
 
@@ -795,9 +732,5 @@ fn build_http_client(config: &AppConfig) -> Result<reqwest::Client> {
 }
 
 fn is_tool_available(tool: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(tool)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    super::doctor::is_tool_available(tool)
 }

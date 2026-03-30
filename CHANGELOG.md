@@ -2,6 +2,15 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.29.0] - 2026-03-30
+
+### Added
+- **Deep tool validation** (`doctor --deep`) — Version checks, min-version enforcement, nuclei template freshness, remediation hints for 33 external tools. `src/cli/doctor.rs` with `ToolSpec`, `Version` comparison, 8 new tests (#48)
+- **Project init with target fingerprinting** (`init <url>`) — Single HTTP probe detects server, tech stack, CMS, WAF. Recommends scan profile based on detected tech + available tools. Generates tailored `scorchkit.toml`. Optional `--project` flag creates DB project. `src/cli/init.rs` with 10 new tests (#49)
+- **Project intelligence layer** — Per-module effectiveness tracking stored in `Project.settings` JSONB (no new migrations). `ModuleStats` per module: runs, findings, severity breakdown, effectiveness score. Updated after each scan. CLI: `project intelligence <name>`. AI planner enhanced with optional historical effectiveness context. `src/storage/intelligence.rs` with 11 new tests (#50)
+- **Autonomous scan agent** (`agent <target>`) — 7-phase loop: setup → recon → AI plan → vulnerability scan → AI analyze → persist → report. Calls internal functions directly (Orchestrator, ScanPlanner, AiAnalyst). Graceful AI fallback — plan failure falls back to profile, analysis failure is non-fatal. `src/agent/runner.rs` with 3 new tests (#51)
+- 32 new tests total across 4 features
+
 ## [0.28.0] - 2026-03-30
 
 ### Added
