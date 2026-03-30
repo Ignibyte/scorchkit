@@ -6,6 +6,7 @@
 //! Start the server with `scorchkit serve` (requires the `mcp` feature).
 
 pub mod instructions;
+pub mod prompts;
 pub mod resources;
 pub mod server;
 pub mod tools;

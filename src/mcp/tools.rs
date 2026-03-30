@@ -13,10 +13,11 @@ use uuid::Uuid;
 
 use super::server::ScorchKitServer;
 use super::types::{
-    AnalyzeFindingsParams, AutoScanParams, FindingListParams, FindingRefParams,
-    FindingUpdateStatusParams, PlanScanParams, ProjectCreateParams, ProjectDeleteParams,
-    ProjectRefParams, ProjectScanParams, ProjectStatusParams, ScanParams, ScanProgressParams,
-    ScheduleScanParams, TargetAddParams, TargetIntelligenceParams, TargetRemoveParams,
+    AnalyzeFindingsParams, AutoScanParams, CorrelateFindingsParams, FindingListParams,
+    FindingRefParams, FindingUpdateStatusParams, PlanScanParams, ProjectCreateParams,
+    ProjectDeleteParams, ProjectRefParams, ProjectScanParams, ProjectStatusParams, ScanParams,
+    ScanProgressParams, ScheduleScanParams, TargetAddParams, TargetIntelligenceParams,
+    TargetRemoveParams,
 };
 use crate::engine::error::ScorchError;
 use crate::engine::scan_context::ScanContext;
@@ -774,6 +775,48 @@ impl ScorchKitServer {
         });
         serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
     }
+
+    /// Correlate project findings into attack chains using rule-based
+    /// pattern matching.
+    ///
+    /// Loads all findings for a project and applies correlation rules
+    /// based on module IDs, OWASP categories, and CWE relationships
+    /// to identify compound attack paths where multiple findings
+    /// create escalated risk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the project is not found or the database query fails.
+    pub async fn do_correlate_findings(
+        &self,
+        params: CorrelateFindingsParams,
+    ) -> Result<String, String> {
+        let project =
+            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let tracked_findings =
+            findings::list_findings(&self.pool, project.id).await.map_err(|e| e.to_string())?;
+
+        let correlation_findings: Vec<super::prompts::CorrelationFinding> = tracked_findings
+            .iter()
+            .map(|f| super::prompts::CorrelationFinding {
+                id: f.id.to_string(),
+                module_id: f.module_id.clone(),
+                title: f.title.clone(),
+                severity: f.severity.clone(),
+            })
+            .collect();
+
+        let chains = super::prompts::correlate_attack_chains(&correlation_findings);
+
+        let output = serde_json::json!({
+            "project": project.name,
+            "total_findings_analyzed": tracked_findings.len(),
+            "attack_chains_found": chains.len(),
+            "chains": chains,
+        });
+
+        serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
+    }
 }
 
 /// `#[tool_router]` — thin wrappers that delegate to `do_*` public methods.
@@ -1017,6 +1060,19 @@ impl ScorchKitServer {
         params: Parameters<ScanProgressParams>,
     ) -> Result<String, String> {
         self.do_scan_progress(params.0).await
+    }
+
+    #[tool(description = "Correlate project findings into attack chains. Analyzes all findings \
+        for a project and identifies compound vulnerabilities where multiple findings combine \
+        to create escalated risk. Example: XSS + missing CSP = session hijacking chain. \
+        Returns JSON with attack chain names, severity escalation, narrative descriptions, \
+        contributing finding IDs, and remediation priority. Use after scanning to understand \
+        how individual findings relate and prioritize fixes by attack path impact.")]
+    async fn correlate_findings(
+        &self,
+        params: Parameters<CorrelateFindingsParams>,
+    ) -> Result<String, String> {
+        self.do_correlate_findings(params.0).await
     }
 }
 

@@ -223,3 +223,12 @@ pub struct ScanProgressParams {
     /// scan record with metadata, finding counts, and timing.
     pub project: String,
 }
+
+/// Parameters for the `correlate_findings` attack chain analysis tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CorrelateFindingsParams {
+    /// Project name or UUID to analyze findings for. Loads all findings and
+    /// applies rule-based correlation to identify attack chains where
+    /// multiple findings combine into compound vulnerabilities.
+    pub project: String,
+}

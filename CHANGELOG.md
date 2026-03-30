@@ -2,6 +2,15 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.24.0] - 2026-03-30
+
+### Added
+- **MCP prompt templates** — 5 pentest workflow starting points: `full-web-assessment`, `investigate-finding`, `remediation-plan`, `compare-scans`, `executive-summary`. Exposed via MCP prompts capability (`list_prompts`, `get_prompt`)
+- **MCP `correlate_findings` tool** — Rule-based attack chain detection that groups related findings into compound vulnerabilities (e.g., XSS + missing CSP = session hijacking). 6 built-in correlation rules with severity escalation and remediation priority
+- **`CorrelateFindingsParams`** type with `JsonSchema` derive
+- 9 new tests (5 prompt unit tests + 3 integration tests + 1 correlation test)
+- MCP server now exposes 19 tools + 5 prompts
+
 ## [0.23.0] - 2026-03-30
 
 ### Added
