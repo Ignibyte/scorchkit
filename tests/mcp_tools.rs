@@ -695,3 +695,35 @@ async fn test_server_uses_rich_instructions() {
     );
     assert!(instructions.len() > 1000, "instructions should be substantial");
 }
+
+/// Verify `auto_scan` params deserialize with defaults.
+#[test]
+fn test_tool_auto_scan() {
+    let json = r#"{"target": "https://example.com"}"#;
+    let params: AutoScanParams = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(params.target, "https://example.com");
+    assert_eq!(params.profile, "standard"); // default
+    assert!(params.project.is_none());
+
+    let json_with_project =
+        r#"{"target": "example.com", "profile": "quick", "project": "test-proj"}"#;
+    let params: AutoScanParams = serde_json::from_str(json_with_project).expect("deserialize");
+    assert_eq!(params.profile, "quick");
+    assert_eq!(params.project.as_deref(), Some("test-proj"));
+}
+
+/// Verify `target_intelligence` params deserialize.
+#[test]
+fn test_tool_target_intelligence() {
+    let json = r#"{"target": "https://example.com"}"#;
+    let params: TargetIntelligenceParams = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(params.target, "https://example.com");
+}
+
+/// Verify `scan_progress` params deserialize.
+#[test]
+fn test_tool_scan_progress() {
+    let json = r#"{"project": "my-project"}"#;
+    let params: ScanProgressParams = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(params.project, "my-project");
+}

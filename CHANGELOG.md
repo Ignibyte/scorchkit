@@ -2,6 +2,16 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.22.0] - 2026-03-30
+
+### Added
+- **MCP `auto_scan` composite tool** — One-shot full scan engagement: parse target, apply profile, run modules, optionally persist results to a project with finding deduplication
+- **MCP `target_intelligence` composite tool** — Recon-only consolidated briefing: runs all Recon-category modules (headers, tech detection, discovery, subdomain, crawling, DNS) without active vulnerability scanning
+- **MCP `scan_progress` status tool** — Post-hoc scan status check: latest scan record with timing, modules, finding count for a project
+- 3 new parameter types (`AutoScanParams`, `TargetIntelligenceParams`, `ScanProgressParams`) with `JsonSchema` derives
+- 3 new integration tests for parameter deserialization
+- MCP server now exposes 18 tools (was 15)
+
 ## [0.21.0] - 2026-03-29
 
 ### Added

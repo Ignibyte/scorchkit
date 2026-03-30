@@ -13,9 +13,10 @@ use uuid::Uuid;
 
 use super::server::ScorchKitServer;
 use super::types::{
-    AnalyzeFindingsParams, FindingListParams, FindingRefParams, FindingUpdateStatusParams,
-    PlanScanParams, ProjectCreateParams, ProjectDeleteParams, ProjectRefParams, ProjectScanParams,
-    ProjectStatusParams, ScanParams, ScheduleScanParams, TargetAddParams, TargetRemoveParams,
+    AnalyzeFindingsParams, AutoScanParams, FindingListParams, FindingRefParams,
+    FindingUpdateStatusParams, PlanScanParams, ProjectCreateParams, ProjectDeleteParams,
+    ProjectRefParams, ProjectScanParams, ProjectStatusParams, ScanParams, ScanProgressParams,
+    ScheduleScanParams, TargetAddParams, TargetIntelligenceParams, TargetRemoveParams,
 };
 use crate::engine::error::ScorchError;
 use crate::engine::scan_context::ScanContext;
@@ -584,6 +585,195 @@ impl ScorchKitServer {
 
         serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
     }
+
+    /// Run a full scan engagement in one call: parse target, build orchestrator,
+    /// run scan with the specified profile, and optionally persist results to
+    /// a project.
+    ///
+    /// This is the "one-shot" scanning tool — Claude can call this instead of
+    /// manually composing `scan` + `project_scan`. Does NOT include AI
+    /// planning or analysis (use `plan_scan` and `analyze_findings` separately).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target URL is invalid, the HTTP client cannot
+    /// be built, the scan fails, or project persistence fails.
+    pub async fn do_auto_scan(&self, params: AutoScanParams) -> Result<String, String> {
+        let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
+        let http_client = build_scan_client(&self.config).map_err(|e| e.to_string())?;
+        let ctx = ScanContext::new(target, Arc::clone(&self.config), http_client);
+
+        let mut orchestrator = Orchestrator::new(ctx);
+        orchestrator.register_default_modules();
+        orchestrator.apply_profile(&params.profile);
+
+        let result = orchestrator.run(true).await.map_err(|e| e.to_string())?;
+
+        // Optionally persist to project
+        if let Some(ref project_name) = params.project {
+            let project =
+                resolve_project(&self.pool, project_name).await.map_err(|e| e.to_string())?;
+            let modules_run: Vec<String> = result.modules_run.iter().map(String::clone).collect();
+            let modules_skipped: Vec<String> = result
+                .modules_skipped
+                .iter()
+                .map(|(id, reason)| format!("{id}: {reason}"))
+                .collect();
+            let summary_json = serde_json::to_value(&result.summary).map_err(|e| e.to_string())?;
+
+            let scan_record = scans::save_scan(
+                &self.pool,
+                project.id,
+                result.target.url.as_str(),
+                &params.profile,
+                result.started_at,
+                Some(result.completed_at),
+                &modules_run,
+                &modules_skipped,
+                &summary_json,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            let saved_count =
+                findings::save_findings(&self.pool, project.id, scan_record.id, &result.findings)
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+            let output = serde_json::json!({
+                "scan_id": result.scan_id,
+                "target": result.target.raw,
+                "profile": params.profile,
+                "project": project_name,
+                "persisted": true,
+                "findings_saved": saved_count,
+                "summary": {
+                    "total": result.summary.total_findings,
+                    "critical": result.summary.critical,
+                    "high": result.summary.high,
+                    "medium": result.summary.medium,
+                    "low": result.summary.low,
+                    "info": result.summary.info,
+                },
+                "modules_run": result.modules_run.len(),
+                "duration_seconds": (result.completed_at - result.started_at).num_seconds(),
+            });
+            return serde_json::to_string_pretty(&output).map_err(|e| e.to_string());
+        }
+
+        // No project — return full scan result
+        let output = serde_json::json!({
+            "scan_id": result.scan_id,
+            "target": result.target.raw,
+            "profile": params.profile,
+            "persisted": false,
+            "summary": {
+                "total": result.summary.total_findings,
+                "critical": result.summary.critical,
+                "high": result.summary.high,
+                "medium": result.summary.medium,
+                "low": result.summary.low,
+                "info": result.summary.info,
+            },
+            "modules_run": result.modules_run.len(),
+            "duration_seconds": (result.completed_at - result.started_at).num_seconds(),
+            "top_findings": result.findings.iter().take(5).map(|f| {
+                serde_json::json!({
+                    "severity": f.severity.to_string(),
+                    "title": &f.title,
+                    "target": &f.affected_target,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
+    }
+
+    /// Run recon-only modules against a target for consolidated intelligence.
+    ///
+    /// Executes only modules with `ModuleCategory::Recon` — headers, tech
+    /// detection, discovery, subdomain enumeration, crawling, DNS security.
+    /// Returns a consolidated briefing without any active vulnerability scanning.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target is invalid, the HTTP client cannot be
+    /// built, or the recon scan fails.
+    pub async fn do_target_intelligence(
+        &self,
+        params: TargetIntelligenceParams,
+    ) -> Result<String, String> {
+        let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
+        let http_client = build_scan_client(&self.config).map_err(|e| e.to_string())?;
+        let ctx = ScanContext::new(target, Arc::clone(&self.config), http_client);
+
+        let mut orchestrator = Orchestrator::new(ctx);
+        orchestrator.register_default_modules();
+        orchestrator.filter_by_category(crate::engine::module_trait::ModuleCategory::Recon);
+
+        let result = orchestrator.run(true).await.map_err(|e| e.to_string())?;
+
+        let output = serde_json::json!({
+            "target": result.target.raw,
+            "recon_modules_run": result.modules_run,
+            "total_findings": result.summary.total_findings,
+            "duration_seconds": (result.completed_at - result.started_at).num_seconds(),
+            "intelligence": result.findings.iter().map(|f| {
+                serde_json::json!({
+                    "module": &f.module_id,
+                    "severity": f.severity.to_string(),
+                    "title": &f.title,
+                    "description": &f.description,
+                    "target": &f.affected_target,
+                    "evidence": &f.evidence,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
+    }
+
+    /// Get the status of the most recent scan for a project.
+    ///
+    /// Queries the database for the latest scan record and returns metadata
+    /// including scan ID, target, timing, module count, and finding count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the project is not found or the database query fails.
+    pub async fn do_scan_progress(&self, params: ScanProgressParams) -> Result<String, String> {
+        let project =
+            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let scan_records =
+            scans::list_scans(&self.pool, project.id).await.map_err(|e| e.to_string())?;
+
+        let Some(latest) = scan_records.first() else {
+            return Ok(serde_json::json!({
+                "project": project.name,
+                "status": "no_scans",
+                "message": "No scans have been run for this project yet.",
+            })
+            .to_string());
+        };
+
+        let finding_count =
+            findings::list_findings(&self.pool, project.id).await.map_err(|e| e.to_string())?.len();
+
+        let status = if latest.completed_at.is_some() { "complete" } else { "in_progress" };
+
+        let output = serde_json::json!({
+            "project": project.name,
+            "status": status,
+            "latest_scan": {
+                "scan_id": latest.id.to_string(),
+                "target": &latest.target_url,
+                "profile": &latest.profile,
+                "started_at": latest.started_at.to_rfc3339(),
+                "completed_at": latest.completed_at.map(|d| d.to_rfc3339()),
+                "modules_run": latest.modules_run,
+            },
+            "total_scans": scan_records.len(),
+            "total_tracked_findings": finding_count,
+        });
+        serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
+    }
 }
 
 /// `#[tool_router]` — thin wrappers that delegate to `do_*` public methods.
@@ -792,6 +982,41 @@ impl ScorchKitServer {
         params: Parameters<AnalyzeFindingsParams>,
     ) -> Result<String, String> {
         self.do_analyze_findings(params.0).await
+    }
+
+    #[tool(description = "Run a complete security scan in one call. Parses the target, applies \
+        the scan profile (quick/standard/thorough), executes all matching modules, and optionally \
+        persists results to a project for tracking. This is the 'one-shot' scanning tool — use \
+        it when you want results fast without manually composing scan + project_scan. Does NOT \
+        include AI planning or analysis — compose with plan_scan and analyze_findings for a full \
+        AI-driven engagement. Returns JSON with scan summary, finding counts, and top findings.")]
+    async fn auto_scan(&self, params: Parameters<AutoScanParams>) -> Result<String, String> {
+        self.do_auto_scan(params.0).await
+    }
+
+    #[tool(description = "Gather consolidated target intelligence using recon-only modules. Runs \
+        headers analysis, technology detection, endpoint discovery, subdomain enumeration, web \
+        crawling, and DNS security checks — without any active vulnerability scanning. Use this \
+        as the first step in an engagement to understand the target's attack surface before \
+        deciding which scanner modules to deploy. Returns structured JSON with all recon findings \
+        organized by module.")]
+    async fn target_intelligence(
+        &self,
+        params: Parameters<TargetIntelligenceParams>,
+    ) -> Result<String, String> {
+        self.do_target_intelligence(params.0).await
+    }
+
+    #[tool(description = "Check the status of the most recent scan for a project. Returns the \
+        latest scan record with scan ID, target URL, profile used, start/completion times, \
+        finding count, and modules run. Also shows total scan count and tracked finding count \
+        for the project. Use after running auto_scan or project_scan to verify completion and \
+        review results.")]
+    async fn scan_progress(
+        &self,
+        params: Parameters<ScanProgressParams>,
+    ) -> Result<String, String> {
+        self.do_scan_progress(params.0).await
     }
 }
 
