@@ -14,6 +14,9 @@ pub struct AppConfig {
     pub ai: AiConfig,
     pub report: ReportConfig,
     pub database: DatabaseConfig,
+    /// Webhook endpoints for scan lifecycle notifications.
+    #[serde(default)]
+    pub webhooks: Vec<crate::runner::hooks::WebhookConfig>,
 }
 
 /// Database connection configuration for persistent storage.

@@ -1,5 +1,6 @@
 pub mod compliance;
 pub mod error;
+pub mod evidence;
 pub mod finding;
 pub mod module_trait;
 pub mod oob;

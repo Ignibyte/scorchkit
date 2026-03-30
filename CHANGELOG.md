@@ -2,6 +2,14 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.26.0] - 2026-03-30
+
+### Added
+- **HTTP evidence capture** — `src/engine/evidence.rs` with `HttpEvidence` struct for capturing full HTTP request/response pairs. Attached to findings via `.with_http_evidence()` builder. Response bodies auto-truncated at 10KB
+- **Webhook notifications** — `src/runner/hooks.rs` with `ScanEvent` enum (`ScanStarted`, `ScanCompleted`, `FindingDiscovered`) and `WebhookNotifier`. Async fire-and-forget delivery via `tokio::spawn`. Config via `[[webhooks]]` array with URL + events filter
+- **`WebhookConfig`** in `AppConfig` for configuring notification endpoints
+- 6 new unit tests (3 evidence + 3 webhook)
+
 ## [0.25.0] - 2026-03-30
 
 ### Added
