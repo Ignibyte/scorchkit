@@ -695,3 +695,69 @@ async fn test_server_uses_rich_instructions() {
     );
     assert!(instructions.len() > 1000, "instructions should be substantial");
 }
+
+/// Verify `auto_scan` params deserialize with defaults.
+#[test]
+fn test_tool_auto_scan() {
+    let json = r#"{"target": "https://example.com"}"#;
+    let params: AutoScanParams = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(params.target, "https://example.com");
+    assert_eq!(params.profile, "standard"); // default
+    assert!(params.project.is_none());
+
+    let json_with_project =
+        r#"{"target": "example.com", "profile": "quick", "project": "test-proj"}"#;
+    let params: AutoScanParams = serde_json::from_str(json_with_project).expect("deserialize");
+    assert_eq!(params.profile, "quick");
+    assert_eq!(params.project.as_deref(), Some("test-proj"));
+}
+
+/// Verify `target_intelligence` params deserialize.
+#[test]
+fn test_tool_target_intelligence() {
+    let json = r#"{"target": "https://example.com"}"#;
+    let params: TargetIntelligenceParams = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(params.target, "https://example.com");
+}
+
+/// Verify `scan_progress` params deserialize.
+#[test]
+fn test_tool_scan_progress() {
+    let json = r#"{"project": "my-project"}"#;
+    let params: ScanProgressParams = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(params.project, "my-project");
+}
+
+/// Verify `correlate_findings` params deserialize.
+#[test]
+fn test_tool_correlate_findings() {
+    let json = r#"{"project": "my-project"}"#;
+    let params: CorrelateFindingsParams = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(params.project, "my-project");
+}
+
+/// Verify MCP prompt list returns 5 templates.
+#[test]
+fn test_prompt_list() {
+    let prompts = ScorchKitServer::do_list_prompts();
+    assert_eq!(prompts.len(), 5);
+
+    let names: Vec<&str> = prompts.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"full-web-assessment"));
+    assert!(names.contains(&"investigate-finding"));
+    assert!(names.contains(&"remediation-plan"));
+    assert!(names.contains(&"compare-scans"));
+    assert!(names.contains(&"executive-summary"));
+}
+
+/// Verify MCP prompt retrieval with arguments.
+#[test]
+fn test_prompt_get() {
+    let mut args = std::collections::HashMap::new();
+    args.insert("target".to_string(), "https://example.com".to_string());
+
+    let result = ScorchKitServer::do_get_prompt("full-web-assessment", &args);
+    assert!(result.is_ok());
+    let prompt = result.unwrap();
+    assert_eq!(prompt.messages.len(), 2);
+}

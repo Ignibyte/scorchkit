@@ -190,3 +190,45 @@ pub struct AnalyzeFindingsParams {
 fn default_focus() -> String {
     "summary".to_string()
 }
+
+/// Parameters for the `auto_scan` composite tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AutoScanParams {
+    /// Target URL to scan. Examples: "https://example.com", "example.com".
+    /// Must be a host the user has authorized for testing.
+    pub target: String,
+    /// Scan profile: "quick" (recon only), "standard" (all built-in modules),
+    /// "thorough" (all modules including external tools). Defaults to "standard".
+    #[serde(default = "default_profile")]
+    pub profile: String,
+    /// Optional project name to persist results to. If provided, findings are
+    /// deduplicated and stored in the project database. If omitted, results
+    /// are returned without persistence.
+    pub project: Option<String>,
+}
+
+/// Parameters for the `target_intelligence` recon-only tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TargetIntelligenceParams {
+    /// Target URL to gather intelligence on. Runs only recon-category modules
+    /// (headers, tech detection, discovery, subdomain enumeration, crawling,
+    /// DNS security) without any active vulnerability scanning.
+    pub target: String,
+}
+
+/// Parameters for the `scan_progress` status check tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScanProgressParams {
+    /// Project name or UUID to check scan status for. Returns the most recent
+    /// scan record with metadata, finding counts, and timing.
+    pub project: String,
+}
+
+/// Parameters for the `correlate_findings` attack chain analysis tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CorrelateFindingsParams {
+    /// Project name or UUID to analyze findings for. Loads all findings and
+    /// applies rule-based correlation to identify attack chains where
+    /// multiple findings combine into compound vulnerabilities.
+    pub project: String,
+}

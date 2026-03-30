@@ -2,6 +2,82 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.29.0] - 2026-03-30
+
+### Added
+- **Deep tool validation** (`doctor --deep`) — Version checks, min-version enforcement, nuclei template freshness, remediation hints for 33 external tools. `src/cli/doctor.rs` with `ToolSpec`, `Version` comparison, 8 new tests (#48)
+- **Project init with target fingerprinting** (`init <url>`) — Single HTTP probe detects server, tech stack, CMS, WAF. Recommends scan profile based on detected tech + available tools. Generates tailored `scorchkit.toml`. Optional `--project` flag creates DB project. `src/cli/init.rs` with 10 new tests (#49)
+- **Project intelligence layer** — Per-module effectiveness tracking stored in `Project.settings` JSONB (no new migrations). `ModuleStats` per module: runs, findings, severity breakdown, effectiveness score. Updated after each scan. CLI: `project intelligence <name>`. AI planner enhanced with optional historical effectiveness context. `src/storage/intelligence.rs` with 11 new tests (#50)
+- **Autonomous scan agent** (`agent <target>`) — 7-phase loop: setup → recon → AI plan → vulnerability scan → AI analyze → persist → report. Calls internal functions directly (Orchestrator, ScanPlanner, AiAnalyst). Graceful AI fallback — plan failure falls back to profile, analysis failure is non-fatal. `src/agent/runner.rs` with 3 new tests (#51)
+- 32 new tests total across 4 features
+
+## [0.28.0] - 2026-03-30
+
+### Added
+- **Agent SDK support** — `src/agent/` module for autonomous pentest operations via Claude Agent SDK
+- **PTES-based agent system prompt** — 7-phase pentest methodology (pre-engagement through remediation) with built-in safety constraints: scope enforcement, no exploitation, evidence preservation, rate limiting
+- **AgentConfig** — authorized targets, max scan depth, project persistence, safety constraints. Builder pattern with `with_depth()`, `with_project()`, `with_database_url()`
+- **Manifest generator** — `generate_manifest()` produces JSON config for Claude Agent SDK clients (Python/TypeScript) with MCP server connection, system prompt, and safety rules
+- 5 new unit tests + 1 doctest
+
+## [0.27.0] - 2026-03-30
+
+### Added
+- **Plugin system for user-defined scan modules** — `src/runner/plugin.rs` with TOML-based plugin definitions. Users create `.toml` files defining custom scan modules with command, args (`{target}` placeholder substitution), output format (lines/json_lines/json), and default severity. `PluginModule` implements `ScanModule` trait seamlessly
+- **Plugin loader** — `load_plugins()` discovers `.toml` files from configurable `plugins_dir`, validates and registers them alongside built-in modules
+- **Orchestrator integration** — plugins auto-loaded in `register_default_modules()` when `plugins_dir` is set in config
+- **`plugins_dir`** config option in `ScanConfig` for specifying the plugin directory
+- 6 new unit tests (TOML parsing, metadata, arg substitution, line/JSON parsing, empty dir)
+
+## [0.26.0] - 2026-03-30
+
+### Added
+- **HTTP evidence capture** — `src/engine/evidence.rs` with `HttpEvidence` struct for capturing full HTTP request/response pairs. Attached to findings via `.with_http_evidence()` builder. Response bodies auto-truncated at 10KB
+- **Webhook notifications** — `src/runner/hooks.rs` with `ScanEvent` enum (`ScanStarted`, `ScanCompleted`, `FindingDiscovered`) and `WebhookNotifier`. Async fire-and-forget delivery via `tokio::spawn`. Config via `[[webhooks]]` array with URL + events filter
+- **`WebhookConfig`** in `AppConfig` for configuring notification endpoints
+- 6 new unit tests (3 evidence + 3 webhook)
+
+## [0.25.0] - 2026-03-30
+
+### Added
+- **enum4linux SMB enumeration wrapper** — `src/tools/enum4linux.rs` for share listing, user enumeration via RID cycling, group discovery, and password policy extraction
+- **Compliance framework mapping** — `src/engine/compliance.rs` with OWASP/CWE to NIST 800-53, PCI-DSS 4.0, SOC2, HIPAA control mapping. 10 OWASP categories + 13 CWEs mapped
+- **Finding `.with_compliance()` builder** — attach compliance framework references to findings
+- **Enhanced scope management** — `src/engine/scope.rs` with `ScopeRule` enum supporting exact domain, wildcard (`*.example.com`), and CIDR (`192.168.1.0/24`) matching
+- 9 new unit tests (2 enum4linux + 3 compliance + 4 scope)
+- ScorchKit now has 63 modules (31 built-in + 32 external tool wrappers)
+
+## [0.24.0] - 2026-03-30
+
+### Added
+- **MCP prompt templates** — 5 pentest workflow starting points: `full-web-assessment`, `investigate-finding`, `remediation-plan`, `compare-scans`, `executive-summary`. Exposed via MCP prompts capability (`list_prompts`, `get_prompt`)
+- **MCP `correlate_findings` tool** — Rule-based attack chain detection that groups related findings into compound vulnerabilities (e.g., XSS + missing CSP = session hijacking). 6 built-in correlation rules with severity escalation and remediation priority
+- **`CorrelateFindingsParams`** type with `JsonSchema` derive
+- 9 new tests (5 prompt unit tests + 3 integration tests + 1 correlation test)
+- MCP server now exposes 19 tools + 5 prompts
+
+## [0.23.0] - 2026-03-30
+
+### Added
+- **Trufflehog secret scanning wrapper** — `src/tools/trufflehog.rs` for detecting leaked API keys, credentials, and tokens in filesystems and git repos
+- **Prowler cloud security wrapper** — `src/tools/prowler.rs` for AWS/multi-cloud infrastructure misconfiguration scanning
+- **Trivy vulnerability scanning wrapper** — `src/tools/trivy.rs` for container image and dependency vulnerability detection with CVSS severity mapping
+- **DNSx DNS toolkit wrapper** — `src/tools/dnsx.rs` for fast DNS resolution, wildcard detection, and record queries
+- **Gobuster directory scanner wrapper** — `src/tools/gobuster.rs` for directory and vhost brute-forcing with status-based severity
+- **dnsrecon DNS enumeration wrapper** — `src/tools/dnsrecon.rs` for comprehensive DNS enumeration including zone transfer detection
+- 12 new unit tests (2 per wrapper for output parsing + empty handling)
+- ScorchKit now has 62 modules (31 built-in + 31 external tool wrappers)
+
+## [0.22.0] - 2026-03-30
+
+### Added
+- **MCP `auto_scan` composite tool** — One-shot full scan engagement: parse target, apply profile, run modules, optionally persist results to a project with finding deduplication
+- **MCP `target_intelligence` composite tool** — Recon-only consolidated briefing: runs all Recon-category modules (headers, tech detection, discovery, subdomain, crawling, DNS) without active vulnerability scanning
+- **MCP `scan_progress` status tool** — Post-hoc scan status check: latest scan record with timing, modules, finding count for a project
+- 3 new parameter types (`AutoScanParams`, `TargetIntelligenceParams`, `ScanProgressParams`) with `JsonSchema` derives
+- 3 new integration tests for parameter deserialization
+- MCP server now exposes 18 tools (was 15)
+
 ## [0.21.0] - 2026-03-29
 
 ### Added

@@ -329,6 +329,90 @@ pub async fn status(pool: &PgPool, project_ref: &str) -> Result<()> {
     Ok(())
 }
 
+/// Show module effectiveness intelligence for a project.
+///
+/// Displays per-module statistics: run count, findings, severity
+/// breakdown, and effectiveness score — sorted by total findings.
+///
+/// # Errors
+///
+/// Returns an error if the project is not found or the database query fails.
+pub async fn intelligence(pool: &PgPool, project_ref: &str) -> Result<()> {
+    let project = resolve_project(pool, project_ref).await?;
+    let intel = crate::storage::intelligence::get_intelligence(pool, project.id).await?;
+
+    println!();
+    println!("{}  {}", "Module Intelligence".bold().underline(), project.name.cyan().bold());
+    println!("{}", "━".repeat(60).dimmed());
+
+    if let Some(ref profile) = intel.target_profile {
+        println!();
+        println!("  {}", "Target Profile".bold());
+        if let Some(ref s) = profile.server {
+            println!("    Server:  {}", s.cyan());
+        }
+        if let Some(ref c) = profile.cms {
+            println!("    CMS:     {}", c.green());
+        }
+        if !profile.technologies.is_empty() {
+            println!("    Tech:    {}", profile.technologies.join(", "));
+        }
+        if let Some(ref w) = profile.waf {
+            println!("    WAF:     {}", w.yellow());
+        }
+    }
+
+    println!();
+    println!("  Total scans: {}", intel.total_scans.to_string().cyan());
+    if let Some(ref updated) = intel.last_updated {
+        println!("  Last updated: {}", updated.dimmed());
+    }
+
+    if intel.modules.is_empty() {
+        println!();
+        println!("  {} No module data yet. Run a scan with --project first.", "note:".dimmed());
+        println!();
+        return Ok(());
+    }
+
+    // Sort by total_findings descending
+    let mut sorted: Vec<_> = intel.modules.iter().collect();
+    sorted.sort_by(|a, b| b.1.total_findings.cmp(&a.1.total_findings).then_with(|| a.0.cmp(b.0)));
+
+    println!();
+    println!(
+        "  {:<20} {:>5} {:>8} {:>4} {:>4} {:>4} {:>4} {:>4} {:>6}",
+        "Module".bold(),
+        "Runs".bold(),
+        "Findings".bold(),
+        "C".red().bold(),
+        "H".red(),
+        "M".yellow(),
+        "L".green(),
+        "I".blue(),
+        "Score".bold(),
+    );
+    println!("  {}", "─".repeat(58).dimmed());
+
+    for (id, stats) in &sorted {
+        println!(
+            "  {:<20} {:>5} {:>8} {:>4} {:>4} {:>4} {:>4} {:>4} {:>6.1}",
+            id.cyan(),
+            stats.total_runs,
+            stats.total_findings,
+            stats.critical,
+            stats.high,
+            stats.medium,
+            stats.low,
+            stats.info,
+            stats.effectiveness_score,
+        );
+    }
+
+    println!();
+    Ok(())
+}
+
 /// Format a severity label with appropriate color.
 fn format_severity_colored(severity: &str) -> String {
     match severity {

@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::evidence::HttpEvidence;
 use super::severity::Severity;
 
 /// A single finding from a scan module.
@@ -28,6 +29,12 @@ pub struct Finding {
     /// CWE ID if applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwe_id: Option<u32>,
+    /// Compliance framework control references (NIST, PCI-DSS, SOC2, HIPAA).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compliance: Option<Vec<String>>,
+    /// Captured HTTP request/response pair for PoC replay.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_evidence: Option<HttpEvidence>,
     /// Timestamp when found.
     pub timestamp: DateTime<Utc>,
 }
@@ -51,6 +58,8 @@ impl Finding {
             remediation: None,
             owasp_category: None,
             cwe_id: None,
+            compliance: None,
+            http_evidence: None,
             timestamp: Utc::now(),
         }
     }
@@ -73,6 +82,20 @@ impl Finding {
     #[must_use]
     pub const fn with_cwe(mut self, cwe_id: u32) -> Self {
         self.cwe_id = Some(cwe_id);
+        self
+    }
+
+    /// Attach compliance framework control references to this finding.
+    #[must_use]
+    pub fn with_compliance(mut self, controls: Vec<String>) -> Self {
+        self.compliance = Some(controls);
+        self
+    }
+
+    /// Attach an HTTP request/response evidence capture to this finding.
+    #[must_use]
+    pub fn with_http_evidence(mut self, evidence: HttpEvidence) -> Self {
+        self.http_evidence = Some(evidence);
         self
     }
 }
@@ -104,6 +127,7 @@ mod tests {
         assert!(f.remediation.is_none());
         assert!(f.owasp_category.is_none());
         assert!(f.cwe_id.is_none());
+        assert!(f.compliance.is_none());
     }
 
     #[test]

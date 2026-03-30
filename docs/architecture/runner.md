@@ -10,6 +10,8 @@ runner/
   orchestrator.rs    Module discovery, filtering, concurrent execution
   subprocess.rs      External tool subprocess management
   progress.rs        Indicatif progress spinners
+  hooks.rs           Webhook notification system for scan events
+  plugin.rs          TOML-based user plugin system
 ```
 
 ## Orchestrator (`orchestrator.rs`)
@@ -53,10 +55,13 @@ impl Orchestrator {
 ### Module Discovery
 
 `all_modules()` calls:
-- `crate::recon::register_modules()` - returns recon module instances
-- `crate::scanner::register_modules()` - returns scanner module instances
+- `crate::recon::register_modules()` - returns recon module instances (6 modules)
+- `crate::scanner::register_modules()` - returns scanner module instances (24 modules)
+- `crate::tools::register_modules()` - returns external tool wrapper instances (32 modules)
 
-These are concatenated into a single `Vec<Box<dyn ScanModule>>`.
+These are concatenated into a single `Vec<Box<dyn ScanModule>>` (62 built-in modules).
+
+Additionally, `register_default_modules()` calls `plugin::load_plugins()` to load any user-defined plugins from the configured plugins directory.
 
 ### Filtering
 
@@ -136,3 +141,74 @@ pub fn finish_error(pb: &ProgressBar, module_name: &str, error: &str)
 ```
 
 Spinners tick every 100ms. When `--quiet` is set, the orchestrator skips creating spinners entirely.
+
+## Webhook Notifications (`hooks.rs`)
+
+Fires JSON payloads to configured webhook URLs when scan lifecycle events occur. Notifications are async and fire-and-forget -- failures are logged as warnings but never block scanning.
+
+### ScanEvent
+
+```rust
+pub enum ScanEvent {
+    ScanStarted { scan_id, target, profile, module_count },
+    ScanCompleted { scan_id, target, finding_count, duration_seconds },
+    FindingDiscovered { scan_id, module_id, severity, title, affected_target },
+}
+```
+
+Events serialize with a `"event"` tag field (e.g., `"event": "scan_started"`).
+
+### WebhookConfig
+
+```rust
+pub struct WebhookConfig {
+    pub url: String,         // URL to POST event payloads to
+    pub events: Vec<String>, // Optional filter (empty = all events)
+}
+```
+
+### Delivery
+
+```rust
+pub fn notify(webhooks: &[WebhookConfig], event: &ScanEvent)
+```
+
+Spawns a `tokio::spawn` task for each matching webhook. Each task POSTs the JSON-serialized event with `Content-Type: application/json`. If the webhook config has a non-empty `events` list, only matching event types are delivered.
+
+## Plugin System (`plugin.rs`)
+
+Allows users to define custom scan modules via TOML files without writing Rust code.
+
+### PluginDef
+
+Plugin definitions are TOML files placed in the configured plugins directory:
+
+```toml
+id = "custom-check"
+name = "My Custom Check"
+description = "Runs a custom security check"
+category = "scanner"       # "recon" or "scanner"
+command = "my-tool"
+args = ["--json", "{target}"]
+timeout_seconds = 120
+output_format = "lines"    # "lines", "json_lines", or "json"
+severity = "medium"
+```
+
+The `{target}` placeholder in `args` is substituted with the scan target URL at runtime.
+
+### PluginModule
+
+Wraps a `PluginDef` and implements `ScanModule`. Always reports `requires_external_tool() = true` with the `command` field as the required tool. The module runs the command via `subprocess::run_tool()` and parses output according to `output_format`:
+
+- **`lines`** -- Consolidates all output lines into a single finding with a count summary
+- **`json_lines`** -- Each line is parsed as a JSON object; `title`, `severity`, and `description` fields are extracted
+- **`json`** -- Entire output is parsed as a JSON array; each element becomes a finding
+
+### Loading
+
+```rust
+pub fn load_plugins(dir: &Path) -> Vec<Box<dyn ScanModule>>
+```
+
+Discovers `.toml` files in the given directory, parses each as a `PluginDef`, and wraps them in `PluginModule`. Invalid files are logged and skipped. Called by `Orchestrator::register_default_modules()` when `config.scan.plugins_dir` is set.

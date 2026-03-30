@@ -72,8 +72,12 @@ impl ScanPlanner {
         // Phase B: Build prompt and call Claude
         let modules = all_modules();
         let catalog = prompts::build_module_catalog(&modules);
-        let prompt =
-            prompts::build_planning_prompt(target.url.as_str(), &recon_result.findings, &catalog);
+        let prompt = prompts::build_planning_prompt(
+            target.url.as_str(),
+            &recon_result.findings,
+            &catalog,
+            None, // Intelligence context passed by agent runner when project available
+        );
 
         let plan_output = self.run_claude(&prompt, &target.raw).await?;
 

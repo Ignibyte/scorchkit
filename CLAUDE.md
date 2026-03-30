@@ -68,13 +68,13 @@ Hooks enforce the Constitution automatically. They fire on tool use and conversa
 
 ## ScorchKit
 
-Rust web application security testing toolkit and orchestrator. 41 modules (20 built-in + 21 external tool wrappers), Claude AI integration, 4 output formats, proxy support, authenticated scanning, scan profiles, scan diffing.
+Rust web application security testing toolkit and orchestrator. 63 modules (31 built-in + 32 external tool wrappers), Claude AI integration, 4 output formats, proxy support, authenticated scanning, scan profiles, scan diffing.
 
 ### Quick Reference
 
 ```
 cargo build                                       # Build
-cargo test                                        # Run tests (21 tests)
+cargo test                                        # Run tests (178 default tests, 287 with --features mcp)
 cargo run -- run <url>                            # Scan a target
 cargo run -- run <url> --profile quick            # Fast scan (4 modules)
 cargo run -- run <url> --analyze                  # Scan + AI analysis
@@ -82,7 +82,7 @@ cargo run -- run <url> --proxy http://127.0.0.1:8080  # Through Burp
 cargo run -- analyze <report.json> -f remediate   # AI remediation guide
 cargo run -- diff baseline.json current.json      # Compare two scans
 cargo run -- doctor                               # Check tool installation
-cargo run -- modules --check-tools                # List all 41 modules
+cargo run -- modules --check-tools                # List all 63 modules
 cargo run -- completions bash                     # Shell completions
 cargo clippy                                      # Lint (0 warnings)
 ```
@@ -93,13 +93,14 @@ cargo clippy                                      # Lint (0 warnings)
 src/
   main.rs              Entry point (tokio runtime, tracing)
   lib.rs               Module tree
-  engine/              Core: Target, Finding, Severity, ScanModule trait, ScanContext, ScanResult, ScorchError
+  engine/              Core: Target, Finding, Severity, ScanModule trait, ScanContext, ScanResult, ScorchError, compliance, evidence, scope
   cli/                 Clap CLI (args.rs), command dispatch (runner.rs), shell completions, doctor
   config/              TOML: ScanConfig (proxy, scope, rate_limit), AuthConfig, ToolsConfig, AiConfig, ReportConfig
-  runner/              Orchestrator (concurrent via semaphore), subprocess mgmt, progress spinners
-  recon/               headers, tech, discovery, subdomain, crawler, waf
-  scanner/             ssl, misconfig, csrf, injection, cmdi, xss, ssrf, xxe, idor, jwt, redirect, sensitive, api-schema, ratelimit
-  tools/               nmap, nuclei, nikto, sqlmap, feroxbuster, sslyze, zap, ffuf, metasploit, wafw00f, testssl, wpscan, amass, subfinder, dalfox, hydra, httpx, theharvester, arjun, cewl, droopescan
+  runner/              Orchestrator (concurrent via semaphore), subprocess mgmt, progress spinners, hooks, plugin
+  recon/               headers, tech, discovery, subdomain, crawler, waf, dns
+  scanner/             ssl, misconfig, csrf, injection, cmdi, xss, ssrf, xxe, idor, jwt, redirect, sensitive, api-schema, ratelimit, cors, csp, auth, upload, websocket, graphql, subtakeover, acl, api, waf
+  tools/               nmap, nuclei, nikto, sqlmap, feroxbuster, sslyze, zap, ffuf, metasploit, wafw00f, testssl, wpscan, amass, subfinder, dalfox, hydra, httpx, theharvester, arjun, cewl, droopescan, katana, gau, paramspider, trufflehog, prowler, trivy, dnsx, gobuster, dnsrecon, enum4linux
+  agent/               Agent SDK support (config, prompts, manifest)
   ai/                  Claude CLI integration (analyst, prompts, response parser)
   report/              terminal, json, html, sarif, diff
 tests/
@@ -183,6 +184,6 @@ Every coding session should follow this flow:
 
 - [Architecture Overview](docs/architecture/overview.md)
 - [Module Development Guide](docs/architecture/modules.md)
-- [Built-in Module Docs](docs/modules/) (20 files)
-- [Tool Wrapper Docs](docs/tools/) (21 files)
+- [Built-in Module Docs](docs/modules/) (31 files)
+- [Tool Wrapper Docs](docs/tools/) (32 files)
 - [Tools Installation Guide](docs/tools-checklist.md)

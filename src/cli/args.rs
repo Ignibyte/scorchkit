@@ -128,11 +128,44 @@ pub enum Commands {
         check_tools: bool,
     },
 
-    /// Initialize a default config file
-    Init,
+    /// Initialize a config file, optionally probing a target for fingerprinting
+    Init {
+        /// Target URL to probe and generate a tailored config for
+        target: Option<String>,
+
+        /// Create a named project and add the target (requires storage feature)
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Database URL override for project creation
+        #[arg(long)]
+        database_url: Option<String>,
+    },
 
     /// Check external tool installation status
-    Doctor,
+    Doctor {
+        /// Run deep validation: version checks, template freshness, health checks
+        #[arg(long)]
+        deep: bool,
+    },
+
+    /// Run autonomous scan agent (recon→plan→scan→analyze loop)
+    Agent {
+        /// Target URL to scan
+        target: String,
+
+        /// Scan depth: quick, standard, thorough
+        #[arg(long, default_value = "standard")]
+        depth: String,
+
+        /// Associate with a project for persistence and intelligence tracking
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Database URL override for project persistence
+        #[arg(long)]
+        database_url: Option<String>,
+    },
 
     /// Generate shell completions
     Completions {
@@ -226,6 +259,12 @@ pub enum ProjectCommands {
 
     /// Show security posture metrics and trend analysis
     Status {
+        /// Project name or UUID
+        project: String,
+    },
+
+    /// Show module effectiveness intelligence
+    Intelligence {
         /// Project name or UUID
         project: String,
     },

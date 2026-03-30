@@ -240,6 +240,7 @@ pub fn build_planning_prompt(
     target: &str,
     recon_findings: &[Finding],
     module_catalog: &str,
+    intelligence: Option<&str>,
 ) -> String {
     let recon_json = serialize_findings_compact(recon_findings);
 
@@ -249,11 +250,18 @@ pub fn build_planning_prompt(
          The following reconnaissance has already been performed. \
          Based on these recon findings, decide which scan modules to run next.\n\n\
          RECON FINDINGS:\n{recon_json}\n\n\
-         AVAILABLE MODULES:\n{module_catalog}\n\n\
-         ---\n\nTASK:\n"
+         AVAILABLE MODULES:\n{module_catalog}\n\n"
     );
 
-    let _ = write!(prompt, "{PLANNING_TASK}");
+    if let Some(intel) = intelligence {
+        let _ = write!(
+            prompt,
+            "HISTORICAL MODULE EFFECTIVENESS (from previous scans on this project):\n\
+             {intel}\n\n"
+        );
+    }
+
+    let _ = write!(prompt, "---\n\nTASK:\n{PLANNING_TASK}");
     prompt
 }
 
@@ -347,4 +355,28 @@ fn serialize_findings_compact(findings: &[Finding]) -> String {
         .collect();
 
     serde_json::to_string_pretty(&compact).unwrap_or_else(|_| "[]".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_planning_prompt_with_intelligence() {
+        let prompt = build_planning_prompt(
+            "https://example.com",
+            &[],
+            "[]",
+            Some("ssl: 3 runs, 5 findings"),
+        );
+        assert!(prompt.contains("HISTORICAL MODULE EFFECTIVENESS"));
+        assert!(prompt.contains("ssl: 3 runs, 5 findings"));
+    }
+
+    #[test]
+    fn test_planning_prompt_without_intelligence() {
+        let prompt = build_planning_prompt("https://example.com", &[], "[]", None);
+        assert!(!prompt.contains("HISTORICAL MODULE EFFECTIVENESS"));
+        assert!(prompt.contains("TASK:"));
+    }
 }

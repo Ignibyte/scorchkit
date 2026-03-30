@@ -94,11 +94,37 @@ Unified error type covering all failure domains (HTTP, tool execution, config, p
 
 ## Module Categories
 
-| Category | Purpose | Examples |
-|----------|---------|---------|
-| **Recon** | Information gathering, no active exploitation | Headers, tech fingerprinting, directory discovery |
-| **Scanner** | Active vulnerability detection | SQLi, XSS, SSL misconfig, CORS bypass |
-| **Tools** | External tool wrappers (not a category, but a pattern) | nmap, nuclei, sqlmap wrappers |
+ScorchKit ships with **63 modules** (6 recon + 24 scanner + 32 tools + user plugins):
+
+| Category | Count | Purpose | Examples |
+|----------|-------|---------|---------|
+| **Recon** | 6 | Information gathering, no active exploitation | Headers, tech fingerprinting, directory discovery, subdomain enum, crawler, DNS security |
+| **Scanner** | 24 | Active vulnerability detection | SQLi, XSS, SSRF, XXE, CSRF, CORS, CSP, JWT, upload, WebSocket, GraphQL, ACL, API security |
+| **Tools** | 32 | External tool wrappers | nmap, nuclei, sqlmap, feroxbuster, ffuf, dalfox, interactsh, prowler, trivy, trufflehog |
+| **Plugins** | variable | User-defined modules via TOML | Custom tool wrappers loaded from a plugins directory |
+
+## Additional Subsystems
+
+### Compliance Mapping (`engine/compliance.rs`)
+Maps OWASP Top 10 and CWE identifiers to compliance framework controls: NIST 800-53, PCI-DSS 4.0, SOC2 TSC, and HIPAA. Findings can carry compliance references via `.with_compliance()`. See [engine.md](engine.md).
+
+### Scope Management (`engine/scope.rs`)
+Structured scope rules supporting exact domain, wildcard (`*.example.com`), and CIDR (`192.168.1.0/24`) matching. Used to enforce target boundaries. See [engine.md](engine.md).
+
+### Evidence Capture (`engine/evidence.rs`)
+`HttpEvidence` struct captures full HTTP request/response pairs and attaches them to findings for PoC replay. Response bodies are truncated to 10KB. See [engine.md](engine.md).
+
+### Webhook Notifications (`runner/hooks.rs`)
+Fire-and-forget JSON webhook delivery for scan lifecycle events (`ScanStarted`, `ScanCompleted`, `FindingDiscovered`). Configured via `WebhookConfig` with optional event type filtering. See [runner.md](runner.md).
+
+### Plugin System (`runner/plugin.rs`)
+TOML-based user-defined scan modules. Define a command, arguments (with `{target}` substitution), output format, and severity. Loaded from a configurable plugins directory. See [runner.md](runner.md).
+
+### Agent SDK Support (`agent/`)
+Configuration, system prompts, and manifest generation for integrating ScorchKit with the Claude Agent SDK. Produces JSON manifests that Agent SDK clients consume for autonomous pentest operations. See [agent.md](agent.md).
+
+### Out-of-Band Detection (`engine/oob.rs`)
+Wraps `interactsh-client` as a long-running subprocess to provide OOB callback URLs for blind vulnerability detection (SSRF, XXE, RCE, SQLi).
 
 ## Crate Dependencies
 

@@ -14,6 +14,9 @@ pub struct AppConfig {
     pub ai: AiConfig,
     pub report: ReportConfig,
     pub database: DatabaseConfig,
+    /// Webhook endpoints for scan lifecycle notifications.
+    #[serde(default)]
+    pub webhooks: Vec<crate::runner::hooks::WebhookConfig>,
 }
 
 /// Database connection configuration for persistent storage.
@@ -64,6 +67,8 @@ pub struct ScanConfig {
     /// Exclude URLs matching these patterns from scanning.
     #[serde(default)]
     pub scope_exclude: Vec<String>,
+    /// Directory containing plugin definition files (.toml).
+    pub plugins_dir: Option<PathBuf>,
 }
 
 impl Default for ScanConfig {
@@ -80,6 +85,7 @@ impl Default for ScanConfig {
             proxy: None,
             scope_include: Vec::new(),
             scope_exclude: Vec::new(),
+            plugins_dir: None,
         }
     }
 }

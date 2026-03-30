@@ -6,7 +6,8 @@ use std::sync::Arc;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    Implementation, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
+    GetPromptRequestParams, GetPromptResult, Implementation, ListPromptsResult,
+    ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
     ReadResourceRequestParams, ReadResourceResult, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{RequestContext, RoleServer};
@@ -43,9 +44,15 @@ impl ScorchKitServer {
 #[tool_handler]
 impl ServerHandler for ScorchKitServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().enable_resources().build())
-            .with_server_info(Implementation::new("scorchkit", env!("CARGO_PKG_VERSION")))
-            .with_instructions(super::instructions::INSTRUCTIONS.to_string())
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .enable_prompts()
+                .build(),
+        )
+        .with_server_info(Implementation::new("scorchkit", env!("CARGO_PKG_VERSION")))
+        .with_instructions(super::instructions::INSTRUCTIONS.to_string())
     }
 
     async fn list_resources(
@@ -70,6 +77,33 @@ impl ServerHandler for ScorchKitServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, rmcp::ErrorData> {
         self.do_read_resource(&request.uri).await
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, rmcp::ErrorData> {
+        Ok(ListPromptsResult { prompts: Self::do_list_prompts(), meta: None, next_cursor: None })
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, rmcp::ErrorData> {
+        let arguments = request
+            .arguments
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, v)| {
+                let s = v.as_str().map_or_else(|| v.to_string(), str::to_string);
+                (k, s)
+            })
+            .collect();
+
+        Self::do_get_prompt(&request.name, &arguments)
+            .map_err(|e| rmcp::ErrorData::invalid_params(e, None::<serde_json::Value>))
     }
 }
 
