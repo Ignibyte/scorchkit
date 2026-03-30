@@ -2,10 +2,13 @@ pub mod amass;
 pub mod arjun;
 pub mod cewl;
 pub mod dalfox;
+pub mod dnsrecon;
+pub mod dnsx;
 pub mod droopescan;
 pub mod feroxbuster;
 pub mod ffuf;
 pub mod gau;
+pub mod gobuster;
 pub mod httpx;
 pub mod hydra;
 pub mod interactsh;
@@ -15,11 +18,14 @@ pub mod nikto;
 pub mod nmap;
 pub mod nuclei;
 pub mod paramspider;
+pub mod prowler;
 pub mod sqlmap;
 pub mod sslyze;
 pub mod subfinder;
 pub mod testssl;
 pub mod theharvester;
+pub mod trivy;
+pub mod trufflehog;
 pub mod wafw00f;
 pub mod wpscan;
 pub mod zap;
@@ -55,5 +61,11 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(katana::KatanaModule),
         Box::new(gau::GauModule),
         Box::new(paramspider::ParamSpiderModule),
+        Box::new(trufflehog::TrufflehogModule),
+        Box::new(prowler::ProwlerModule),
+        Box::new(trivy::TrivyModule),
+        Box::new(dnsx::DnsxModule),
+        Box::new(gobuster::GobusterModule),
+        Box::new(dnsrecon::DnsreconModule),
     ]
 }

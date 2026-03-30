@@ -2,6 +2,18 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.23.0] - 2026-03-30
+
+### Added
+- **Trufflehog secret scanning wrapper** — `src/tools/trufflehog.rs` for detecting leaked API keys, credentials, and tokens in filesystems and git repos
+- **Prowler cloud security wrapper** — `src/tools/prowler.rs` for AWS/multi-cloud infrastructure misconfiguration scanning
+- **Trivy vulnerability scanning wrapper** — `src/tools/trivy.rs` for container image and dependency vulnerability detection with CVSS severity mapping
+- **DNSx DNS toolkit wrapper** — `src/tools/dnsx.rs` for fast DNS resolution, wildcard detection, and record queries
+- **Gobuster directory scanner wrapper** — `src/tools/gobuster.rs` for directory and vhost brute-forcing with status-based severity
+- **dnsrecon DNS enumeration wrapper** — `src/tools/dnsrecon.rs` for comprehensive DNS enumeration including zone transfer detection
+- 12 new unit tests (2 per wrapper for output parsing + empty handling)
+- ScorchKit now has 62 modules (31 built-in + 31 external tool wrappers)
+
 ## [0.22.0] - 2026-03-30
 
 ### Added
