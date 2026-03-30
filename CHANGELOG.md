@@ -2,6 +2,16 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [0.25.0] - 2026-03-30
+
+### Added
+- **enum4linux SMB enumeration wrapper** — `src/tools/enum4linux.rs` for share listing, user enumeration via RID cycling, group discovery, and password policy extraction
+- **Compliance framework mapping** — `src/engine/compliance.rs` with OWASP/CWE to NIST 800-53, PCI-DSS 4.0, SOC2, HIPAA control mapping. 10 OWASP categories + 13 CWEs mapped
+- **Finding `.with_compliance()` builder** — attach compliance framework references to findings
+- **Enhanced scope management** — `src/engine/scope.rs` with `ScopeRule` enum supporting exact domain, wildcard (`*.example.com`), and CIDR (`192.168.1.0/24`) matching
+- 9 new unit tests (2 enum4linux + 3 compliance + 4 scope)
+- ScorchKit now has 63 modules (31 built-in + 32 external tool wrappers)
+
 ## [0.24.0] - 2026-03-30
 
 ### Added

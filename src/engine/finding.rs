@@ -28,6 +28,9 @@ pub struct Finding {
     /// CWE ID if applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwe_id: Option<u32>,
+    /// Compliance framework control references (NIST, PCI-DSS, SOC2, HIPAA).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compliance: Option<Vec<String>>,
     /// Timestamp when found.
     pub timestamp: DateTime<Utc>,
 }
@@ -51,6 +54,7 @@ impl Finding {
             remediation: None,
             owasp_category: None,
             cwe_id: None,
+            compliance: None,
             timestamp: Utc::now(),
         }
     }
@@ -73,6 +77,13 @@ impl Finding {
     #[must_use]
     pub const fn with_cwe(mut self, cwe_id: u32) -> Self {
         self.cwe_id = Some(cwe_id);
+        self
+    }
+
+    /// Attach compliance framework control references to this finding.
+    #[must_use]
+    pub fn with_compliance(mut self, controls: Vec<String>) -> Self {
+        self.compliance = Some(controls);
         self
     }
 }
@@ -104,6 +115,7 @@ mod tests {
         assert!(f.remediation.is_none());
         assert!(f.owasp_category.is_none());
         assert!(f.cwe_id.is_none());
+        assert!(f.compliance.is_none());
     }
 
     #[test]

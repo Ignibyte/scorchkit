@@ -5,6 +5,7 @@ pub mod dalfox;
 pub mod dnsrecon;
 pub mod dnsx;
 pub mod droopescan;
+pub mod enum4linux;
 pub mod feroxbuster;
 pub mod ffuf;
 pub mod gau;
@@ -67,5 +68,6 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(dnsx::DnsxModule),
         Box::new(gobuster::GobusterModule),
         Box::new(dnsrecon::DnsreconModule),
+        Box::new(enum4linux::Enum4linuxModule),
     ]
 }
