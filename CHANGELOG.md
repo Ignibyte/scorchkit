@@ -12,8 +12,12 @@ All notable changes to ScorchKit will be documented in this file.
 - **NoSQL injection scanner** (`nosql`) — Detects MongoDB/CouchDB/Redis injection via 12 payloads: `$gt`, `$ne`, `$regex`, `$exists` operators, bracket notation, `$where` JavaScript injection, boolean-based blind. Error-based detection (21 patterns), 500 status detection, response size differential. JSON body injection for auth bypass. CWE-943, OWASP A03:2021. `src/scanner/nosql.rs` with 5 tests (#73)
 - **LDAP injection scanner** (`ldap`) — Detects LDAP filter injection via 11 payloads: wildcard, filter-closing, OR injection, null byte, escaped metacharacters. Error-based detection (24 patterns) covering PHP, Java, Python, Active Directory LDAP implementations. CWE-90, OWASP A03:2021. `src/scanner/ldap.rs` with 5 tests (#73)
 - **HTTP request smuggling scanner** (`smuggling`) — Heuristic-based CL.TE/TE.CL/TE.TE risk detection via proxy indicator analysis (17 CDN/proxy headers), `Transfer-Encoding` obfuscation variant testing (9 variants), and `Content-Length` handling inconsistency checks. Reports risk indicators with evidence strength-based severity since `reqwest` normalizes TE headers. CWE-444, OWASP A05:2021. `src/scanner/smuggling.rs` with 5 tests (#74)
-- Total scanner modules: 31 built-in (was 24)
-- Total tests: 384 default (was 345), 520 MCP (was 481)
+- **Prototype pollution scanner** (`prototype_pollution`) — Detects `__proto__` and `constructor.prototype` injection via 4 JSON body payloads and 3 query parameter payloads. Checks for canary reflection and server errors. CWE-1321, OWASP A08:2021. `src/scanner/prototype_pollution.rs` with 4 tests (#75)
+- **Mass assignment scanner** (`mass_assignment`) — Detects over-posting via 12 privileged field injections (`role`, `isAdmin`, `price`, `permissions`, etc.) in JSON POST bodies. Compares against baseline to avoid false positives. CWE-915, OWASP A04:2021. `src/scanner/mass_assignment.rs` with 4 tests (#75)
+- **Clickjacking scanner** (`clickjacking`) — Active test for missing frame protection: flags only when BOTH `X-Frame-Options` AND CSP `frame-ancestors` are absent. Only checks HTML pages. CWE-1021, OWASP A05:2021. `src/scanner/clickjacking.rs` with 5 tests (#76)
+- **DOM XSS scanner** (`dom_xss`) — Static JavaScript source/sink analysis: 12 DOM sources (`location.hash`, `document.referrer`, etc.) and 15 sinks (`innerHTML`, `eval`, `document.write`, etc.). Flags source+sink combinations and orphan critical sinks. CWE-79, OWASP A07:2021. `src/scanner/dom_xss.rs` with 5 tests (#76)
+- Total scanner modules: 35 built-in (was 24)
+- Total tests: 402 default (was 345), 538 MCP (was 481)
 
 ## [0.29.0] - 2026-03-30
 
