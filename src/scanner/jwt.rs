@@ -137,9 +137,8 @@ fn analyze_jwt(token: &str, source: &str, url: &str, findings: &mut Vec<Finding>
     }
 
     // Decode header
-    let header_json = match decode_base64url(parts[0]) {
-        Some(json) => json,
-        None => return,
+    let Some(header_json) = decode_base64url(parts[0]) else {
+        return;
     };
 
     let header: serde_json::Value = match serde_json::from_str(&header_json) {
@@ -327,4 +326,175 @@ fn decode_base64url(input: &str) -> Option<String> {
         .decode(padded.trim_end_matches('='))
         .ok()?;
     String::from_utf8(decoded).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for JWT analysis helper functions.
+
+    // Helper: build a minimal JWT with the given header and payload JSON.
+    // Signature is a placeholder (not cryptographically valid).
+    fn make_jwt(header_json: &str, payload_json: &str) -> String {
+        use base64::Engine;
+        let enc = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let header = enc.encode(header_json.as_bytes());
+        let payload = enc.encode(payload_json.as_bytes());
+        format!("{header}.{payload}.fakesignature")
+    }
+
+    /// Verify that `is_jwt` accepts a well-formed three-part JWT string.
+    #[test]
+    fn test_is_jwt_valid() {
+        // eyJhbGciOiJIUzI1NiJ9 is base64url for {"alg":"HS256"}
+        // nosemgrep: hardcoded-secret — test fixture, not a real credential
+        let token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123";
+
+        assert!(is_jwt(token));
+    }
+
+    /// Verify that `is_jwt` rejects an empty string.
+    #[test]
+    fn test_is_jwt_empty() {
+        assert!(!is_jwt(""));
+    }
+
+    /// Verify that `is_jwt` rejects a string with only two dot-separated parts.
+    #[test]
+    fn test_is_jwt_two_parts() {
+        assert!(!is_jwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"));
+    }
+
+    /// Verify that `is_jwt` rejects a string containing non-base64url characters.
+    #[test]
+    fn test_is_jwt_invalid_chars() {
+        assert!(!is_jwt("abc!.def@.ghi#"));
+    }
+
+    /// Verify that `decode_base64url` correctly decodes a valid base64url-encoded string.
+    #[test]
+    fn test_decode_base64url_valid() {
+        use base64::Engine;
+        let original = r#"{"alg":"HS256"}"#;
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(original.as_bytes());
+
+        let decoded = decode_base64url(&encoded);
+
+        assert_eq!(decoded, Some(original.to_string()));
+    }
+
+    /// Verify that `decode_base64url` handles input that needs padding.
+    #[test]
+    fn test_decode_base64url_with_padding_needed() {
+        use base64::Engine;
+        let original = r#"{"sub":"1"}"#;
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(original.as_bytes());
+        // The encoded string should NOT have padding characters; decode_base64url adds them
+        assert!(!encoded.contains('='));
+
+        let decoded = decode_base64url(&encoded);
+
+        assert_eq!(decoded, Some(original.to_string()));
+    }
+
+    /// Verify that `decode_base64url` returns `None` for completely invalid input.
+    #[test]
+    fn test_decode_base64url_invalid() {
+        // Invalid UTF-8 after base64 decode — use raw bytes that are valid base64 but not UTF-8
+        // Just test that empty yields something or not; a truly invalid sequence would be complex
+        // Instead, test a string that is not base64 at all
+        let decoded = decode_base64url("!!!not-base64!!!");
+
+        assert!(decoded.is_none());
+    }
+
+    /// Verify that `extract_jwts_from_body` finds JWT tokens embedded in response bodies.
+    /// The token is placed as a quoted string value that the extractor can parse.
+    #[test]
+    fn test_extract_jwts_from_body() {
+        let token = make_jwt(r#"{"alg":"HS256"}"#, r#"{"sub":"user1"}"#);
+        // Place token delimited by quotes and whitespace so the extractor can find it
+        let body = format!(r#"access_token: "{token}";"#);
+
+        let tokens = extract_jwts_from_body(&body);
+
+        assert!(!tokens.is_empty(), "Should find at least one JWT in the body");
+    }
+
+    /// Verify that `extract_jwts_from_body` returns an empty list when no JWTs are present.
+    #[test]
+    fn test_extract_jwts_from_body_none() {
+        let body = "<html><body>No tokens here</body></html>";
+
+        let tokens = extract_jwts_from_body(body);
+
+        assert!(tokens.is_empty());
+    }
+
+    /// Verify that `analyze_jwt` produces a Critical finding when the JWT uses the "none" algorithm.
+    #[test]
+    fn test_analyze_jwt_none_algorithm() {
+        let token = make_jwt(r#"{"alg":"none"}"#, r#"{"sub":"admin"}"#);
+        let mut findings = Vec::new();
+
+        analyze_jwt(&token, "cookie:session", "https://example.com", &mut findings);
+
+        assert!(
+            findings.iter().any(|f| f.severity == Severity::Critical && f.title.contains("none")),
+            "Should produce a Critical finding for 'none' algorithm"
+        );
+    }
+
+    /// Verify that `check_sensitive_claims` flags JWTs containing password or secret claims.
+    #[test]
+    fn test_check_sensitive_claims() {
+        let payload: serde_json::Value = serde_json::json!({
+            "sub": "user1",
+            "password": "hunter2",
+            "email": "user@example.com"
+        });
+        let mut findings = Vec::new();
+
+        check_sensitive_claims(&payload, "body", "https://example.com", &mut findings);
+
+        assert!(
+            findings.iter().any(|f| f.title.contains("Sensitive Data")),
+            "Should flag the 'password' claim as sensitive data"
+        );
+    }
+
+    /// Verify that `check_jwt_expiry` flags a JWT that has no `exp` claim.
+    #[test]
+    fn test_check_jwt_expiry_missing() {
+        let payload: serde_json::Value = serde_json::json!({
+            "sub": "user1"
+        });
+        let mut findings = Vec::new();
+
+        check_jwt_expiry(&payload, "cookie:token", "https://example.com", &mut findings);
+
+        assert!(
+            findings.iter().any(|f| f.title.contains("Missing Expiration")),
+            "Should flag missing 'exp' claim"
+        );
+    }
+
+    /// Verify that `check_jwt_expiry` flags a JWT with an expiration far in the future (>30 days).
+    #[test]
+    fn test_check_jwt_expiry_long_lived() {
+        let far_future = chrono::Utc::now().timestamp() + (90 * 24 * 3600); // 90 days from now
+        let payload: serde_json::Value = serde_json::json!({
+            "sub": "user1",
+            "exp": far_future
+        });
+        let mut findings = Vec::new();
+
+        check_jwt_expiry(&payload, "cookie:token", "https://example.com", &mut findings);
+
+        assert!(
+            findings.iter().any(|f| f.title.contains("Long Expiration")),
+            "Should flag JWT with expiration >30 days away"
+        );
+    }
 }

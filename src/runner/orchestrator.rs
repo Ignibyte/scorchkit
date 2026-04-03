@@ -58,24 +58,21 @@ impl Orchestrator {
 
     /// Filter modules by scan profile.
     pub fn apply_profile(&mut self, profile: &str) {
-        match profile {
-            "quick" => {
-                // Quick: only fast built-in modules
-                self.modules.retain(|m| {
-                    !m.requires_external_tool()
-                        && matches!(m.id(), "headers" | "tech" | "ssl" | "misconfig")
-                });
-            }
-            "thorough" => {
-                // Thorough: keep everything
-            }
-            _ => {
-                // Standard: built-in + available external tools (default behavior)
-            }
+        if profile == "quick" {
+            // Quick: only fast built-in modules
+            self.modules.retain(|m| {
+                !m.requires_external_tool()
+                    && matches!(m.id(), "headers" | "tech" | "ssl" | "misconfig")
+            });
         }
+        // Thorough and standard: keep all modules (default behavior)
     }
 
-    /// Run all registered modules concurrently (up to max_concurrent_modules).
+    /// Run all registered modules concurrently (up to `max_concurrent_modules`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the semaphore is closed or a fatal scan error occurs.
     pub async fn run(&self, quiet: bool) -> Result<ScanResult> {
         let started_at = Utc::now();
         let scan_id = Uuid::new_v4().to_string();

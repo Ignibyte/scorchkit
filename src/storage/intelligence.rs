@@ -83,7 +83,7 @@ pub struct TargetProfile {
     pub server: Option<String>,
     /// Detected technologies (e.g., \["PHP", "jQuery"\]).
     pub technologies: Vec<String>,
-    /// Content management system (e.g., "WordPress").
+    /// Content management system (e.g., "`WordPress`").
     pub cms: Option<String>,
     /// Web application firewall (e.g., "Cloudflare").
     pub waf: Option<String>,
@@ -158,8 +158,9 @@ impl ProjectIntelligence {
         // Record run for each module (with or without findings)
         for module_id in &scan_result.modules_run {
             let stats = self.modules.entry(module_id.clone()).or_default();
-            let (c, h, m, l, i) = module_findings.get(module_id).copied().unwrap_or_default();
-            stats.record_run(c, h, m, l, i);
+            let (critical, high, medium, low, info) =
+                module_findings.get(module_id).copied().unwrap_or_default();
+            stats.record_run(critical, high, medium, low, info);
         }
 
         self.total_scans += 1;

@@ -12,7 +12,7 @@ use serde::Deserialize;
 /// Parameters for the `scan` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ScanParams {
-    /// Target URL, domain, or IP address to scan. Examples: "https://example.com",
+    /// Target URL, domain, or IP address to scan. Examples: "<https://example.com>",
     /// "example.com" (defaults to HTTPS), "192.168.1.1". Must be a host the user
     /// has authorized for testing.
     pub target: String,
@@ -24,8 +24,8 @@ pub struct ScanParams {
     #[serde(default = "default_profile")]
     pub profile: String,
     /// Comma-separated list of specific module IDs to run, ignoring the profile.
-    /// Example: "headers,ssl,xss". Get valid IDs from list_modules. Use when you
-    /// want to run only specific checks based on plan_scan recommendations.
+    /// Example: "headers,ssl,xss". Get valid IDs from `list_modules`. Use when you
+    /// want to run only specific checks based on `plan_scan` recommendations.
     pub modules: Option<String>,
     /// Comma-separated list of module IDs to exclude from the profile. Example:
     /// "nmap,nuclei" to skip slow external tools. Takes effect after profile
@@ -87,8 +87,8 @@ pub struct ProjectScanParams {
 pub struct TargetAddParams {
     /// Project name or UUID to add the target to.
     pub project: String,
-    /// Target URL to register. Example: "https://example.com". This URL will
-    /// be available for project_scan operations.
+    /// Target URL to register. Example: "<https://example.com>". This URL will
+    /// be available for `project_scan` operations.
     pub url: String,
     /// Optional human-readable label for the target, such as "production API"
     /// or "staging frontend".
@@ -100,7 +100,7 @@ pub struct TargetAddParams {
 pub struct TargetRemoveParams {
     /// Project name or UUID containing the target.
     pub project: String,
-    /// Target UUID to remove. Get target UUIDs from target_list.
+    /// Target UUID to remove. Get target UUIDs from `target_list`.
     pub id: String,
 }
 
@@ -113,7 +113,7 @@ pub struct FindingListParams {
     /// "medium", "low", "info". Omit to return all severities.
     pub severity: Option<String>,
     /// Filter findings by lifecycle status. Valid values: "new",
-    /// "acknowledged", "false_positive", "remediated", "verified". Omit to
+    /// "acknowledged", "`false_positive`", "remediated", "verified". Omit to
     /// return all statuses.
     pub status: Option<String>,
 }
@@ -121,17 +121,17 @@ pub struct FindingListParams {
 /// Parameters that reference a single finding by UUID.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FindingRefParams {
-    /// Finding UUID. Get finding UUIDs from project_findings results.
+    /// Finding UUID. Get finding UUIDs from `project_findings` results.
     pub id: String,
 }
 
 /// Parameters for updating a finding's lifecycle status.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FindingUpdateStatusParams {
-    /// Finding UUID to update. Get from project_findings results.
+    /// Finding UUID to update. Get from `project_findings` results.
     pub id: String,
     /// New lifecycle status. Valid transitions: "new" -> "acknowledged" ->
-    /// "remediated" -> "verified", or "new"/"acknowledged" -> "false_positive".
+    /// "remediated" -> "verified", or "new"/"acknowledged" -> "`false_positive`".
     pub status: String,
 }
 
@@ -183,7 +183,7 @@ pub struct AnalyzeFindingsParams {
     pub focus: String,
     /// Optional scan UUID to analyze findings from a specific scan only. If
     /// omitted, analyzes all findings across all scans for the project. Get
-    /// scan UUIDs from project_show.
+    /// scan UUIDs from `project_show`.
     pub scan_id: Option<String>,
 }
 
@@ -194,7 +194,7 @@ fn default_focus() -> String {
 /// Parameters for the `auto_scan` composite tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AutoScanParams {
-    /// Target URL to scan. Examples: "https://example.com", "example.com".
+    /// Target URL to scan. Examples: "<https://example.com>", "example.com".
     /// Must be a host the user has authorized for testing.
     pub target: String,
     /// Scan profile: "quick" (recon only), "standard" (all built-in modules),

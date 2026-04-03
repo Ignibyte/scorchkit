@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -23,6 +25,10 @@ impl Target {
     ///
     /// Accepts full URLs (`https://example.com`) or bare domains (`example.com`).
     /// Bare domains default to HTTPS on port 443.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input cannot be parsed as a valid URL or has no host.
     pub fn parse(input: &str) -> Result<Self> {
         let raw = input.to_string();
 
@@ -58,7 +64,7 @@ impl Target {
         let mut base = format!("{}://{}", self.url.scheme(), self.domain.as_deref().unwrap_or(""));
         let default_port = if self.is_https { 443 } else { 80 };
         if self.port != default_port {
-            base.push_str(&format!(":{}", self.port));
+            let _ = write!(base, ":{}", self.port);
         }
         base
     }

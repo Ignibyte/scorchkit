@@ -541,3 +541,143 @@ static PROBES: &[Probe] = &[
         cwe: None,
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    /// Unit tests for directory/file discovery heuristics.
+    use super::*;
+
+    /// Verify `is_soft_404` detects a soft-404 page that says "not found" without referencing the path.
+    #[test]
+    fn test_is_soft_404_detected() {
+        // Arrange
+        let body = "<!DOCTYPE html><html><body><h1>Page Not Found</h1>\
+                     <p>Sorry, the page you are looking for does not exist.</p></body></html>";
+        let path = "/.env";
+
+        // Act
+        let result = is_soft_404(body, path);
+
+        // Assert
+        assert!(result, "body with 'not found' text and no path mention should be soft 404");
+    }
+
+    /// Verify `is_soft_404` lets through real content that does not contain 404 indicators.
+    #[test]
+    fn test_is_soft_404_real_content() {
+        // Arrange
+        let body = "<!DOCTYPE html><html><body><h1>Welcome to our site</h1>\
+                     <p>This is the home page with plenty of real content for testing.</p></body></html>";
+        let path = "/robots.txt";
+
+        // Act
+        let result = is_soft_404(body, path);
+
+        // Assert
+        assert!(!result, "real content without 404 indicators should not be soft 404");
+    }
+
+    /// Verify `is_soft_404` returns false when the body mentions the probed path (not a generic 404).
+    #[test]
+    fn test_is_soft_404_mentions_path() {
+        // Arrange
+        let body = "<!DOCTYPE html><html><body><h1>Not Found</h1>\
+                     <p>The file /.env could not be found on this server.</p></body></html>";
+        let path = "/.env";
+
+        // Act
+        let result = is_soft_404(body, path);
+
+        // Assert
+        assert!(!result, "body mentioning the probed path should not be treated as soft 404");
+    }
+
+    /// Verify `is_soft_404` returns false for an empty or very short body.
+    #[test]
+    fn test_is_soft_404_empty_body() {
+        // Arrange
+        let body = "";
+        let path = "/test";
+
+        // Act
+        let result = is_soft_404(body, path);
+
+        // Assert
+        assert!(!result, "empty body should not be flagged as soft 404");
+    }
+
+    /// Verify `is_directory_listing` detects Apache-style directory listings.
+    #[test]
+    fn test_is_directory_listing_apache() {
+        // Arrange
+        let body = "<html><head><title>Index of /images</title></head>\
+                     <body><h1>Index of /images</h1><hr><a href=\"../\">Parent Directory</a></body></html>";
+
+        // Act
+        let result = is_directory_listing(body);
+
+        // Assert
+        assert!(result, "Apache-style directory listing should be detected");
+    }
+
+    /// Verify `is_directory_listing` detects Nginx-style directory listings.
+    #[test]
+    fn test_is_directory_listing_nginx() {
+        // Arrange
+        let body = "<html><head><title>Index of /assets/</title></head>\
+                     <body><h1>Index of /assets/</h1><hr><pre><a href=\"../\">../</a></pre><hr></body></html>";
+
+        // Act
+        let result = is_directory_listing(body);
+
+        // Assert
+        assert!(result, "Nginx-style directory listing should be detected");
+    }
+
+    /// Verify `is_directory_listing` detects IIS-style directory listings.
+    #[test]
+    fn test_is_directory_listing_iis() {
+        // Arrange
+        let body = "<html><body><h1>Directory Listing</h1>\
+                     <a href=\"/\">[To Parent Directory]</a><br>file1.txt<br>file2.txt</body></html>";
+
+        // Act
+        let result = is_directory_listing(body);
+
+        // Assert
+        assert!(result, "IIS-style directory listing should be detected");
+    }
+
+    /// Verify `is_directory_listing` returns false for a normal HTML page.
+    #[test]
+    fn test_is_directory_listing_normal_page() {
+        // Arrange
+        let body = "<html><head><title>My Website</title></head>\
+                     <body><h1>Welcome</h1><p>This is a normal page.</p></body></html>";
+
+        // Act
+        let result = is_directory_listing(body);
+
+        // Assert
+        assert!(!result, "normal page should not be detected as directory listing");
+    }
+
+    /// Verify the PROBES array is non-empty and each probe has valid fields.
+    #[test]
+    fn test_probes_array_integrity() {
+        // Assert — PROBES has entries
+        assert!(!PROBES.is_empty(), "PROBES array must not be empty");
+
+        // Assert — every probe has a non-empty path, title, and description
+        for (i, probe) in PROBES.iter().enumerate() {
+            assert!(!probe.path.is_empty(), "probe [{i}] path must not be empty");
+            assert!(
+                probe.path.starts_with('/'),
+                "probe [{i}] path '{}' must start with '/'",
+                probe.path
+            );
+            assert!(!probe.title.is_empty(), "probe [{i}] title must not be empty");
+            assert!(!probe.description.is_empty(), "probe [{i}] description must not be empty");
+        }
+    }
+}

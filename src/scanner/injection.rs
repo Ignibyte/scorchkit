@@ -69,9 +69,8 @@ async fn test_url_params(
     url_str: &str,
     findings: &mut Vec<Finding>,
 ) -> Result<()> {
-    let parsed = match Url::parse(url_str) {
-        Ok(u) => u,
-        Err(_) => return Ok(()),
+    let Ok(parsed) = Url::parse(url_str) else {
+        return Ok(());
     };
 
     let params: Vec<(String, String)> =
@@ -111,112 +110,131 @@ async fn test_url_params(
                 }
             }
 
-            let response = ctx.http_client.get(test_url.as_str()).send().await;
-
-            let response = match response {
-                Ok(r) => r,
-                Err(_) => continue,
+            let Ok(response) = ctx.http_client.get(test_url.as_str()).send().await else {
+                continue;
             };
 
             let resp_status = response.status();
             let resp_body = response.text().await.unwrap_or_default();
 
-            // Check for SQL error patterns in response
-            if let Some(db_type) = detect_sql_error(&resp_body) {
-                findings.push(
-                    Finding::new(
-                        "injection",
-                        Severity::Critical,
-                        format!("Potential SQL Injection in Parameter: {param_name}"),
-                        format!(
-                            "The parameter '{param_name}' appears vulnerable to SQL injection. \
-                             A {db_type} error was triggered by injecting SQL metacharacters."
-                        ),
-                        url_str,
-                    )
-                    .with_evidence(format!(
-                        "Payload: {payload} | Parameter: {param_name} | Database: {db_type}"
-                    ))
-                    .with_remediation(
-                        "Use parameterized queries / prepared statements. \
-                         Never concatenate user input into SQL queries.",
-                    )
-                    .with_owasp("A03:2021 Injection")
-                    .with_cwe(89),
-                );
-                break; // One finding per parameter is enough
-            }
-
-            // Check for significant response differences (blind SQLi indicator)
-            if resp_status != baseline_status {
-                let status_diff = format!(
-                    "Baseline: HTTP {} | Injected: HTTP {}",
-                    baseline_status.as_u16(),
-                    resp_status.as_u16()
-                );
-
-                // 500 error from injection is suspicious
-                if resp_status.as_u16() == 500 && baseline_status.is_success() {
-                    findings.push(
-                        Finding::new(
-                            "injection",
-                            Severity::High,
-                            format!("Server Error on SQL Injection Attempt: {param_name}"),
-                            format!(
-                                "The parameter '{param_name}' caused a 500 Internal Server Error \
-                                 when SQL metacharacters were injected. This suggests the input \
-                                 reaches a SQL query without proper sanitization."
-                            ),
-                            url_str,
-                        )
-                        .with_evidence(format!("Payload: {payload} | {status_diff}"))
-                        .with_remediation("Use parameterized queries / prepared statements.")
-                        .with_owasp("A03:2021 Injection")
-                        .with_cwe(89),
-                    );
-                    break;
-                }
-            }
-
-            // Check for significant body length changes (possible blind SQLi)
-            let resp_len = resp_body.len();
-            let len_diff = if baseline_len > 0 {
-                ((resp_len as f64 - baseline_len as f64) / baseline_len as f64).abs()
-            } else {
-                0.0
-            };
-
-            // More than 50% change in body size is suspicious with boolean payloads
-            if len_diff > 0.5 && payload.contains("OR") {
-                findings.push(
-                    Finding::new(
-                        "injection",
-                        Severity::Medium,
-                        format!("Possible Blind SQL Injection: {param_name}"),
-                        format!(
-                            "The parameter '{param_name}' shows a significant response \
-                             size difference ({:.0}%) when SQL boolean logic is injected. \
-                             This may indicate blind SQL injection.",
-                            len_diff * 100.0
-                        ),
-                        url_str,
-                    )
-                    .with_evidence(format!(
-                        "Payload: {payload} | Baseline size: {baseline_len} | Injected size: {resp_len}"
-                    ))
-                    .with_remediation(
-                        "Investigate with sqlmap for confirmation. \
-                         Use parameterized queries.",
-                    )
-                    .with_owasp("A03:2021 Injection")
-                    .with_cwe(89),
-                );
+            if let Some(finding) = analyze_injection_response(
+                &resp_body,
+                resp_status,
+                baseline_status,
+                baseline_len,
+                param_name,
+                payload,
+                url_str,
+            ) {
+                findings.push(finding);
                 break;
             }
         }
     }
 
     Ok(())
+}
+
+/// Analyze an injection response for SQL error indicators, status changes, and size anomalies.
+fn analyze_injection_response(
+    resp_body: &str,
+    resp_status: reqwest::StatusCode,
+    baseline_status: reqwest::StatusCode,
+    baseline_len: usize,
+    param_name: &str,
+    payload: &str,
+    url_str: &str,
+) -> Option<Finding> {
+    // Check for SQL error patterns in response
+    if let Some(db_type) = detect_sql_error(resp_body) {
+        return Some(
+            Finding::new(
+                "injection",
+                Severity::Critical,
+                format!("Potential SQL Injection in Parameter: {param_name}"),
+                format!(
+                    "The parameter '{param_name}' appears vulnerable to SQL injection. \
+                     A {db_type} error was triggered by injecting SQL metacharacters."
+                ),
+                url_str,
+            )
+            .with_evidence(format!(
+                "Payload: {payload} | Parameter: {param_name} | Database: {db_type}"
+            ))
+            .with_remediation(
+                "Use parameterized queries / prepared statements. \
+                 Never concatenate user input into SQL queries.",
+            )
+            .with_owasp("A03:2021 Injection")
+            .with_cwe(89),
+        );
+    }
+
+    // Check for significant response differences (blind SQLi indicator)
+    if resp_status != baseline_status && resp_status.as_u16() == 500 && baseline_status.is_success()
+    {
+        let status_diff = format!(
+            "Baseline: HTTP {} | Injected: HTTP {}",
+            baseline_status.as_u16(),
+            resp_status.as_u16()
+        );
+        return Some(
+            Finding::new(
+                "injection",
+                Severity::High,
+                format!("Server Error on SQL Injection Attempt: {param_name}"),
+                format!(
+                    "The parameter '{param_name}' caused a 500 Internal Server Error \
+                     when SQL metacharacters were injected. This suggests the input \
+                     reaches a SQL query without proper sanitization."
+                ),
+                url_str,
+            )
+            .with_evidence(format!("Payload: {payload} | {status_diff}"))
+            .with_remediation("Use parameterized queries / prepared statements.")
+            .with_owasp("A03:2021 Injection")
+            .with_cwe(89),
+        );
+    }
+
+    // Check for significant body length changes (possible blind SQLi)
+    let resp_len = resp_body.len();
+    // JUSTIFICATION: scanner math on small bounded values; precision loss is negligible
+    #[allow(clippy::cast_precision_loss)]
+    let len_diff = if baseline_len > 0 {
+        ((resp_len as f64 - baseline_len as f64) / baseline_len as f64).abs()
+    } else {
+        0.0
+    };
+
+    // More than 50% change in body size is suspicious with boolean payloads
+    if len_diff > 0.5 && payload.contains("OR") {
+        return Some(
+            Finding::new(
+                "injection",
+                Severity::Medium,
+                format!("Possible Blind SQL Injection: {param_name}"),
+                format!(
+                    "The parameter '{param_name}' shows a significant response \
+                     size difference ({:.0}%) when SQL boolean logic is injected. \
+                     This may indicate blind SQL injection.",
+                    len_diff * 100.0
+                ),
+                url_str,
+            )
+            .with_evidence(format!(
+                "Payload: {payload} | Baseline size: {baseline_len} | Injected size: {resp_len}"
+            ))
+            .with_remediation(
+                "Investigate with sqlmap for confirmation. \
+                 Use parameterized queries.",
+            )
+            .with_owasp("A03:2021 Injection")
+            .with_cwe(89),
+        );
+    }
+
+    None
 }
 
 /// A discovered HTML form.
@@ -249,9 +267,8 @@ async fn test_form(ctx: &ScanContext, form: &FormInfo, findings: &mut Vec<Findin
                 ctx.http_client.get(&form.action).query(&params).send().await
             };
 
-            let response = match response {
-                Ok(r) => r,
-                Err(_) => continue,
+            let Ok(response) = response else {
+                continue;
             };
 
             let resp_body = response.text().await.unwrap_or_default();
@@ -435,3 +452,149 @@ const SQL_ERROR_PATTERNS: &[(&str, &str)] = &[
     ("database error", "Unknown SQL"),
     ("jdbc.sqlex", "Java/JDBC"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the SQL injection detection module's pure helper functions.
+
+    /// Verify that `detect_sql_error` identifies MySQL error strings in response bodies.
+    #[test]
+    fn test_detect_sql_error_mysql() {
+        let body = "Error: You have an error in your SQL syntax near 'foo'";
+        let result = detect_sql_error(body);
+
+        assert_eq!(result, Some("MySQL"));
+    }
+
+    /// Verify that `detect_sql_error` identifies PostgreSQL error strings.
+    #[test]
+    fn test_detect_sql_error_postgresql() {
+        let body = "ERROR: syntax error at or near \"SELECT\"";
+        let result = detect_sql_error(body);
+
+        assert_eq!(result, Some("PostgreSQL"));
+    }
+
+    /// Verify that `detect_sql_error` identifies MSSQL error strings.
+    #[test]
+    fn test_detect_sql_error_mssql() {
+        let body = "ODBC SQL Server Driver error: invalid query";
+        let result = detect_sql_error(body);
+
+        assert_eq!(result, Some("MSSQL"));
+    }
+
+    /// Verify that `detect_sql_error` returns `None` when no SQL error pattern is found.
+    #[test]
+    fn test_detect_sql_error_none() {
+        let body = "<html><body>Welcome to our site!</body></html>";
+        let result = detect_sql_error(body);
+
+        assert_eq!(result, None);
+    }
+
+    /// Verify that `analyze_injection_response` produces a Critical finding when a SQL
+    /// error pattern is present in the response body.
+    #[test]
+    fn test_analyze_injection_response_sql_error() {
+        // Arrange
+        let body_with_error = "Warning: mysql_fetch error in /var/www/app.php";
+        let status_200 = reqwest::StatusCode::OK;
+
+        // Act
+        let finding = analyze_injection_response(
+            body_with_error,
+            status_200,
+            status_200,
+            1000,
+            "id",
+            "'",
+            "https://example.com/?id=1",
+        );
+
+        // Assert
+        assert!(finding.is_some());
+        let f = finding.expect("finding should be present");
+        assert_eq!(f.severity, Severity::Critical);
+        assert!(f.title.contains("SQL Injection"));
+    }
+
+    /// Verify that `analyze_injection_response` returns `None` when the response
+    /// shows no SQL errors, no status change, and no significant size difference.
+    #[test]
+    fn test_analyze_injection_response_no_finding() {
+        let body = "<html><body>Normal page</body></html>";
+        let status = reqwest::StatusCode::OK;
+
+        let finding = analyze_injection_response(
+            body,
+            status,
+            status,
+            body.len(),
+            "id",
+            "'",
+            "https://x.com/?id=1",
+        );
+
+        assert!(finding.is_none());
+    }
+
+    /// Verify that `extract_parameterized_links` finds same-origin links with query parameters
+    /// from HTML anchor elements.
+    #[test]
+    fn test_extract_parameterized_links() -> std::result::Result<(), url::ParseError> {
+        // Arrange
+        let base = Url::parse("https://example.com/")?;
+        let body = r#"
+            <html><body>
+                <a href="/page?id=5&sort=asc">Link1</a>
+                <a href="/about">Link2</a>
+                <a href="https://external.com/?x=1">External</a>
+            </body></html>
+        "#;
+
+        // Act
+        let links = extract_parameterized_links(body, &base);
+
+        // Assert
+        assert_eq!(links.len(), 1);
+        assert!(links[0].contains("page?id=5"));
+
+        Ok(())
+    }
+
+    /// Verify that `extract_forms` correctly parses HTML form elements and their inputs,
+    /// resolving the action URL and skipping submit/button/file/image input types.
+    #[test]
+    fn test_extract_forms() -> std::result::Result<(), url::ParseError> {
+        // Arrange
+        let base = Url::parse("https://example.com/")?;
+        let body = r#"
+            <html><body>
+                <form action="/api/query" method="POST">
+                    <input type="text" name="search" value="">
+                    <select name="category"><option value="all">All</option></select>
+                    <input type="submit" value="Go">
+                    <input type="image" src="/btn.png" name="btn">
+                </form>
+            </body></html>
+        "#;
+
+        // Act
+        let forms = extract_forms(body, &base);
+
+        // Assert
+        assert_eq!(forms.len(), 1);
+        let form = &forms[0];
+        assert!(form.action.contains("/api/query"));
+        assert_eq!(form.method, "POST");
+        // submit and image should be excluded; search and category remain
+        assert_eq!(form.inputs.len(), 2);
+        assert!(form.inputs.iter().any(|(n, _)| n == "search"));
+        assert!(form.inputs.iter().any(|(n, _)| n == "category"));
+
+        Ok(())
+    }
+}

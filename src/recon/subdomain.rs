@@ -43,20 +43,17 @@ impl ScanModule for SubdomainModule {
             let subdomain = format!("{prefix}.{domain}");
 
             // Use tokio's DNS resolution
-            match net::lookup_host(format!("{subdomain}:80")).await {
-                Ok(addrs) => {
-                    let ips: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
-                    if !ips.is_empty() {
-                        // Deduplicate IPs
-                        let mut unique_ips = ips;
-                        unique_ips.sort();
-                        unique_ips.dedup();
-                        discovered.push(format!("{subdomain} -> {}", unique_ips.join(", ")));
-                    }
+            if let Ok(addrs) = net::lookup_host(format!("{subdomain}:80")).await {
+                let ips: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
+                if !ips.is_empty() {
+                    // Deduplicate IPs
+                    let mut unique_ips = ips;
+                    unique_ips.sort();
+                    unique_ips.dedup();
+                    discovered.push(format!("{subdomain} -> {}", unique_ips.join(", ")));
                 }
-                Err(_) => {
-                    // NXDOMAIN or resolution failure - subdomain doesn't exist
-                }
+            } else {
+                // NXDOMAIN or resolution failure - subdomain doesn't exist
             }
         }
 
@@ -194,3 +191,46 @@ const INTERESTING_SUBDOMAINS: &[(&str, &str, Severity)] = &[
     ("vpn", "VPN endpoint found", Severity::Info),
     ("sso", "SSO endpoint found", Severity::Info),
 ];
+
+#[cfg(test)]
+mod tests {
+    /// Unit tests for subdomain enumeration constant data integrity.
+    use super::*;
+
+    /// Verify the subdomain wordlist is non-empty.
+    #[test]
+    fn test_subdomain_wordlist_nonempty() {
+        // Assert
+        assert!(!SUBDOMAIN_WORDLIST.is_empty(), "SUBDOMAIN_WORDLIST must contain entries");
+    }
+
+    /// Verify every interesting subdomain entry has a non-empty description and a valid severity.
+    #[test]
+    fn test_interesting_subdomains_valid() {
+        // Assert
+        assert!(!INTERESTING_SUBDOMAINS.is_empty(), "INTERESTING_SUBDOMAINS must contain entries");
+
+        for (i, &(pattern, desc, _severity)) in INTERESTING_SUBDOMAINS.iter().enumerate() {
+            assert!(!pattern.is_empty(), "INTERESTING_SUBDOMAINS[{i}] pattern must not be empty");
+            assert!(!desc.is_empty(), "INTERESTING_SUBDOMAINS[{i}] description must not be empty");
+        }
+    }
+
+    /// Verify all wordlist entries are valid DNS hostname prefixes (lowercase alphanumeric and hyphens).
+    #[test]
+    fn test_wordlist_entries_valid_hostname_prefixes() {
+        for (i, &prefix) in SUBDOMAIN_WORDLIST.iter().enumerate() {
+            assert!(!prefix.is_empty(), "SUBDOMAIN_WORDLIST[{i}] must not be empty");
+            assert!(
+                prefix.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                "SUBDOMAIN_WORDLIST[{i}] = '{}' contains invalid hostname characters",
+                prefix
+            );
+            assert!(
+                !prefix.starts_with('-') && !prefix.ends_with('-'),
+                "SUBDOMAIN_WORDLIST[{i}] = '{}' must not start or end with a hyphen",
+                prefix
+            );
+        }
+    }
+}

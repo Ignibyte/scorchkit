@@ -54,11 +54,11 @@ impl ScanModule for HttpxModule {
         )
         .await?;
 
-        parse_httpx_output(&output.stdout, ctx.target.url.as_str())
+        Ok(parse_httpx_output(&output.stdout, ctx.target.url.as_str()))
     }
 }
 
-fn parse_httpx_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_httpx_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     for line in output.lines() {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
@@ -99,5 +99,33 @@ fn parse_httpx_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
             }
         }
     }
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for httpx JSON-lines output parser.
+
+    /// Verify that `parse_httpx_output` correctly extracts probe results
+    /// including title, server, technology, and CDN detection.
+    #[test]
+    fn test_parse_httpx_output() {
+        let output = r#"{"url":"https://example.com","title":"Example Domain","webserver":"nginx/1.21.0","tech":["Nginx","Bootstrap"],"cdn":true,"status_code":200}"#;
+
+        let findings = parse_httpx_output(output, "https://example.com");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Info);
+        let evidence = findings[0].evidence.as_deref().unwrap_or("");
+        assert!(evidence.contains("nginx"));
+        assert!(evidence.contains("CDN: yes"));
+    }
+
+    /// Verify that `parse_httpx_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_httpx_output_empty() {
+        let findings = parse_httpx_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

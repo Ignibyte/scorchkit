@@ -83,11 +83,8 @@ fn is_swagger_spec(body: &str) -> bool {
 }
 
 fn count_api_endpoints(body: &str) -> usize {
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
-        json["paths"].as_object().map_or(0, |p| p.len())
-    } else {
-        0
-    }
+    serde_json::from_str::<serde_json::Value>(body)
+        .map_or(0, |json| json["paths"].as_object().map_or(0, serde_json::Map::len))
 }
 
 const SWAGGER_PATHS: &[&str] = &[
@@ -105,3 +102,82 @@ const SWAGGER_PATHS: &[&str] = &[
     "/docs/api.json",
     "/_api/docs",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the API schema discovery module's pure helper functions and constants.
+
+    /// Verify that `is_swagger_spec` correctly identifies OpenAPI/Swagger JSON bodies
+    /// and rejects non-spec content.
+    #[test]
+    fn test_is_swagger_spec() {
+        // Arrange: valid Swagger 2.0 spec
+        let swagger2 = r#"{"swagger": "2.0", "info": {"title": "API"}, "paths": {}}"#;
+        assert!(is_swagger_spec(swagger2));
+
+        // Arrange: valid OpenAPI 3.0 spec
+        let openapi3 = r#"{"openapi": "3.0.1", "info": {"title": "API"}, "paths": {}}"#;
+        assert!(is_swagger_spec(openapi3));
+
+        // Arrange: not a spec at all
+        let html_page = "<html><body>Hello World</body></html>";
+        assert!(!is_swagger_spec(html_page));
+
+        // Arrange: has "swagger" key but no "paths" or "info"
+        let incomplete = r#"{"swagger": "2.0", "definitions": {}}"#;
+        assert!(!is_swagger_spec(incomplete));
+    }
+
+    /// Verify that `count_api_endpoints` correctly counts paths in a valid OpenAPI spec
+    /// and returns zero for invalid or empty input.
+    #[test]
+    fn test_count_api_endpoints() {
+        // Arrange: spec with 3 endpoints
+        let spec = r#"{
+            "openapi": "3.0.0",
+            "paths": {
+                "/users": {},
+                "/users/{id}": {},
+                "/health": {}
+            }
+        }"#;
+
+        // Act & Assert
+        assert_eq!(count_api_endpoints(spec), 3);
+
+        // Arrange: empty paths
+        let empty_paths = r#"{"openapi": "3.0.0", "paths": {}}"#;
+        assert_eq!(count_api_endpoints(empty_paths), 0);
+
+        // Arrange: invalid JSON
+        assert_eq!(count_api_endpoints("not json"), 0);
+
+        // Arrange: no paths key
+        let no_paths = r#"{"openapi": "3.0.0", "info": {}}"#;
+        assert_eq!(count_api_endpoints(no_paths), 0);
+    }
+
+    /// Verify that `SWAGGER_PATHS` is non-empty, all entries start with a slash,
+    /// and common discovery paths are present.
+    #[test]
+    fn test_swagger_paths_integrity() {
+        // Arrange & Assert: minimum count
+        assert!(
+            SWAGGER_PATHS.len() >= 5,
+            "Expected at least 5 swagger paths, found {}",
+            SWAGGER_PATHS.len()
+        );
+
+        // Well-known paths present
+        assert!(SWAGGER_PATHS.contains(&"/swagger.json"));
+        assert!(SWAGGER_PATHS.contains(&"/openapi.json"));
+
+        // All entries well-formed
+        for path in SWAGGER_PATHS {
+            assert!(!path.is_empty(), "Swagger path should not be empty");
+            assert!(path.starts_with('/'), "Swagger path '{path}' should start with '/'");
+        }
+    }
+}

@@ -57,12 +57,12 @@ impl ScanModule for NucleiModule {
         )
         .await?;
 
-        parse_nuclei_output(&output.stdout, target)
+        Ok(parse_nuclei_output(&output.stdout, target))
     }
 }
 
 /// Parse nuclei JSON-lines output into findings.
-fn parse_nuclei_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_nuclei_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     for line in output.lines() {
@@ -143,7 +143,7 @@ fn parse_nuclei_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
         findings.push(finding);
     }
 
-    Ok(findings)
+    findings
 }
 
 /// Map nuclei tags to OWASP categories.
@@ -173,5 +173,33 @@ fn map_nuclei_tags_to_owasp(tags: &str) -> Option<&'static str> {
         Some("A01:2021 Broken Access Control")
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for nuclei JSON-lines output parser.
+
+    /// Verify that `parse_nuclei_output` correctly extracts findings from
+    /// JSON-lines output including severity, template ID, and CWE.
+    #[test]
+    fn test_parse_nuclei_output() {
+        let output = r#"{"template-id":"cve-2021-44228","info":{"name":"Log4j RCE","description":"Remote code execution via Log4j.","severity":"critical","tags":"cve,rce","classification":{"cwe-id":["CWE-502"]},"reference":["https://nvd.nist.gov/vuln/detail/CVE-2021-44228"]},"matched-at":"https://example.com/api","matcher-name":"body"}"#;
+
+        let findings = parse_nuclei_output(output, "https://example.com");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert!(findings[0].title.contains("Log4j RCE"));
+        assert!(findings[0].title.contains("cve-2021-44228"));
+        assert_eq!(findings[0].cwe_id, Some(502));
+    }
+
+    /// Verify that `parse_nuclei_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_nuclei_output_empty() {
+        let findings = parse_nuclei_output("", "https://example.com");
+        assert!(findings.is_empty());
     }
 }

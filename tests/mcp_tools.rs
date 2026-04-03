@@ -761,3 +761,461 @@ fn test_prompt_get() {
     let prompt = result.unwrap();
     assert_eq!(prompt.messages.len(), 2);
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Schedule Scan Tests
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Verify `do_schedule_scan` creates a recurring schedule and returns JSON
+/// with `target_url`, `cron_expression`, and `enabled=true`.
+#[tokio::test]
+async fn test_tool_schedule_scan() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-sched");
+    storage::projects::create_project(&pool, &name, "schedule test").await?;
+
+    // Act
+    let result = server
+        .do_schedule_scan(ScheduleScanParams {
+            project: name.clone(),
+            target: "https://example.com".to_string(),
+            cron: "0 0 * * *".to_string(),
+            profile: "quick".to_string(),
+        })
+        .await;
+
+    // Assert
+    assert!(result.is_ok(), "schedule_scan should succeed: {result:?}");
+    let body = result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    assert_eq!(json["target_url"], "https://example.com");
+    assert_eq!(json["cron_expression"], "0 0 * * *");
+    assert_eq!(json["enabled"], true);
+
+    // Cleanup
+    let project = storage::projects::get_project_by_name(&pool, &name)
+        .await?
+        .ok_or("project should exist for cleanup")?;
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+/// Verify `do_schedule_scan` returns an error when the project does not exist.
+#[tokio::test]
+async fn test_tool_schedule_scan_invalid_project() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool);
+    let fake_name = unique_name("mcp-sched-noexist");
+
+    // Act
+    let result = server
+        .do_schedule_scan(ScheduleScanParams {
+            project: fake_name,
+            target: "https://example.com".to_string(),
+            cron: "0 0 * * *".to_string(),
+            profile: "standard".to_string(),
+        })
+        .await;
+
+    // Assert
+    assert!(result.is_err(), "scheduling against a non-existent project should fail");
+    Ok(())
+}
+
+/// Verify `do_schedule_scan` returns an error when given an invalid cron expression.
+#[tokio::test]
+async fn test_tool_schedule_scan_invalid_cron() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-sched-badcron");
+    storage::projects::create_project(&pool, &name, "").await?;
+
+    // Act
+    let result = server
+        .do_schedule_scan(ScheduleScanParams {
+            project: name.clone(),
+            target: "https://example.com".to_string(),
+            cron: "not-a-cron".to_string(),
+            profile: "standard".to_string(),
+        })
+        .await;
+
+    // Assert
+    assert!(result.is_err(), "invalid cron expression should produce an error");
+
+    // Cleanup
+    let project = storage::projects::get_project_by_name(&pool, &name)
+        .await?
+        .ok_or("project should exist for cleanup")?;
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+/// Verify `do_schedule_scan` defaults to the "standard" profile when none is
+/// explicitly provided in the JSON input.
+#[tokio::test]
+async fn test_tool_schedule_scan_default_profile() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-sched-defprof");
+    storage::projects::create_project(&pool, &name, "").await?;
+
+    // Act — deserialize without explicit profile to trigger the serde default
+    let params: ScheduleScanParams = serde_json::from_value(serde_json::json!({
+        "project": name,
+        "target": "https://example.com",
+        "cron": "0 0 * * *"
+    }))?;
+    let result = server.do_schedule_scan(params).await;
+
+    // Assert
+    assert!(result.is_ok(), "schedule_scan with default profile should succeed: {result:?}");
+    let body = result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    assert_eq!(json["profile"], "standard", "default profile should be 'standard'");
+
+    // Cleanup
+    let project = storage::projects::get_project_by_name(&pool, &name)
+        .await?
+        .ok_or("project should exist for cleanup")?;
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Run Due Scans Tests
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Verify `do_run_due_scans` returns executed=0 when no schedules exist.
+#[tokio::test]
+async fn test_tool_run_due_scans_none_due() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange — no schedules created
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool);
+
+    // Act
+    let result = server.do_run_due_scans().await;
+
+    // Assert
+    assert!(result.is_ok(), "run_due_scans should succeed even with nothing due: {result:?}");
+    let body = result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    assert_eq!(json["executed"], 0);
+    Ok(())
+}
+
+/// Verify `do_run_due_scans` picks up a schedule whose `next_run` is in the
+/// past and reports a non-zero executed count.
+#[tokio::test]
+async fn test_tool_run_due_scans_with_schedule() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-due-run");
+    let project = storage::projects::create_project(&pool, &name, "").await?;
+
+    // Create a schedule, then backdate next_run so it appears due
+    let schedule = storage::schedules::create_schedule(
+        &pool,
+        project.id,
+        "http://192.0.2.1",
+        "quick",
+        "0 0 * * *",
+    )
+    .await?;
+    let past = chrono::Utc::now() - chrono::Duration::hours(1);
+    sqlx::query("UPDATE scan_schedules SET next_run = $1 WHERE id = $2")
+        .bind(past)
+        .bind(schedule.id)
+        .execute(&pool)
+        .await?;
+
+    // Act
+    let result = server.do_run_due_scans().await;
+
+    // Assert
+    assert!(result.is_ok(), "run_due_scans should succeed: {result:?}");
+    let body = result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    let executed = json["executed"].as_u64().ok_or("executed field should be a number")?;
+    assert!(executed > 0, "should have executed at least one schedule");
+
+    // Cleanup
+    storage::schedules::delete_schedule(&pool, schedule.id).await?;
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+/// Verify `do_run_due_scans` skips disabled schedules even if their `next_run`
+/// is in the past.
+#[tokio::test]
+async fn test_tool_run_due_scans_disabled_skipped() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-due-disabled");
+    let project = storage::projects::create_project(&pool, &name, "").await?;
+
+    let schedule = storage::schedules::create_schedule(
+        &pool,
+        project.id,
+        "http://192.0.2.1",
+        "quick",
+        "0 0 * * *",
+    )
+    .await?;
+
+    // Disable the schedule and backdate it
+    storage::schedules::update_schedule_enabled(&pool, schedule.id, false).await?;
+    let past = chrono::Utc::now() - chrono::Duration::hours(1);
+    sqlx::query("UPDATE scan_schedules SET next_run = $1 WHERE id = $2")
+        .bind(past)
+        .bind(schedule.id)
+        .execute(&pool)
+        .await?;
+
+    // Act
+    let result = server.do_run_due_scans().await;
+
+    // Assert
+    assert!(result.is_ok(), "run_due_scans should succeed: {result:?}");
+    let body = result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    assert_eq!(json["executed"], 0, "disabled schedule should not be executed");
+
+    // Cleanup
+    storage::schedules::delete_schedule(&pool, schedule.id).await?;
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+/// Verify that after `do_run_due_scans` executes a due schedule, the
+/// schedule's `next_run` is recalculated to a future timestamp.
+#[tokio::test]
+async fn test_tool_run_due_scans_next_run_updated() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-due-nextrun");
+    let project = storage::projects::create_project(&pool, &name, "").await?;
+
+    let schedule = storage::schedules::create_schedule(
+        &pool,
+        project.id,
+        "http://192.0.2.1",
+        "quick",
+        "0 0 * * *",
+    )
+    .await?;
+
+    // Backdate next_run so the schedule is due
+    let past = chrono::Utc::now() - chrono::Duration::hours(1);
+    sqlx::query("UPDATE scan_schedules SET next_run = $1 WHERE id = $2")
+        .bind(past)
+        .bind(schedule.id)
+        .execute(&pool)
+        .await?;
+
+    // Act
+    let result = server.do_run_due_scans().await;
+    assert!(result.is_ok(), "run_due_scans should succeed: {result:?}");
+
+    // Assert — next_run should now be in the future
+    let updated = storage::schedules::get_schedule(&pool, schedule.id)
+        .await?
+        .ok_or("schedule should still exist after execution")?;
+    assert!(
+        updated.next_run > chrono::Utc::now(),
+        "next_run ({}) should be recalculated to a future time",
+        updated.next_run
+    );
+
+    // Cleanup
+    storage::schedules::delete_schedule(&pool, schedule.id).await?;
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Project Status Tests
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Verify `do_project_status` returns JSON with posture metrics for a
+/// project that has scan history and tracked findings.
+#[tokio::test]
+async fn test_tool_project_status() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-status");
+    let project = storage::projects::create_project(&pool, &name, "status test").await?;
+    let now = chrono::Utc::now();
+    let scan = storage::scans::save_scan(
+        &pool,
+        project.id,
+        "https://example.com",
+        "standard",
+        now,
+        Some(now),
+        &[],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await?;
+    let findings_data =
+        vec![Finding::new("xss", Severity::High, "XSS Found", "desc", "https://example.com")];
+    storage::findings::save_findings(&pool, project.id, scan.id, &findings_data).await?;
+
+    // Act
+    let result = server.do_project_status(ProjectStatusParams { project: name.clone() }).await;
+
+    // Assert
+    assert!(result.is_ok(), "project_status should succeed: {result:?}");
+    let body = result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    assert_eq!(json["project_name"], name);
+    assert!(json.get("scan_summary").is_some(), "should contain scan_summary");
+    assert!(json.get("finding_summary").is_some(), "should contain finding_summary");
+    assert!(json.get("severity_breakdown").is_some(), "should contain severity_breakdown");
+    assert!(json.get("trend").is_some(), "should contain trend direction");
+    let total = json["finding_summary"]["total_findings"]
+        .as_u64()
+        .ok_or("total_findings should be a number")?;
+    assert!(total > 0, "should have at least one finding");
+
+    // Cleanup
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+/// Verify `do_project_status` returns valid but empty metrics for a
+/// project that has no scans or findings.
+#[tokio::test]
+async fn test_tool_project_status_empty() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-status-empty");
+    let project = storage::projects::create_project(&pool, &name, "empty project").await?;
+
+    // Act
+    let result = server.do_project_status(ProjectStatusParams { project: name.clone() }).await;
+
+    // Assert
+    assert!(result.is_ok(), "project_status on empty project should succeed: {result:?}");
+    let body = result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    assert_eq!(json["project_name"], name);
+    assert_eq!(json["scan_summary"]["total_scans"], 0);
+    assert_eq!(json["finding_summary"]["total_findings"], 0);
+    assert_eq!(json["finding_summary"]["active_findings"], 0);
+    assert_eq!(json["trend"], "stable", "empty project should have stable trend");
+
+    // Cleanup
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Plan Scan Tests
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Verify `PlanScanParams` serialization round-trips correctly with
+/// the expected target field.
+#[test]
+fn test_tool_plan_scan_params() {
+    // Arrange
+    let json = r#"{"target": "https://example.com"}"#;
+
+    // Act
+    let params: PlanScanParams = serde_json::from_str(json).expect("deserialize PlanScanParams");
+
+    // Assert
+    assert_eq!(params.target, "https://example.com");
+}
+
+/// Verify `do_plan_scan` returns an error when AI is disabled in config,
+/// rather than panicking or producing an empty plan.
+#[tokio::test]
+async fn test_tool_plan_scan_no_ai() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange — create server with AI explicitly disabled
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let mut config = AppConfig::default();
+    config.ai.enabled = false;
+    let server = ScorchKitServer::new(Arc::new(config), pool);
+
+    // Act
+    let result =
+        server.do_plan_scan(PlanScanParams { target: "https://example.com".to_string() }).await;
+
+    // Assert — should fail gracefully, not panic
+    assert!(result.is_err(), "plan_scan with AI disabled should return an error");
+    let err_msg = result.unwrap_err();
+    assert!(
+        err_msg.contains("AI is disabled") || err_msg.contains("claude"),
+        "error should mention AI is disabled: {err_msg}"
+    );
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Analyze Findings Tests
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Verify `AnalyzeFindingsParams` serialization with all fields including
+/// the optional `scan_id` and default `focus`.
+#[test]
+fn test_tool_analyze_findings_params() {
+    // Arrange
+    let json_minimal = r#"{"project": "my-project"}"#;
+    let json_full = r#"{"project": "my-project", "focus": "prioritize", "scan_id": "abc-123"}"#;
+
+    // Act
+    let params_min: AnalyzeFindingsParams =
+        serde_json::from_str(json_minimal).expect("deserialize minimal AnalyzeFindingsParams");
+    let params_full: AnalyzeFindingsParams =
+        serde_json::from_str(json_full).expect("deserialize full AnalyzeFindingsParams");
+
+    // Assert
+    assert_eq!(params_min.project, "my-project");
+    assert_eq!(params_min.focus, "summary", "default focus should be 'summary'");
+    assert!(params_min.scan_id.is_none());
+    assert_eq!(params_full.focus, "prioritize");
+    assert_eq!(params_full.scan_id.as_deref(), Some("abc-123"));
+}
+
+/// Verify `do_analyze_findings` returns an appropriate response when the
+/// project has no findings to analyze, rather than invoking AI needlessly.
+#[tokio::test]
+async fn test_tool_analyze_findings_no_findings() -> Result<(), Box<dyn std::error::Error>> {
+    // Arrange
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-analyze-empty");
+    let project = storage::projects::create_project(&pool, &name, "empty for analysis").await?;
+
+    // Act
+    let result = server
+        .do_analyze_findings(AnalyzeFindingsParams {
+            project: name.clone(),
+            focus: "summary".to_string(),
+            scan_id: None,
+        })
+        .await;
+
+    // Assert — should return a valid response indicating no findings
+    assert!(result.is_ok(), "analyze_findings with no findings should succeed: {result:?}");
+    let body = result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    let content = json["analysis"]["content"].as_str().unwrap_or("");
+    assert!(content.contains("No findings"), "should indicate no findings to analyze: {body}");
+
+    // Cleanup
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}

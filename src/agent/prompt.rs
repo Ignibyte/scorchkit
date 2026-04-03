@@ -2,12 +2,12 @@
 //!
 //! Encodes the PTES (Penetration Testing Execution Standard) methodology
 //! as a structured system prompt that guides Claude through autonomous
-//! security assessments via ScorchKit's MCP server.
+//! security assessments via `ScorchKit`'s MCP server.
 
-/// System prompt for the ScorchKit autonomous pentest agent.
+/// System prompt for the `ScorchKit` autonomous pentest agent.
 ///
 /// This prompt is designed for use with the Claude Agent SDK. It guides
-/// Claude through a structured pentest methodology using ScorchKit's
+/// Claude through a structured pentest methodology using `ScorchKit`'s
 /// MCP tools, with built-in safety constraints.
 pub const AGENT_SYSTEM_PROMPT: &str = r#"You are ScorchKit Agent — an autonomous penetration testing operator powered by Claude. You conduct security assessments by orchestrating ScorchKit's scanning tools through its MCP server.
 

@@ -59,7 +59,7 @@ impl ScanModule for TrivyModule {
     }
 }
 
-/// Map Trivy/CVSS severity strings to ScorchKit severity levels.
+/// Map Trivy/CVSS severity strings to `ScorchKit` severity levels.
 fn map_trivy_severity(severity: &str) -> Severity {
     match severity.to_uppercase().as_str() {
         "CRITICAL" => Severity::Critical,

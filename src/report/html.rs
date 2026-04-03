@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::path::PathBuf;
 
 use crate::config::ReportConfig;
@@ -5,6 +6,10 @@ use crate::engine::error::Result;
 use crate::engine::scan_result::ScanResult;
 
 /// Save a scan result as a self-contained HTML file.
+///
+/// # Errors
+///
+/// Returns an error if the output directory cannot be created or the file cannot be written.
 pub fn save_report(result: &ScanResult, config: &ReportConfig) -> Result<PathBuf> {
     let output_dir = &config.output_dir;
     std::fs::create_dir_all(output_dir)?;
@@ -18,9 +23,8 @@ pub fn save_report(result: &ScanResult, config: &ReportConfig) -> Result<PathBuf
     Ok(path)
 }
 
-fn render_html(result: &ScanResult) -> String {
-    let s = &result.summary;
-
+/// Render the findings section of the HTML report.
+fn render_findings_html(result: &ScanResult) -> String {
     let mut findings_html = String::new();
     for (i, f) in result.findings.iter().enumerate() {
         let sev_class = f.severity.to_string();
@@ -29,7 +33,8 @@ fn render_html(result: &ScanResult) -> String {
         let owasp = f.owasp_category.as_deref().unwrap_or("");
         let cwe = f.cwe_id.map_or(String::new(), |c| format!("CWE-{c}"));
 
-        findings_html.push_str(&format!(
+        let _ = write!(
+            findings_html,
             r#"<div class="finding {sev_class}">
   <div class="finding-header">
     <span class="finding-num">#{num}</span>
@@ -66,8 +71,14 @@ fn render_html(result: &ScanResult) -> String {
                     html_escape(remediation)
                 )
             },
-        ));
+        );
     }
+    findings_html
+}
+
+fn render_html(result: &ScanResult) -> String {
+    let s = &result.summary;
+    let findings_html = render_findings_html(result);
 
     format!(
         r#"<!DOCTYPE html>

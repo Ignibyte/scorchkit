@@ -32,7 +32,7 @@ pub struct Finding {
     /// Compliance framework control references (NIST, PCI-DSS, SOC2, HIPAA).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compliance: Option<Vec<String>>,
-    /// Captured HTTP request/response pair for PoC replay.
+    /// Captured HTTP request/response pair for `PoC` replay.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub http_evidence: Option<HttpEvidence>,
     /// Timestamp when found.
@@ -64,16 +64,19 @@ impl Finding {
         }
     }
 
+    #[must_use]
     pub fn with_evidence(mut self, evidence: impl Into<String>) -> Self {
         self.evidence = Some(evidence.into());
         self
     }
 
+    #[must_use]
     pub fn with_remediation(mut self, remediation: impl Into<String>) -> Self {
         self.remediation = Some(remediation.into());
         self
     }
 
+    #[must_use]
     pub fn with_owasp(mut self, category: impl Into<String>) -> Self {
         self.owasp_category = Some(category.into());
         self

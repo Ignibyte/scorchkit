@@ -57,7 +57,7 @@ impl ScanModule for ProwlerModule {
     }
 }
 
-/// Map Prowler severity strings to ScorchKit severity levels.
+/// Map Prowler severity strings to `ScorchKit` severity levels.
 fn map_prowler_severity(severity: &str) -> Severity {
     match severity.to_lowercase().as_str() {
         "critical" => Severity::Critical,
@@ -71,7 +71,7 @@ fn map_prowler_severity(severity: &str) -> Severity {
 /// Parse Prowler JSON output (OCSF format) into findings.
 ///
 /// Prowler outputs a JSON array of finding objects in OCSF format. Each
-/// finding with `status_id != 1` (not PASS) is converted to a ScorchKit
+/// finding with `status_id != 1` (not PASS) is converted to a `ScorchKit`
 /// finding with mapped severity.
 #[must_use]
 fn parse_prowler_output(stdout: &str, target_url: &str) -> Vec<Finding> {

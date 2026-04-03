@@ -82,9 +82,8 @@ async fn test_url_params_xss(
     url_str: &str,
     findings: &mut Vec<Finding>,
 ) -> Result<()> {
-    let parsed = match Url::parse(url_str) {
-        Ok(u) => u,
-        Err(_) => return Ok(()),
+    let Ok(parsed) = Url::parse(url_str) else {
+        return Ok(());
     };
 
     let params: Vec<(String, String)> =
@@ -95,127 +94,136 @@ async fn test_url_params_xss(
     }
 
     for (param_name, _) in &params {
-        // Phase 1: Test if the canary is reflected at all
-        let mut test_url = parsed.clone();
-        {
-            let mut query_pairs = test_url.query_pairs_mut();
-            query_pairs.clear();
-            for (k, v) in &params {
-                if k == param_name {
-                    query_pairs.append_pair(k, CANARY_HTML);
-                } else {
-                    query_pairs.append_pair(k, v);
-                }
+        test_xss_param(ctx, &parsed, &params, param_name, url_str, findings).await?;
+    }
+
+    Ok(())
+}
+
+/// Test a single parameter for reflected XSS by injecting canaries and payloads.
+/// Build a URL with a single parameter replaced by the given injection value.
+fn build_injected_url(
+    parsed: &Url,
+    params: &[(String, String)],
+    param_name: &str,
+    value: &str,
+) -> Url {
+    let mut test_url = parsed.clone();
+    {
+        let mut query_pairs = test_url.query_pairs_mut();
+        query_pairs.clear();
+        for (k, v) in params {
+            if k == param_name {
+                query_pairs.append_pair(k, value);
+            } else {
+                query_pairs.append_pair(k, v);
+            }
+        }
+    }
+    test_url
+}
+
+/// Test a single URL parameter for reflected XSS using canary and payload injection.
+async fn test_xss_param(
+    ctx: &ScanContext,
+    parsed: &Url,
+    params: &[(String, String)],
+    param_name: &str,
+    url_str: &str,
+    findings: &mut Vec<Finding>,
+) -> Result<()> {
+    // Phase 1: Test if the canary is reflected at all
+    let test_url = build_injected_url(parsed, params, param_name, CANARY_HTML);
+
+    let Ok(response) = ctx.http_client.get(test_url.as_str()).send().await else {
+        return Ok(());
+    };
+
+    let body = response.text().await.unwrap_or_default();
+
+    // Check if canary is reflected
+    if !body.contains(CANARY) {
+        return Ok(()); // Parameter value not reflected, skip
+    }
+
+    // Check if HTML characters are reflected unescaped
+    if body.contains("<test>") || body.contains("\"'") {
+        // HTML is not being encoded - test with real payloads
+        for &(payload, payload_desc) in XSS_PAYLOADS {
+            let payload_url = build_injected_url(parsed, params, param_name, payload);
+
+            let Ok(resp) = ctx.http_client.get(payload_url.as_str()).send().await else {
+                continue;
+            };
+
+            let resp_body = resp.text().await.unwrap_or_default();
+
+            if is_payload_reflected(&resp_body, payload) {
+                findings.push(
+                    Finding::new(
+                        "xss",
+                        Severity::High,
+                        format!("Reflected XSS in Parameter: {param_name}"),
+                        format!(
+                            "The parameter '{param_name}' reflects user input without \
+                             proper encoding. XSS payload was reflected: {payload_desc}."
+                        ),
+                        url_str,
+                    )
+                    .with_evidence(format!(
+                        "Parameter: {param_name} | Payload: {payload} | Type: {payload_desc}"
+                    ))
+                    .with_remediation(
+                        "Encode all user input before rendering in HTML. \
+                         Use context-appropriate encoding (HTML entity, JavaScript, URL).",
+                    )
+                    .with_owasp("A03:2021 Injection")
+                    .with_cwe(79),
+                );
+                // Found confirmed XSS, no need to test more payloads
+                return Ok(());
             }
         }
 
-        let response = match ctx.http_client.get(test_url.as_str()).send().await {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-
-        let body = response.text().await.unwrap_or_default();
-
-        // Check if canary is reflected
-        if !body.contains(CANARY) {
-            continue; // Parameter value not reflected, skip
-        }
-
-        // Check if HTML characters are reflected unescaped
-        if body.contains("<test>") || body.contains("\"'") {
-            // HTML is not being encoded - test with real payloads
-            for &(payload, payload_desc) in XSS_PAYLOADS {
-                let mut payload_url = parsed.clone();
-                {
-                    let mut query_pairs = payload_url.query_pairs_mut();
-                    query_pairs.clear();
-                    for (k, v) in &params {
-                        if k == param_name {
-                            query_pairs.append_pair(k, payload);
-                        } else {
-                            query_pairs.append_pair(k, v);
-                        }
-                    }
-                }
-
-                let resp = match ctx.http_client.get(payload_url.as_str()).send().await {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
-
-                let resp_body = resp.text().await.unwrap_or_default();
-
-                if is_payload_reflected(&resp_body, payload) {
-                    findings.push(
-                        Finding::new(
-                            "xss",
-                            Severity::High,
-                            format!("Reflected XSS in Parameter: {param_name}"),
-                            format!(
-                                "The parameter '{param_name}' reflects user input without \
-                                 proper encoding. XSS payload was reflected: {payload_desc}."
-                            ),
-                            url_str,
-                        )
-                        .with_evidence(format!(
-                            "Parameter: {param_name} | Payload: {payload} | Type: {payload_desc}"
-                        ))
-                        .with_remediation(
-                            "Encode all user input before rendering in HTML. \
-                             Use context-appropriate encoding (HTML entity, JavaScript, URL).",
-                        )
-                        .with_owasp("A03:2021 Injection")
-                        .with_cwe(79),
-                    );
-                    // Found confirmed XSS, no need to test more payloads
-                    return Ok(());
-                }
-            }
-
-            // Canary reflected with HTML chars but payloads didn't work exactly
-            // Still worth reporting as the reflection is unencoded
-            findings.push(
-                Finding::new(
-                    "xss",
-                    Severity::Medium,
-                    format!("Unencoded Reflection in Parameter: {param_name}"),
-                    format!(
-                        "The parameter '{param_name}' reflects HTML metacharacters \
-                         without encoding. This may be exploitable for XSS depending \
-                         on the reflection context."
-                    ),
-                    url_str,
-                )
-                .with_evidence(format!(
-                    "Parameter: {param_name} | Canary '{CANARY_HTML}' reflected with HTML chars intact"
-                ))
-                .with_remediation(
-                    "Encode all user input before rendering in HTML output.",
-                )
-                .with_owasp("A03:2021 Injection")
-                .with_cwe(79),
-            );
-        } else {
-            // Canary reflected but HTML is encoded - lower severity
-            findings.push(
-                Finding::new(
-                    "xss",
-                    Severity::Info,
-                    format!("Parameter Reflection Detected: {param_name}"),
-                    format!(
-                        "The parameter '{param_name}' reflects user input in the response. \
-                         HTML encoding appears to be applied, but context-specific bypasses \
-                         may still be possible."
-                    ),
-                    url_str,
-                )
-                .with_evidence(format!(
-                    "Parameter: {param_name} | Canary reflected but HTML-encoded"
-                ))
-                .with_owasp("A03:2021 Injection")
-                .with_cwe(79),
-            );
-        }
+        // Canary reflected with HTML chars but payloads didn't work exactly
+        // Still worth reporting as the reflection is unencoded
+        findings.push(
+            Finding::new(
+                "xss",
+                Severity::Medium,
+                format!("Unencoded Reflection in Parameter: {param_name}"),
+                format!(
+                    "The parameter '{param_name}' reflects HTML metacharacters \
+                     without encoding. This may be exploitable for XSS depending \
+                     on the reflection context."
+                ),
+                url_str,
+            )
+            .with_evidence(format!(
+                "Parameter: {param_name} | Canary '{CANARY_HTML}' reflected with HTML chars intact"
+            ))
+            .with_remediation("Encode all user input before rendering in HTML output.")
+            .with_owasp("A03:2021 Injection")
+            .with_cwe(79),
+        );
+    } else {
+        // Canary reflected but HTML is encoded - lower severity
+        findings.push(
+            Finding::new(
+                "xss",
+                Severity::Info,
+                format!("Parameter Reflection Detected: {param_name}"),
+                format!(
+                    "The parameter '{param_name}' reflects user input in the response. \
+                     HTML encoding appears to be applied, but context-specific bypasses \
+                     may still be possible."
+                ),
+                url_str,
+            )
+            .with_evidence(format!("Parameter: {param_name} | Canary reflected but HTML-encoded"))
+            .with_owasp("A03:2021 Injection")
+            .with_cwe(79),
+        );
     }
 
     Ok(())
@@ -253,9 +261,8 @@ async fn test_form_xss(
             ctx.http_client.get(&form.action).query(&params).send().await
         };
 
-        let response = match response {
-            Ok(r) => r,
-            Err(_) => continue,
+        let Ok(response) = response else {
+            continue;
         };
 
         let body = response.text().await.unwrap_or_default();
@@ -386,4 +393,125 @@ fn extract_forms(body: &str, base_url: &Url) -> Vec<FormInfo> {
 
     forms.truncate(10);
     forms
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the XSS detection module's pure helper functions.
+
+    /// Verify that `is_payload_reflected` returns true when a payload appears verbatim in the body.
+    #[test]
+    fn test_payload_reflected_directly() {
+        let body = r#"<html><body>Welcome <scorch8x7k2> user</body></html>"#;
+        let payload = "<scorch8x7k2>";
+
+        assert!(is_payload_reflected(body, payload));
+    }
+
+    /// Verify that `is_payload_reflected` returns false when the payload is absent.
+    #[test]
+    fn test_payload_not_reflected() {
+        let body = "<html><body>Safe page with no injected content</body></html>";
+        let payload = "<scorch8x7k2>";
+
+        assert!(!is_payload_reflected(body, payload));
+    }
+
+    /// Verify partial tag matching: the tag opener is present even if extra attributes appear.
+    #[test]
+    fn test_payload_reflected_partial_tag_match() {
+        // The body has `<img src=x onerror=alert(1)` which matches the tag prefix
+        let body = r#"<html><body><img src=x onerror=alert(1) class="x"></body></html>"#;
+        let payload = "<img src=x onerror=alert(1)>";
+
+        assert!(is_payload_reflected(body, payload));
+    }
+
+    /// Verify that `is_payload_reflected` handles an empty body gracefully.
+    #[test]
+    fn test_payload_reflected_empty_body() {
+        assert!(!is_payload_reflected("", "<scorch8x7k2>"));
+    }
+
+    /// Verify that `extract_parameterized_links` finds same-origin links with query parameters
+    /// from HTML anchor elements, excluding external and param-less links.
+    #[test]
+    fn test_extract_parameterized_links() -> std::result::Result<(), url::ParseError> {
+        // Arrange
+        let base = Url::parse("https://example.com/")?;
+        let body = r#"
+            <html><body>
+                <a href="/search?q=test&lang=en">Search</a>
+                <a href="https://example.com/page?id=42">Page</a>
+                <a href="/about">About</a>
+                <a href="https://other.com/x?y=1">External</a>
+            </body></html>
+        "#;
+
+        // Act
+        let links = extract_parameterized_links(body, &base);
+
+        // Assert
+        assert_eq!(links.len(), 2);
+        assert!(links.iter().any(|l| l.contains("search?q=test")));
+        assert!(links.iter().any(|l| l.contains("page?id=42")));
+        assert!(!links.iter().any(|l| l.contains("other.com")));
+
+        Ok(())
+    }
+
+    /// Verify that `extract_forms` parses form elements with text/textarea inputs,
+    /// skipping submit, button, file, and hidden types.
+    #[test]
+    fn test_extract_forms() -> std::result::Result<(), url::ParseError> {
+        // Arrange
+        let base = Url::parse("https://example.com/")?;
+        let body = r#"
+            <html><body>
+                <form action="/login" method="POST">
+                    <input type="text" name="username" value="">
+                    <input type="password" name="password" value="">
+                    <input type="hidden" name="csrf" value="tok123">
+                    <input type="submit" value="Login">
+                </form>
+            </body></html>
+        "#;
+
+        // Act
+        let forms = extract_forms(body, &base);
+
+        // Assert
+        assert_eq!(forms.len(), 1);
+        let form = &forms[0];
+        assert!(form.action.contains("/login"));
+        assert_eq!(form.method, "POST");
+        // Hidden and submit inputs should be excluded
+        assert_eq!(form.inputs.len(), 2);
+        assert!(form.inputs.iter().any(|(n, _)| n == "username"));
+        assert!(form.inputs.iter().any(|(n, _)| n == "password"));
+
+        Ok(())
+    }
+
+    /// Verify that `build_injected_url` replaces only the targeted parameter's value
+    /// while preserving all other query parameters.
+    #[test]
+    fn test_build_injected_url() -> std::result::Result<(), url::ParseError> {
+        // Arrange
+        let parsed = Url::parse("https://example.com/search?q=hello&lang=en")?;
+        let params =
+            vec![("q".to_string(), "hello".to_string()), ("lang".to_string(), "en".to_string())];
+
+        // Act
+        let result = build_injected_url(&parsed, &params, "q", "INJECTED");
+        let result_str = result.as_str();
+
+        // Assert
+        assert!(result_str.contains("q=INJECTED"));
+        assert!(result_str.contains("lang=en"));
+
+        Ok(())
+    }
 }

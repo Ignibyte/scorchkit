@@ -48,12 +48,19 @@ pub async fn build_project_context(
 
     let status_counts = count_findings_by_status(pool, project_id).await?;
 
+    // JUSTIFICATION: values bounded by DB row counts, always < usize::MAX on 64-bit
+    #[allow(clippy::cast_possible_truncation)]
+    let total_scans = scan_count.unsigned_abs() as usize;
+    // JUSTIFICATION: values bounded by DB row counts, always < usize::MAX on 64-bit
+    #[allow(clippy::cast_possible_truncation)]
+    let total_tracked_usize = total_tracked.unsigned_abs() as usize;
+
     Ok(ProjectContext {
         project_name: project_name.to_string(),
-        total_scans: scan_count.unsigned_abs() as usize,
+        total_scans,
         latest_scan_date,
         finding_trends: FindingTrends {
-            total_tracked: total_tracked.unsigned_abs() as usize,
+            total_tracked: total_tracked_usize,
             by_status: status_counts,
         },
     })
@@ -75,6 +82,8 @@ async fn count_findings_by_status(pool: &PgPool, project_id: Uuid) -> Result<Sta
         StatusBreakdown { new: 0, acknowledged: 0, false_positive: 0, remediated: 0, verified: 0 };
 
     for (status, count) in &rows {
+        // JUSTIFICATION: values bounded by DB row counts, always < usize::MAX on 64-bit
+        #[allow(clippy::cast_possible_truncation)]
         let count_usize = count.unsigned_abs() as usize;
         match status.as_str() {
             "new" => breakdown.new = count_usize,

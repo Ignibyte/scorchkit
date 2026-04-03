@@ -62,16 +62,16 @@ impl ScanModule for FfufModule {
         )
         .await?;
 
-        parse_ffuf_output(&output.stdout, ctx.target.url.as_str())
+        Ok(parse_ffuf_output(&output.stdout, ctx.target.url.as_str()))
     }
 }
 
-fn parse_ffuf_output(output: &str, _target_url: &str) -> Result<Vec<Finding>> {
+fn parse_ffuf_output(output: &str, _target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let json: serde_json::Value = match serde_json::from_str(output) {
         Ok(v) => v,
-        Err(_) => return Ok(findings),
+        Err(_) => return findings,
     };
 
     if let Some(results) = json["results"].as_array() {
@@ -105,5 +105,31 @@ fn parse_ffuf_output(output: &str, _target_url: &str) -> Result<Vec<Finding>> {
 
     findings.sort_by(|a, b| b.severity.cmp(&a.severity));
     findings.truncate(50);
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for ffuf JSON output parser.
+
+    /// Verify that `parse_ffuf_output` correctly extracts discovered paths
+    /// from ffuf JSON output with status codes and sizes.
+    #[test]
+    fn test_parse_ffuf_output() {
+        let output = r#"{"results":[{"url":"https://example.com/admin","status":200,"length":1024,"input":{"FUZZ":"admin"}},{"url":"https://example.com/robots.txt","status":200,"length":56,"input":{"FUZZ":"robots.txt"}}]}"#;
+
+        let findings = parse_ffuf_output(output, "https://example.com");
+        assert_eq!(findings.len(), 2);
+        assert!(findings[0].title.contains("admin"));
+        assert!(findings[1].title.contains("robots.txt"));
+    }
+
+    /// Verify that `parse_ffuf_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_ffuf_output_empty() {
+        let findings = parse_ffuf_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

@@ -40,11 +40,11 @@ impl ScanModule for ArjunModule {
         )
         .await?;
 
-        parse_arjun_output(&output.stdout, target)
+        Ok(parse_arjun_output(&output.stdout, target))
     }
 }
 
-fn parse_arjun_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_arjun_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(output) {
@@ -54,9 +54,18 @@ fn parse_arjun_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
                     let param_list: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
                     if !param_list.is_empty() {
                         findings.push(
-                            Finding::new("arjun", Severity::Low, format!("{} Hidden Parameters Found", param_list.len()), format!("Arjun discovered hidden parameters that may accept user input."), url)
-                                .with_evidence(format!("Parameters: {}", param_list.join(", ")))
-                                .with_remediation("Test discovered parameters for injection vulnerabilities"),
+                            Finding::new(
+                                "arjun",
+                                Severity::Low,
+                                format!("{} Hidden Parameters Found", param_list.len()),
+                                "Arjun discovered hidden parameters that may accept user input."
+                                    .to_string(),
+                                url,
+                            )
+                            .with_evidence(format!("Parameters: {}", param_list.join(", ")))
+                            .with_remediation(
+                                "Test discovered parameters for injection vulnerabilities",
+                            ),
                         );
                     }
                 }
@@ -82,5 +91,33 @@ fn parse_arjun_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
         }
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for Arjun JSON output parser.
+
+    /// Verify that `parse_arjun_output` correctly extracts discovered hidden
+    /// parameters from Arjun JSON output keyed by URL.
+    #[test]
+    fn test_parse_arjun_output() {
+        let output = r#"{"https://example.com/search":["q","page","lang"]}"#;
+
+        let findings = parse_arjun_output(output, "https://example.com");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].title.contains("3 Hidden Parameters"));
+        assert_eq!(findings[0].severity, Severity::Low);
+        let evidence = findings[0].evidence.as_deref().unwrap_or("");
+        assert!(evidence.contains("q"));
+    }
+
+    /// Verify that `parse_arjun_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_arjun_output_empty() {
+        let findings = parse_arjun_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

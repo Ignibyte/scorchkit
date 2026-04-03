@@ -72,7 +72,7 @@ impl ScanModule for CsrfModule {
                 };
 
                 findings.push(
-                    Finding::new("csrf", Severity::Medium, format!("Missing CSRF Token: {form_desc}"), format!("A POST form lacks CSRF token protection. An attacker could craft a page that submits this form on behalf of an authenticated user."), url)
+                    Finding::new("csrf", Severity::Medium, format!("Missing CSRF Token: {form_desc}"), "A POST form lacks CSRF token protection. An attacker could craft a page that submits this form on behalf of an authenticated user.".to_string(), url)
                         .with_evidence(format!("Form: method=POST action=\"{action}\" | No hidden CSRF token field found"))
                         .with_remediation("Add a CSRF token to all state-changing forms. Use your framework's built-in CSRF protection.")
                         .with_owasp("A05:2021 Security Misconfiguration")
@@ -98,3 +98,61 @@ const CSRF_TOKEN_NAMES: &[&str] = &[
     "_csrf",
     "csrf_token",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the CSRF detection module's constant data integrity.
+
+    /// Verify that `CSRF_TOKEN_NAMES` is non-empty and contains well-known CSRF token names.
+    #[test]
+    fn test_csrf_token_names_nonempty() {
+        assert!(
+            CSRF_TOKEN_NAMES.len() >= 5,
+            "Expected at least 5 CSRF token names, found {}",
+            CSRF_TOKEN_NAMES.len()
+        );
+        // Verify well-known names are present
+        assert!(CSRF_TOKEN_NAMES.contains(&"csrf"));
+        assert!(CSRF_TOKEN_NAMES.contains(&"_token"));
+        assert!(CSRF_TOKEN_NAMES.contains(&"authenticity_token"));
+    }
+
+    /// Verify that all CSRF token names are lowercase and contain no whitespace,
+    /// since the detection logic lowercases the input name before matching.
+    #[test]
+    fn test_csrf_token_names_are_lowercase_and_valid() {
+        for name in CSRF_TOKEN_NAMES {
+            assert_eq!(*name, name.to_lowercase(), "Token name '{name}' should be lowercase");
+            assert!(!name.contains(' '), "Token name '{name}' should not contain spaces");
+            assert!(!name.is_empty(), "Token names should not be empty");
+        }
+    }
+
+    /// Verify that a POST form containing a hidden CSRF input is correctly recognized
+    /// by the token-name matching logic used in the module.
+    #[test]
+    fn test_csrf_token_name_matching() {
+        // Simulate the matching logic from the module's run() method:
+        // input_type == "hidden" && CSRF_TOKEN_NAMES.iter().any(|t| name.contains(t))
+        let test_cases = vec![
+            ("csrf_token", true),
+            ("_token", true),
+            ("csrfmiddlewaretoken", true),
+            ("username", false),
+            ("submit", false),
+        ];
+
+        for (input_name, expected) in test_cases {
+            let lower = input_name.to_lowercase();
+            let matches = CSRF_TOKEN_NAMES.iter().any(|t| lower.contains(t));
+            assert_eq!(
+                matches,
+                expected,
+                "Input name '{input_name}' should{} match CSRF token pattern",
+                if expected { "" } else { " not" }
+            );
+        }
+    }
+}

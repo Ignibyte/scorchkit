@@ -12,6 +12,10 @@ pub struct ToolOutput {
 }
 
 /// Run an external tool as a subprocess, capturing stdout and stderr.
+///
+/// # Errors
+///
+/// Returns an error if the tool is not found, exits with a non-zero status, or times out.
 pub async fn run_tool(tool_name: &str, args: &[&str], timeout: Duration) -> Result<ToolOutput> {
     // Check tool exists
     let which =

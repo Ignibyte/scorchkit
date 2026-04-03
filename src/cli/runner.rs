@@ -15,6 +15,13 @@ use crate::report;
 use crate::runner::orchestrator::Orchestrator;
 
 /// Execute the CLI command.
+///
+/// # Errors
+///
+/// Returns an error if the dispatched subcommand fails.
+// JUSTIFICATION: CLI dispatch function — match arms are the natural structure;
+// extraction would scatter dispatch logic
+#[allow(clippy::too_many_lines)]
 pub async fn execute(cli: Cli) -> Result<()> {
     let config = AppConfig::load(cli.config.as_deref())?;
     let config = Arc::new(config);
@@ -106,7 +113,10 @@ pub async fn execute(cli: Cli) -> Result<()> {
 
         Commands::Diff { baseline, current } => run_diff(&baseline, &current),
 
-        Commands::Modules { check_tools } => list_modules(check_tools),
+        Commands::Modules { check_tools } => {
+            list_modules(check_tools);
+            Ok(())
+        }
 
         Commands::Init { target, project, database_url } => {
             super::init::run_init(target.as_deref(), project.as_deref(), database_url.as_deref())
@@ -246,6 +256,9 @@ async fn run_schedule_command(
 // JUSTIFICATION: run_scan maps directly to CLI flag combinations; bundling into a struct
 // would add indirection for an internal dispatch function with no external callers.
 #[allow(clippy::too_many_arguments)]
+// JUSTIFICATION: CLI dispatch function — match arms are the natural structure;
+// extraction would scatter dispatch logic
+#[allow(clippy::too_many_lines)]
 async fn run_scan(
     config: &Arc<AppConfig>,
     target_str: &str,
@@ -627,7 +640,7 @@ async fn build_analyze_project_context(
     Ok(None)
 }
 
-fn list_modules(check_tools: bool) -> Result<()> {
+fn list_modules(check_tools: bool) {
     let modules = crate::runner::orchestrator::all_modules();
 
     println!();
@@ -659,8 +672,6 @@ fn list_modules(check_tools: bool) -> Result<()> {
         );
     }
     println!();
-
-    Ok(())
 }
 
 fn build_http_client(config: &AppConfig) -> Result<reqwest::Client> {

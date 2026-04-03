@@ -83,7 +83,7 @@ pub struct TrackedFinding {
     pub scan_id: Uuid,
     /// The project this finding belongs to.
     pub project_id: Uuid,
-    /// Stable dedup hash: SHA-256(module_id || title || affected_target).
+    /// Stable dedup hash: SHA-256(module_id || title || `affected_target`).
     pub fingerprint: String,
     /// Which module produced this finding.
     pub module_id: String,
@@ -154,7 +154,7 @@ impl VulnStatus {
 
     /// Convert to the database string representation.
     #[must_use]
-    pub fn as_db_str(self) -> &'static str {
+    pub const fn as_db_str(self) -> &'static str {
         match self {
             Self::New => "new",
             Self::Acknowledged => "acknowledged",

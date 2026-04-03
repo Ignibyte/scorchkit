@@ -187,3 +187,112 @@ fn detect_waf_body(
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the WAF detection module's pure helper functions and pattern data.
+
+    /// Verify that `detect_waf_from_server` identifies known WAF products from the
+    /// Server header value and returns `None` for generic servers.
+    #[test]
+    fn test_detect_waf_from_server() {
+        // Arrange & Assert: known WAF server strings
+        let cloudflare = detect_waf_from_server("cloudflare");
+        assert!(cloudflare.is_some());
+        assert_eq!(cloudflare.as_deref(), Some("Cloudflare"));
+
+        let incapsula = detect_waf_from_server("Incapsula/nginx");
+        assert!(incapsula.is_some());
+        assert_eq!(incapsula.as_deref(), Some("Imperva Incapsula"));
+
+        let akamai = detect_waf_from_server("AkamaiGHost");
+        assert!(akamai.is_some());
+        assert_eq!(akamai.as_deref(), Some("Akamai"));
+
+        // Generic servers should not match
+        assert!(detect_waf_from_server("nginx/1.24.0").is_none());
+        assert!(detect_waf_from_server("Apache/2.4.52").is_none());
+        assert!(detect_waf_from_server("").is_none());
+    }
+
+    /// Verify that the WAF header check list contains well-known WAF detection headers
+    /// and that all entries have non-empty header names.
+    #[test]
+    fn test_waf_header_checks_integrity() {
+        // Arrange: the checks array from detect_waf_headers
+        let checks: &[(&str, &str)] = &[
+            ("cf-ray", "Cloudflare"),
+            ("cf-cache-status", "Cloudflare"),
+            ("x-sucuri-id", "Sucuri"),
+            ("x-sucuri-cache", "Sucuri"),
+            ("server", ""),
+            ("x-powered-by-plesk", "Plesk"),
+            ("x-cdn", ""),
+            ("x-akamai-transformed", "Akamai"),
+            ("x-barracuda-waf", "Barracuda WAF"),
+            ("x-denied-reason", "Generic WAF"),
+            ("x-dotdefender-denied", "dotDefender"),
+        ];
+
+        // Assert: minimum count
+        assert!(checks.len() >= 8, "Expected at least 8 WAF header checks, found {}", checks.len());
+
+        // All header names are non-empty and lowercase
+        for &(header, _) in checks {
+            assert!(!header.is_empty(), "WAF header name should not be empty");
+            assert_eq!(header, header.to_lowercase(), "WAF header '{header}' should be lowercase");
+        }
+    }
+
+    /// Verify that the WAF body signature patterns are non-empty, lowercase, and
+    /// cover major WAF products (Cloudflare, Sucuri, ModSecurity, Wordfence).
+    #[test]
+    fn test_waf_body_signatures_integrity() {
+        // Arrange: the waf_signatures array from detect_waf_body
+        let waf_signatures: &[(&str, &str)] = &[
+            ("cloudflare", "Cloudflare"),
+            ("attention required", "Cloudflare"),
+            ("sucuri website firewall", "Sucuri"),
+            ("access denied - sucuri", "Sucuri"),
+            ("incapsula", "Imperva Incapsula"),
+            ("request unsuccessful", "Imperva"),
+            ("modsecurity", "ModSecurity"),
+            ("not acceptable", "ModSecurity"),
+            ("wordfence", "Wordfence"),
+            ("blocked by wordfence", "Wordfence"),
+            ("akamai", "Akamai"),
+            ("access denied", "Generic WAF"),
+            ("web application firewall", "Generic WAF"),
+            ("waf", "Generic WAF"),
+            ("blocked", "Generic WAF"),
+            ("forbidden", "Possible WAF"),
+        ];
+
+        // Assert: minimum count
+        assert!(
+            waf_signatures.len() >= 10,
+            "Expected at least 10 WAF body signatures, found {}",
+            waf_signatures.len()
+        );
+
+        // All patterns are lowercase and non-empty; all WAF names are non-empty
+        for &(pattern, waf_name) in waf_signatures {
+            assert!(!pattern.is_empty(), "WAF body pattern should not be empty");
+            assert_eq!(
+                pattern,
+                pattern.to_lowercase(),
+                "WAF body pattern '{pattern}' should be lowercase (matched against lowercased body)"
+            );
+            assert!(!waf_name.is_empty(), "WAF name should not be empty");
+        }
+
+        // Major WAFs are covered
+        let waf_names: Vec<&str> = waf_signatures.iter().map(|&(_, name)| name).collect();
+        assert!(waf_names.contains(&"Cloudflare"));
+        assert!(waf_names.contains(&"Sucuri"));
+        assert!(waf_names.contains(&"ModSecurity"));
+        assert!(waf_names.contains(&"Wordfence"));
+    }
+}

@@ -402,3 +402,78 @@ const ASSET_PATH_PATTERNS: &[(&str, &str)] = &[
     ("/skin/frontend/", "Magento"),
     ("/static/version", "Magento 2"),
 ];
+
+#[cfg(test)]
+mod tests {
+    /// Unit tests for technology fingerprinting helpers.
+    use super::*;
+
+    /// Verify `identify_server` detects Nginx from a server header.
+    #[test]
+    fn test_identify_server_nginx() {
+        // Arrange
+        let header = "nginx/1.24.0";
+
+        // Act
+        let techs = identify_server(header);
+
+        // Assert
+        assert_eq!(techs.len(), 1);
+        assert_eq!(techs[0], "Nginx");
+    }
+
+    /// Verify `identify_server` detects Apache from a server header.
+    #[test]
+    fn test_identify_server_apache() {
+        // Arrange
+        let header = "Apache/2.4.52 (Ubuntu)";
+
+        // Act
+        let techs = identify_server(header);
+
+        // Assert
+        assert_eq!(techs.len(), 1);
+        assert_eq!(techs[0], "Apache");
+    }
+
+    /// Verify `identify_server` detects Microsoft IIS from a server header.
+    #[test]
+    fn test_identify_server_iis() {
+        // Arrange
+        let header = "Microsoft-IIS/10.0";
+
+        // Act
+        let techs = identify_server(header);
+
+        // Assert
+        assert_eq!(techs.len(), 1);
+        assert_eq!(techs[0], "Microsoft IIS");
+    }
+
+    /// Verify `identify_server` returns an empty list for an unknown server header.
+    #[test]
+    fn test_identify_server_unknown() {
+        // Arrange
+        let header = "MyCustomServer/3.0";
+
+        // Act
+        let techs = identify_server(header);
+
+        // Assert
+        assert!(techs.is_empty());
+    }
+
+    /// Verify `identify_server` performs case-insensitive matching.
+    #[test]
+    fn test_identify_server_case_insensitive() {
+        // Arrange
+        let header = "NGINX";
+
+        // Act
+        let techs = identify_server(header);
+
+        // Assert
+        assert_eq!(techs.len(), 1);
+        assert_eq!(techs[0], "Nginx");
+    }
+}

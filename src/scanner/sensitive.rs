@@ -193,3 +193,84 @@ const SECRET_PATTERNS: &[(&str, &str, Severity)] = &[
     ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9", "Hardcoded JWT", Severity::Medium),
     ("password", "Password Reference", Severity::Info),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the sensitive data exposure module's secret detection logic.
+
+    /// Verify that `check_secrets` detects an AWS access key pattern in the response body.
+    #[test]
+    fn test_check_secrets_aws_key() {
+        // Use a realistic-looking key without false-positive trigger words like "example"
+        let body = r#"config = { "aws_access_key": "AKIAIOSFODNN7REALKEYZ" }"#;
+        let mut findings = Vec::new();
+
+        check_secrets(body, "https://target.com", &mut findings);
+
+        assert!(
+            findings.iter().any(|f| f.title.contains("AWS")),
+            "Should detect AWS Access Key ID pattern (AKIA)"
+        );
+    }
+
+    /// Verify that `check_secrets` detects GitHub personal access token patterns.
+    #[test]
+    fn test_check_secrets_github_token() {
+        let body = r#"{"token": "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890"}"#;
+        let mut findings = Vec::new();
+
+        check_secrets(body, "https://example.com", &mut findings);
+
+        assert!(
+            findings.iter().any(|f| f.title.contains("GitHub")),
+            "Should detect GitHub Personal Access Token pattern (ghp_)"
+        );
+    }
+
+    /// Verify that `check_secrets` produces no findings for a clean body with
+    /// no secret patterns.
+    #[test]
+    fn test_check_secrets_no_secrets() {
+        let body =
+            "<html><body><h1>Welcome to our site!</h1><p>Nothing to see here.</p></body></html>";
+        let mut findings = Vec::new();
+
+        check_secrets(body, "https://example.com", &mut findings);
+
+        assert!(
+            findings.is_empty(),
+            "Should produce no findings for clean body, found: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+    }
+
+    /// Verify that `check_secrets` detects multiple distinct secret patterns when
+    /// the body contains more than one type of exposed credential.
+    #[test]
+    fn test_check_secrets_multiple() {
+        let body = r#"
+            keys:
+              stripe: "sk_live_aBcDeFgHiJkLmNoPqRsTuVwXyZ123"
+              slack: "xoxb-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx"
+        "#;
+        let mut findings = Vec::new();
+
+        check_secrets(body, "https://example.com", &mut findings);
+
+        assert!(
+            findings.len() >= 2,
+            "Should detect at least 2 different secret patterns, found {}",
+            findings.len()
+        );
+        assert!(
+            findings.iter().any(|f| f.title.contains("Stripe")),
+            "Should detect Stripe secret key"
+        );
+        assert!(
+            findings.iter().any(|f| f.title.contains("Slack")),
+            "Should detect Slack bot token"
+        );
+    }
+}

@@ -52,7 +52,7 @@ pub struct PluginDef {
     /// Command timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout_seconds: u64,
-    /// Output format: "lines" (consolidated finding), "json_lines" (JSON per line),
+    /// Output format: "lines" (consolidated finding), "`json_lines`" (JSON per line),
     /// or "json" (single JSON array).
     #[serde(default = "default_format")]
     pub output_format: String,
@@ -82,7 +82,7 @@ fn default_severity() -> String {
 pub struct PluginModule {
     /// The plugin definition.
     def: PluginDef,
-    /// Leaked static strings for ScanModule trait (plugins live for program lifetime).
+    /// Leaked static strings for `ScanModule` trait (plugins live for program lifetime).
     id_static: &'static str,
     name_static: &'static str,
     desc_static: &'static str,

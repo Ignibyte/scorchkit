@@ -49,27 +49,26 @@ impl ScanModule for NiktoModule {
         )
         .await?;
 
-        parse_nikto_output(&output.stdout, target)
+        Ok(parse_nikto_output(&output.stdout, target))
     }
 }
 
 /// Parse nikto JSON output into findings.
-fn parse_nikto_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_nikto_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     // Nikto JSON output can be a single JSON object or array
     // Try parsing as JSON value
-    let json: serde_json::Value = match serde_json::from_str(output) {
-        Ok(v) => v,
-        Err(_) => {
-            // Try parsing line by line
-            for line in output.lines() {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                    parse_nikto_item(&v, target_url, &mut findings);
-                }
+    let json: serde_json::Value = if let Ok(v) = serde_json::from_str(output) {
+        v
+    } else {
+        // Try parsing line by line
+        for line in output.lines() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                parse_nikto_item(&v, target_url, &mut findings);
             }
-            return Ok(findings);
         }
+        return findings;
     };
 
     // Handle array or single object
@@ -87,12 +86,12 @@ fn parse_nikto_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
         }
     }
 
-    Ok(findings)
+    findings
 }
 
 fn parse_nikto_item(item: &serde_json::Value, target_url: &str, findings: &mut Vec<Finding>) {
-    let id = item["id"].as_str().or(item["OSVDB"].as_str()).unwrap_or("unknown");
-    let msg = item["msg"].as_str().or(item["message"].as_str()).unwrap_or("Nikto finding");
+    let id = item["id"].as_str().or_else(|| item["OSVDB"].as_str()).unwrap_or("unknown");
+    let msg = item["msg"].as_str().or_else(|| item["message"].as_str()).unwrap_or("Nikto finding");
     let url = item["url"].as_str().unwrap_or(target_url);
     let method = item["method"].as_str().unwrap_or("GET");
 
@@ -129,5 +128,32 @@ fn classify_nikto_severity(msg: &str) -> Severity {
         Severity::Low
     } else {
         Severity::Info
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for nikto JSON output parser.
+
+    /// Verify that `parse_nikto_output` correctly extracts findings from
+    /// nikto JSON output with vulnerabilities array.
+    #[test]
+    fn test_parse_nikto_output() {
+        let output = r#"[{"vulnerabilities":[{"id":"999990","msg":"Retrieved X-Powered-By header: Express","url":"/","method":"GET"},{"id":"999986","msg":"SQL injection in search parameter","url":"/search","method":"POST"}]}]"#;
+
+        let findings = parse_nikto_output(output, "https://example.com");
+        assert_eq!(findings.len(), 2);
+        assert!(findings[0].title.contains("X-Powered-By"));
+        assert!(findings[1].title.contains("SQL injection"));
+        assert_eq!(findings[1].severity, Severity::High);
+    }
+
+    /// Verify that `parse_nikto_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_nikto_output_empty() {
+        let findings = parse_nikto_output("", "https://example.com");
+        assert!(findings.is_empty());
     }
 }

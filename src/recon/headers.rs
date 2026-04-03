@@ -412,3 +412,110 @@ fn has_csp_frame_ancestors(headers: &reqwest::header::HeaderMap) -> bool {
         .and_then(|v| v.to_str().ok())
         .is_some_and(|csp| csp.contains("frame-ancestors"))
 }
+
+#[cfg(test)]
+mod tests {
+    /// Unit tests for HTTP security header analysis helpers.
+    use super::*;
+    use reqwest::header::HeaderMap;
+
+    /// Verify `extract_max_age` parses a valid max-age value from an HSTS header.
+    #[test]
+    fn test_extract_max_age_valid() {
+        // Arrange
+        let hsts = "max-age=31536000";
+
+        // Act
+        let result = extract_max_age(hsts);
+
+        // Assert
+        assert_eq!(result, Some(31_536_000));
+    }
+
+    /// Verify `extract_max_age` handles extra directives alongside max-age.
+    #[test]
+    fn test_extract_max_age_with_extra_directives() {
+        // Arrange
+        let hsts = "max-age=63072000; includeSubDomains; preload";
+
+        // Act
+        let result = extract_max_age(hsts);
+
+        // Assert
+        assert_eq!(result, Some(63_072_000));
+    }
+
+    /// Verify `extract_max_age` returns `None` for an invalid (non-numeric) max-age.
+    #[test]
+    fn test_extract_max_age_invalid() {
+        // Arrange
+        let hsts = "max-age=abc";
+
+        // Act
+        let result = extract_max_age(hsts);
+
+        // Assert
+        assert_eq!(result, None);
+    }
+
+    /// Verify `extract_max_age` returns `None` when max-age is absent from the value.
+    #[test]
+    fn test_extract_max_age_missing() {
+        // Arrange
+        let hsts = "includeSubDomains; preload";
+
+        // Act
+        let result = extract_max_age(hsts);
+
+        // Assert
+        assert_eq!(result, None);
+    }
+
+    /// Verify `has_csp_frame_ancestors` returns true when CSP contains frame-ancestors.
+    #[test]
+    fn test_has_csp_frame_ancestors_present() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
+        // Arrange
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "content-security-policy",
+            "default-src 'self'; frame-ancestors 'none'".parse()?,
+        );
+
+        // Act
+        let result = has_csp_frame_ancestors(&headers);
+
+        // Assert
+        assert!(result);
+        Ok(())
+    }
+
+    /// Verify `has_csp_frame_ancestors` returns false when CSP lacks frame-ancestors.
+    #[test]
+    fn test_has_csp_frame_ancestors_absent() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
+        // Arrange
+        let mut headers = HeaderMap::new();
+        headers.insert("content-security-policy", "default-src 'self'; script-src 'self'".parse()?);
+
+        // Act
+        let result = has_csp_frame_ancestors(&headers);
+
+        // Assert
+        assert!(!result);
+        Ok(())
+    }
+
+    /// Verify `has_csp_frame_ancestors` returns false when no CSP header is present.
+    #[test]
+    fn test_has_csp_frame_ancestors_no_header() {
+        // Arrange
+        let headers = HeaderMap::new();
+
+        // Act
+        let result = has_csp_frame_ancestors(&headers);
+
+        // Assert
+        assert!(!result);
+    }
+}

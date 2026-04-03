@@ -42,10 +42,10 @@ impl ScanModule for SslyzeModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
 
-        let target_with_port = if ctx.target.port != 443 {
-            format!("{target}:{}", ctx.target.port)
-        } else {
+        let target_with_port = if ctx.target.port == 443 {
             target.to_string()
+        } else {
+            format!("{target}:{}", ctx.target.port)
         };
 
         let output = subprocess::run_tool(
@@ -55,12 +55,12 @@ impl ScanModule for SslyzeModule {
         )
         .await?;
 
-        parse_sslyze_output(&output.stdout, ctx.target.url.as_str())
+        Ok(parse_sslyze_output(&output.stdout, ctx.target.url.as_str()))
     }
 }
 
 /// Parse sslyze JSON output into findings.
-fn parse_sslyze_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_sslyze_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let json: serde_json::Value = match serde_json::from_str(output) {
@@ -159,7 +159,7 @@ fn parse_sslyze_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
         }
     }
 
-    Ok(findings)
+    findings
 }
 
 fn check_protocol(
@@ -250,7 +250,7 @@ fn check_certificate(
 }
 
 /// Fallback text parser for older sslyze versions or non-JSON output.
-fn parse_sslyze_text(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_sslyze_text(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     for line in output.lines() {
@@ -313,5 +313,55 @@ fn parse_sslyze_text(output: &str, target_url: &str) -> Result<Vec<Finding>> {
         }
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for sslyze output parser (JSON and text fallback).
+
+    /// Verify that `parse_sslyze_output` correctly extracts findings from
+    /// sslyze JSON output including deprecated protocols and Heartbleed.
+    #[test]
+    fn test_parse_sslyze_output() {
+        let json = r#"{
+            "server_scan_results": [{
+                "scan_result": {
+                    "tls_1_0_cipher_suites": {
+                        "result": {
+                            "accepted_cipher_suites": [
+                                {"cipher_suite": {"name": "TLS_RSA_WITH_AES_128_CBC_SHA"}}
+                            ]
+                        }
+                    },
+                    "heartbleed": {
+                        "result": {
+                            "is_vulnerable_to_heartbleed": true
+                        }
+                    }
+                }
+            }]
+        }"#;
+
+        let findings = parse_sslyze_output(json, "https://example.com");
+        assert!(findings.len() >= 2);
+        let heartbleed = findings.iter().find(|f| f.title.contains("Heartbleed"));
+        assert!(heartbleed.is_some());
+        assert_eq!(
+            heartbleed.expect("heartbleed finding should exist").severity,
+            Severity::Critical
+        );
+        let tls10 = findings.iter().find(|f| f.title.contains("TLS 1.0"));
+        assert!(tls10.is_some());
+    }
+
+    /// Verify that `parse_sslyze_output` handles empty input gracefully
+    /// by falling through to the text parser, which also returns empty.
+    #[test]
+    fn test_parse_sslyze_output_empty() {
+        let findings = parse_sslyze_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

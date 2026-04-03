@@ -53,31 +53,28 @@ impl ScanModule for RateLimitModule {
                     .send()
                     .await;
 
-                match resp {
-                    Ok(r) => {
-                        request_count += 1;
-                        let status = r.status();
-                        if status.as_u16() == 429 || status.as_u16() == 403 {
-                            blocked = true;
-                            break;
-                        }
-                        // Check for CAPTCHA or lockout indicators
-                        let body = r.text().await.unwrap_or_default();
-                        let lower = body.to_lowercase();
-                        if lower.contains("captcha")
-                            || lower.contains("rate limit")
-                            || lower.contains("too many")
-                            || lower.contains("locked")
-                            || lower.contains("try again later")
-                        {
-                            blocked = true;
-                            break;
-                        }
-                    }
-                    Err(_) => {
+                if let Ok(r) = resp {
+                    request_count += 1;
+                    let status = r.status();
+                    if status.as_u16() == 429 || status.as_u16() == 403 {
                         blocked = true;
                         break;
                     }
+                    // Check for CAPTCHA or lockout indicators
+                    let body = r.text().await.unwrap_or_default();
+                    let lower = body.to_lowercase();
+                    if lower.contains("captcha")
+                        || lower.contains("rate limit")
+                        || lower.contains("too many")
+                        || lower.contains("locked")
+                        || lower.contains("try again later")
+                    {
+                        blocked = true;
+                        break;
+                    }
+                } else {
+                    blocked = true;
+                    break;
                 }
             }
 
@@ -116,3 +113,47 @@ const LOGIN_PATHS: &[&str] = &[
     "/api/v1/auth/login",
     "/account/login",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the rate limit testing module's constant data integrity.
+
+    /// Verify that `LOGIN_PATHS` is non-empty and contains well-known authentication
+    /// endpoint paths.
+    #[test]
+    fn test_login_paths_nonempty_and_contains_known_endpoints() {
+        // Arrange & Assert: minimum count
+        assert!(
+            LOGIN_PATHS.len() >= 5,
+            "Expected at least 5 login paths, found {}",
+            LOGIN_PATHS.len()
+        );
+
+        // Assert: well-known paths are present
+        assert!(LOGIN_PATHS.contains(&"/login"));
+        assert!(LOGIN_PATHS.contains(&"/wp-login.php"));
+        assert!(LOGIN_PATHS.contains(&"/admin/login"));
+    }
+
+    /// Verify that all login paths start with a forward slash, are non-empty,
+    /// and contain no whitespace, ensuring well-formed URL path segments.
+    #[test]
+    fn test_login_paths_are_well_formed() {
+        for path in LOGIN_PATHS {
+            assert!(!path.is_empty(), "Login paths should not be empty");
+            assert!(path.starts_with('/'), "Login path '{path}' should start with '/'");
+            assert!(!path.contains(' '), "Login path '{path}' should not contain spaces");
+        }
+    }
+
+    /// Verify that there are no duplicate entries in `LOGIN_PATHS`.
+    #[test]
+    fn test_login_paths_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for path in LOGIN_PATHS {
+            assert!(seen.insert(path), "Duplicate login path found: '{path}'");
+        }
+    }
+}

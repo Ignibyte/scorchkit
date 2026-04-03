@@ -49,12 +49,12 @@ impl ScanModule for NmapModule {
         )
         .await?;
 
-        parse_nmap_xml(&output.stdout, ctx.target.url.as_str())
+        Ok(parse_nmap_xml(&output.stdout, ctx.target.url.as_str()))
     }
 }
 
 /// Parse nmap XML output into findings.
-fn parse_nmap_xml(xml: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_nmap_xml(xml: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     // Parse <port> elements from the XML
@@ -65,8 +65,10 @@ fn parse_nmap_xml(xml: &str, target_url: &str) -> Result<Vec<Finding>> {
         }
 
         let port_id = extract_xml_attr(port_block, "portid").unwrap_or_default();
-        let protocol = extract_xml_attr(port_block, "protocol").unwrap_or("tcp".to_string());
-        let service_name = extract_xml_attr(port_block, "name").unwrap_or("unknown".to_string());
+        let protocol =
+            extract_xml_attr(port_block, "protocol").unwrap_or_else(|| "tcp".to_string());
+        let service_name =
+            extract_xml_attr(port_block, "name").unwrap_or_else(|| "unknown".to_string());
         let product = extract_xml_attr(port_block, "product").unwrap_or_default();
         let version = extract_xml_attr(port_block, "version").unwrap_or_default();
 
@@ -119,7 +121,7 @@ fn parse_nmap_xml(xml: &str, target_url: &str) -> Result<Vec<Finding>> {
         }
     }
 
-    Ok(findings)
+    findings
 }
 
 fn classify_port_severity(port: &str, service: &str) -> Severity {
@@ -138,7 +140,7 @@ fn classify_port_severity(port: &str, service: &str) -> Severity {
     // Common web ports are informational
     match port {
         "80" | "443" | "8080" | "8443" => Severity::Info,
-        "22" => Severity::Low, // SSH is expected but worth noting
+        // SSH and other ports are worth noting
         _ => Severity::Low,
     }
 }
@@ -186,4 +188,41 @@ fn extract_xml_attr(xml: &str, attr_name: &str) -> Option<String> {
     let start = xml.find(&pattern)? + pattern.len();
     let end = xml[start..].find('"')? + start;
     Some(xml[start..end].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for nmap XML output parser.
+
+    /// Verify that `parse_nmap_xml` correctly extracts open ports and service
+    /// information from well-formed nmap XML output.
+    #[test]
+    fn test_parse_nmap_xml() {
+        let xml = r#"<?xml version="1.0"?>
+<nmaprun>
+<host><ports>
+<port protocol="tcp" portid="80"><state state="open"/><service name="http" product="nginx" version="1.18.0"/></port>
+<port protocol="tcp" portid="22"><state state="open"/><service name="ssh" product="OpenSSH" version="8.9p1"/></port>
+<port protocol="tcp" portid="3306"><state state="open"/><service name="mysql" product="MySQL" version="8.0.30"/></port>
+<port protocol="tcp" portid="9999"><state state="closed"/><service name="abyss"/></port>
+</ports></host>
+</nmaprun>"#;
+
+        let findings = parse_nmap_xml(xml, "https://example.com");
+        // 3 open ports (closed port excluded)
+        assert_eq!(findings.len(), 3);
+        assert!(findings[0].title.contains("80"));
+        assert_eq!(findings[0].severity, Severity::Info);
+        assert!(findings[2].title.contains("3306"));
+        assert_eq!(findings[2].severity, Severity::High); // mysql
+    }
+
+    /// Verify that `parse_nmap_xml` handles empty input gracefully.
+    #[test]
+    fn test_parse_nmap_xml_empty() {
+        let findings = parse_nmap_xml("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

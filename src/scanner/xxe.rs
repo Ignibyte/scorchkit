@@ -64,9 +64,8 @@ async fn test_xxe(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -> 
         .send()
         .await;
 
-    let response = match response {
-        Ok(r) => r,
-        Err(_) => return Ok(()), // Endpoint doesn't accept requests
+    let Ok(response) = response else {
+        return Ok(()); // Endpoint doesn't accept requests
     };
 
     let status = response.status();
@@ -89,9 +88,8 @@ async fn test_xxe(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -> 
                 .send()
                 .await;
 
-            let resp = match resp {
-                Ok(r) => r,
-                Err(_) => continue,
+            let Ok(resp) = resp else {
+                continue;
             };
 
             let resp_status = resp.status();

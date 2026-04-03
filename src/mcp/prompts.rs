@@ -551,4 +551,144 @@ mod tests {
         let chains = correlate_attack_chains(&findings);
         assert!(chains.is_empty());
     }
+
+    /// Verify SQL injection + open database port triggers the "Database
+    /// Compromise via SQL Injection" attack chain with critical severity.
+    #[test]
+    fn test_correlate_sqli_chain() {
+        // Arrange
+        let findings = vec![
+            CorrelationFinding {
+                id: "f1".to_string(),
+                module_id: "injection".to_string(),
+                title: "SQL Injection in login form".to_string(),
+                severity: "high".to_string(),
+            },
+            CorrelationFinding {
+                id: "f2".to_string(),
+                module_id: "nmap".to_string(),
+                title: "Open port 3306 (MySQL)".to_string(),
+                severity: "info".to_string(),
+            },
+        ];
+
+        // Act
+        let chains = correlate_attack_chains(&findings);
+
+        // Assert
+        assert!(!chains.is_empty(), "should produce at least one chain");
+        let sqli_chain = chains
+            .iter()
+            .find(|c| c.name.contains("Database Compromise"))
+            .expect("should contain Database Compromise chain");
+        assert_eq!(sqli_chain.severity, "critical");
+        assert_eq!(sqli_chain.remediation_priority, "immediate");
+        assert!(sqli_chain.findings.contains(&"f1".to_string()));
+        assert!(sqli_chain.findings.contains(&"f2".to_string()));
+    }
+
+    /// Verify SSRF + cloud metadata findings trigger the "Cloud Credential
+    /// Theft via SSRF" attack chain with critical severity.
+    #[test]
+    fn test_correlate_ssrf_chain() {
+        // Arrange
+        let findings = vec![
+            CorrelationFinding {
+                id: "f1".to_string(),
+                module_id: "ssrf".to_string(),
+                title: "SSRF via URL parameter".to_string(),
+                severity: "high".to_string(),
+            },
+            CorrelationFinding {
+                id: "f2".to_string(),
+                module_id: "headers".to_string(),
+                title: "Cloud metadata endpoint accessible".to_string(),
+                severity: "medium".to_string(),
+            },
+        ];
+
+        // Act
+        let chains = correlate_attack_chains(&findings);
+
+        // Assert
+        assert!(!chains.is_empty(), "should produce at least one chain");
+        let ssrf_chain = chains
+            .iter()
+            .find(|c| c.name.contains("Cloud Credential Theft"))
+            .expect("should contain Cloud Credential Theft chain");
+        assert_eq!(ssrf_chain.severity, "critical");
+        assert_eq!(ssrf_chain.remediation_priority, "immediate");
+        assert!(ssrf_chain.findings.contains(&"f1".to_string()));
+        assert!(ssrf_chain.findings.contains(&"f2".to_string()));
+    }
+
+    /// Verify IDOR + sensitive data exposure findings trigger the "Data
+    /// Breach via IDOR" attack chain with high severity.
+    #[test]
+    fn test_correlate_idor_chain() {
+        // Arrange
+        let findings = vec![
+            CorrelationFinding {
+                id: "f1".to_string(),
+                module_id: "idor".to_string(),
+                title: "IDOR on user profile endpoint".to_string(),
+                severity: "high".to_string(),
+            },
+            CorrelationFinding {
+                id: "f2".to_string(),
+                module_id: "sensitive".to_string(),
+                title: "Sensitive data exposure in API response".to_string(),
+                severity: "medium".to_string(),
+            },
+        ];
+
+        // Act
+        let chains = correlate_attack_chains(&findings);
+
+        // Assert
+        assert!(!chains.is_empty(), "should produce at least one chain");
+        let idor_chain = chains
+            .iter()
+            .find(|c| c.name.contains("Data Breach via IDOR"))
+            .expect("should contain Data Breach via IDOR chain");
+        assert_eq!(idor_chain.severity, "high");
+        assert_eq!(idor_chain.remediation_priority, "high");
+        assert!(idor_chain.findings.contains(&"f1".to_string()));
+        assert!(idor_chain.findings.contains(&"f2".to_string()));
+    }
+
+    /// Verify exposed secrets trigger the "Credential Compromise via
+    /// Exposed Secrets" attack chain with critical severity.
+    #[test]
+    fn test_correlate_credential_chain() {
+        // Arrange
+        let findings = vec![
+            CorrelationFinding {
+                id: "f1".to_string(),
+                module_id: "trufflehog".to_string(),
+                title: "Exposed API key in source code".to_string(),
+                severity: "critical".to_string(),
+            },
+            CorrelationFinding {
+                id: "f2".to_string(),
+                module_id: "sensitive".to_string(),
+                title: "Hardcoded credential in config".to_string(),
+                severity: "high".to_string(),
+            },
+        ];
+
+        // Act
+        let chains = correlate_attack_chains(&findings);
+
+        // Assert
+        assert!(!chains.is_empty(), "should produce at least one chain");
+        let cred_chain = chains
+            .iter()
+            .find(|c| c.name.contains("Credential Compromise"))
+            .expect("should contain Credential Compromise chain");
+        assert_eq!(cred_chain.severity, "critical");
+        assert_eq!(cred_chain.remediation_priority, "immediate");
+        assert!(cred_chain.findings.contains(&"f1".to_string()));
+        assert!(cred_chain.findings.contains(&"f2".to_string()));
+    }
 }

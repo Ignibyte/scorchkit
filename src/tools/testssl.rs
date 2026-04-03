@@ -44,11 +44,11 @@ impl ScanModule for TestsslModule {
         )
         .await?;
 
-        parse_testssl_output(&output.stdout, ctx.target.url.as_str())
+        Ok(parse_testssl_output(&output.stdout, ctx.target.url.as_str()))
     }
 }
 
-fn parse_testssl_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_testssl_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     // testssl.sh --jsonfile outputs JSON-lines
@@ -81,5 +81,36 @@ fn parse_testssl_output(output: &str, target_url: &str) -> Result<Vec<Finding>> 
         );
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for testssl.sh JSON-lines output parser.
+
+    /// Verify that `parse_testssl_output` correctly extracts findings from
+    /// testssl.sh JSON-lines output with severity classification.
+    #[test]
+    fn test_parse_testssl_output() {
+        let output = r#"{"id":"heartbleed","severity":"CRITICAL","finding":"VULNERABLE -- serverass responded with 65535 bytes"}
+{"id":"ccs-injection","severity":"HIGH","finding":"VULNERABLE (NOT ok)"}
+{"id":"secure_renego","severity":"OK","finding":"Not vulnerable"}
+{"id":"cert_chain","severity":"INFO","finding":"Certificate chain ok"}"#;
+
+        let findings = parse_testssl_output(output, "https://example.com");
+        // OK and INFO are skipped
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert!(findings[0].title.contains("heartbleed"));
+        assert_eq!(findings[1].severity, Severity::High);
+    }
+
+    /// Verify that `parse_testssl_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_testssl_output_empty() {
+        let findings = parse_testssl_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

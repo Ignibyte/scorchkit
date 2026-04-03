@@ -23,7 +23,7 @@ pub struct AppConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DatabaseConfig {
-    /// PostgreSQL connection URL (e.g., `postgresql://user:pass@localhost/scorchkit`).
+    /// `PostgreSQL` connection URL (e.g., `postgresql://user:pass@localhost/scorchkit`).
     /// If `None`, storage features are disabled.
     pub url: Option<String>,
     /// Maximum number of connections in the pool.
@@ -59,7 +59,7 @@ pub struct ScanConfig {
     pub rate_limit: u32,
     /// Scan profile: quick, standard, thorough.
     pub profile: String,
-    /// HTTP/HTTPS proxy URL (e.g., http://127.0.0.1:8080 for Burp).
+    /// HTTP/HTTPS proxy URL (e.g., <http://127.0.0.1:8080> for Burp).
     pub proxy: Option<String>,
     /// Scope: only scan URLs matching these patterns (glob). Empty = target domain only.
     #[serde(default)]
@@ -150,6 +150,7 @@ pub struct ToolsConfig {
 
 impl ToolsConfig {
     /// Get the binary path for a tool, falling back to the tool name (PATH lookup).
+    #[must_use]
     pub fn get_path(&self, tool: &str) -> String {
         let override_path = match tool {
             "nmap" => &self.nmap,
@@ -222,6 +223,11 @@ impl Default for ReportConfig {
 }
 
 impl AppConfig {
+    /// Load application configuration from an optional TOML file path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the config file cannot be read or contains invalid TOML.
     pub fn load(path: Option<&std::path::Path>) -> crate::engine::error::Result<Self> {
         if let Some(path) = path {
             if path.exists() {
@@ -243,6 +249,11 @@ impl AppConfig {
         Ok(Self::default())
     }
 
+    /// Serialize the default configuration as a TOML string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization to TOML fails.
     pub fn default_toml() -> crate::engine::error::Result<String> {
         toml::to_string_pretty(&Self::default()).map_err(|e| {
             crate::engine::error::ScorchError::Config(format!("failed to serialize config: {e}"))

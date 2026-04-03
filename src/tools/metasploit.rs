@@ -54,11 +54,11 @@ impl ScanModule for MetasploitModule {
         )
         .await?;
 
-        parse_msf_output(&output.stdout, ctx.target.url.as_str())
+        Ok(parse_msf_output(&output.stdout, ctx.target.url.as_str()))
     }
 }
 
-fn parse_msf_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_msf_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     for line in output.lines() {
@@ -101,5 +101,41 @@ fn parse_msf_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
         }
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for Metasploit console output parser.
+
+    /// Verify that `parse_msf_output` correctly extracts positive results
+    /// and informational lines from Metasploit output.
+    #[test]
+    fn test_parse_msf_output() {
+        let output = "\
+[*] Detected Apache/2.4.49 on port 80\n\
+[+] Found vulnerable endpoint\n\
+[-] No session created\n\
+[*] Scanned 1 host\n";
+
+        let findings = parse_msf_output(output, "https://example.com");
+        assert_eq!(findings.len(), 2);
+        // [+] line -> Medium (contains "vulnerable" -> Critical)
+        let positive = findings.iter().find(|f| f.title.contains("vulnerable"));
+        assert!(positive.is_some());
+        assert_eq!(positive.expect("positive finding should exist").severity, Severity::Critical);
+        // [*] Detected -> Info
+        let info = findings.iter().find(|f| f.title.contains("Detected"));
+        assert!(info.is_some());
+        assert_eq!(info.expect("info finding should exist").severity, Severity::Info);
+    }
+
+    /// Verify that `parse_msf_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_msf_output_empty() {
+        let findings = parse_msf_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

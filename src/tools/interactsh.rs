@@ -262,3 +262,62 @@ const fn remediation_for(category: BlindCategory) -> &'static str {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for interactsh OOB interaction correlation and finding builder.
+
+    /// Verify that `build_findings` correctly correlates OOB interactions
+    /// with payloads and produces findings with proper severity and CWE.
+    #[test]
+    fn test_build_findings() {
+        let payloads = vec![
+            BlindPayload {
+                correlation_id: "ssrf-test".to_string(),
+                category: BlindCategory::Ssrf,
+                payload: "http://ssrf-test.oob.example.com".to_string(),
+                description: "Blind SSRF via url parameter".to_string(),
+            },
+            BlindPayload {
+                correlation_id: "rce-test".to_string(),
+                category: BlindCategory::Rce,
+                payload: "curl rce-test.oob.example.com".to_string(),
+                description: "Blind RCE via cmd parameter".to_string(),
+            },
+        ];
+
+        let interactions = vec![OobInteraction {
+            protocol: "http".to_string(),
+            unique_id: "oob.example.com".to_string(),
+            full_id: "ssrf-test.oob.example.com".to_string(),
+            raw_request: None,
+            remote_address: Some("10.0.0.1".to_string()),
+            timestamp: Some("2025-01-01T00:00:00Z".to_string()),
+        }];
+
+        let correlation_ids: Vec<String> =
+            payloads.iter().map(|p| p.correlation_id.clone()).collect();
+
+        let findings = build_findings(
+            "https://example.com?url=test",
+            &payloads,
+            &interactions,
+            &correlation_ids,
+        );
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert_eq!(findings[0].cwe_id, Some(918));
+        assert!(findings[0].title.contains("SSRF"));
+    }
+
+    /// Verify that `build_findings` returns no findings when there are
+    /// no correlated interactions.
+    #[test]
+    fn test_build_findings_empty() {
+        let findings = build_findings("https://example.com", &[], &[], &[]);
+        assert!(findings.is_empty());
+    }
+}
