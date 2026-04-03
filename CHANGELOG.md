@@ -16,8 +16,12 @@ All notable changes to ScorchKit will be documented in this file.
 - **Mass assignment scanner** (`mass_assignment`) — Detects over-posting via 12 privileged field injections (`role`, `isAdmin`, `price`, `permissions`, etc.) in JSON POST bodies. Compares against baseline to avoid false positives. CWE-915, OWASP A04:2021. `src/scanner/mass_assignment.rs` with 4 tests (#75)
 - **Clickjacking scanner** (`clickjacking`) — Active test for missing frame protection: flags only when BOTH `X-Frame-Options` AND CSP `frame-ancestors` are absent. Only checks HTML pages. CWE-1021, OWASP A05:2021. `src/scanner/clickjacking.rs` with 5 tests (#76)
 - **DOM XSS scanner** (`dom_xss`) — Static JavaScript source/sink analysis: 12 DOM sources (`location.hash`, `document.referrer`, etc.) and 15 sinks (`innerHTML`, `eval`, `document.write`, etc.). Flags source+sink combinations and orphan critical sinks. CWE-79, OWASP A07:2021. `src/scanner/dom_xss.rs` with 5 tests (#76)
-- Total scanner modules: 35 built-in (was 24)
-- Total tests: 402 default (was 345), 538 MCP (was 481)
+- **JS file analysis recon** (`js_analysis`) — Extracts secrets (17 patterns: AWS keys, Stripe, GitHub/GitLab tokens, private keys), API endpoints (13 patterns), and source map references from inline and external JavaScript files. CWE-540/CWE-615. `src/recon/js_analysis.rs` with 6 tests (#77)
+- **CNAME takeover + cert transparency recon** (`cname_takeover`) — Detects dangling CNAME records via 16 service fingerprints (GitHub Pages, Heroku, S3, Shopify, etc.) and enumerates subdomains via crt.sh certificate transparency logs. CWE-923/CWE-200. `src/recon/cname_takeover.rs` with 4 tests (#78)
+- **Virtual host discovery recon** (`vhost`) — Brute-forces Host header with 36 common prefixes (admin, api, staging, etc.) and detects unique vhosts via response differential analysis. `src/recon/vhost.rs` with 2 tests (#78)
+- **Cloud metadata + bucket enumeration recon** (`cloud`) — Detects cloud providers from 17 response header indicators (AWS, GCP, Azure, Cloudflare, etc.) and enumerates S3 buckets with 19 domain-derived name suffixes. CWE-200/CWE-284. `src/recon/cloud.rs` with 5 tests (#79)
+- Total scanner modules: 35 built-in (was 24). Total recon modules: 10 (was 6).
+- Total tests: 419 default (was 345), 555 MCP (was 481)
 
 ## [0.29.0] - 2026-03-30
 
