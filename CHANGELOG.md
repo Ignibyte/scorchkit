@@ -11,8 +11,9 @@ All notable changes to ScorchKit will be documented in this file.
 - **Host header injection scanner** (`host_header`) — Detects host header poisoning via 5 override headers (X-Forwarded-Host, X-Host, X-Forwarded-Server, X-Original-URL, X-Rewrite-URL). Checks response body for reflected canary and HTML attributes (href, src, action) for cache poisoning. CWE-644, OWASP A03:2021/A05:2021. `src/scanner/host_header.rs` with 5 tests (#72)
 - **NoSQL injection scanner** (`nosql`) — Detects MongoDB/CouchDB/Redis injection via 12 payloads: `$gt`, `$ne`, `$regex`, `$exists` operators, bracket notation, `$where` JavaScript injection, boolean-based blind. Error-based detection (21 patterns), 500 status detection, response size differential. JSON body injection for auth bypass. CWE-943, OWASP A03:2021. `src/scanner/nosql.rs` with 5 tests (#73)
 - **LDAP injection scanner** (`ldap`) — Detects LDAP filter injection via 11 payloads: wildcard, filter-closing, OR injection, null byte, escaped metacharacters. Error-based detection (24 patterns) covering PHP, Java, Python, Active Directory LDAP implementations. CWE-90, OWASP A03:2021. `src/scanner/ldap.rs` with 5 tests (#73)
-- Total scanner modules: 30 built-in (was 24)
-- Total tests: 379 default (was 345), 515 MCP (was 481)
+- **HTTP request smuggling scanner** (`smuggling`) — Heuristic-based CL.TE/TE.CL/TE.TE risk detection via proxy indicator analysis (17 CDN/proxy headers), `Transfer-Encoding` obfuscation variant testing (9 variants), and `Content-Length` handling inconsistency checks. Reports risk indicators with evidence strength-based severity since `reqwest` normalizes TE headers. CWE-444, OWASP A05:2021. `src/scanner/smuggling.rs` with 5 tests (#74)
+- Total scanner modules: 31 built-in (was 24)
+- Total tests: 384 default (was 345), 520 MCP (was 481)
 
 ## [0.29.0] - 2026-03-30
 

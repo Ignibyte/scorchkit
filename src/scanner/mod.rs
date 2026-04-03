@@ -19,6 +19,7 @@ mod path_traversal;
 mod ratelimit;
 mod redirect;
 mod sensitive;
+mod smuggling;
 mod ssl;
 mod ssrf;
 mod ssti;
@@ -65,5 +66,6 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(host_header::HostHeaderModule),
         Box::new(nosql::NosqlModule),
         Box::new(ldap::LdapModule),
+        Box::new(smuggling::SmugglingModule),
     ]
 }
