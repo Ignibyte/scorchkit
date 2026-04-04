@@ -38,6 +38,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
             profile,
             proxy,
             min_confidence,
+            insecure,
             scope,
             exclude,
             project,
@@ -48,6 +49,9 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 let mut c = (*config).clone();
                 if let Some(ref p) = proxy {
                     c.scan.proxy = Some(p.clone());
+                }
+                if insecure {
+                    c.scan.insecure = true;
                 }
                 if let Some(ref s) = scope {
                     c.scan.scope_include = vec![s.clone()];
@@ -314,8 +318,8 @@ async fn run_finding_command(
             crate::cli::finding::list(&pool, &project, severity.as_deref(), status.as_deref()).await
         }
         args::FindingCommands::Show { id } => crate::cli::finding::show(&pool, &id).await,
-        args::FindingCommands::Status { id, status } => {
-            crate::cli::finding::update_status(&pool, &id, &status).await
+        args::FindingCommands::Status { id, status, note } => {
+            crate::cli::finding::update_status(&pool, &id, &status, note.as_deref()).await
         }
     }
 }
@@ -923,7 +927,7 @@ fn build_http_client(config: &AppConfig) -> Result<reqwest::Client> {
         .timeout(std::time::Duration::from_secs(config.scan.timeout_seconds))
         .default_headers(headers)
         .cookie_store(true)
-        .danger_accept_invalid_certs(false);
+        .danger_accept_invalid_certs(config.scan.insecure);
 
     if config.scan.follow_redirects {
         builder = builder.redirect(reqwest::redirect::Policy::limited(config.scan.max_redirects));

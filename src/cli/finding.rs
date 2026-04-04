@@ -119,6 +119,12 @@ pub async fn show(pool: &PgPool, id_str: &str) -> Result<()> {
         println!("     CWE: CWE-{cwe}");
     }
 
+    if let Some(ref note) = finding.status_note {
+        println!();
+        println!("  {}", "Status Note".bold());
+        println!("  {note}");
+    }
+
     println!();
     Ok(())
 }
@@ -129,18 +135,23 @@ pub async fn show(pool: &PgPool, id_str: &str) -> Result<()> {
 ///
 /// Returns an error if the finding UUID is invalid, the status string
 /// is not a valid lifecycle status, or the database query fails.
-pub async fn update_status(pool: &PgPool, id_str: &str, status_str: &str) -> Result<()> {
+pub async fn update_status(
+    pool: &PgPool,
+    id_str: &str,
+    status_str: &str,
+    note: Option<&str>,
+) -> Result<()> {
     let id = Uuid::parse_str(id_str)
         .map_err(|e| ScorchError::Config(format!("invalid finding UUID '{id_str}': {e}")))?;
 
     let status = VulnStatus::from_db(status_str).ok_or_else(|| {
         ScorchError::Config(format!(
             "invalid status '{status_str}'. \
-             Valid: new, acknowledged, false_positive, remediated, verified"
+             Valid: new, acknowledged, false_positive, wont_fix, accepted_risk, remediated, verified"
         ))
     })?;
 
-    let updated = findings::update_finding_status(pool, id, status).await?;
+    let updated = findings::update_finding_status(pool, id, status, note).await?;
 
     if updated {
         println!(
@@ -148,6 +159,9 @@ pub async fn update_status(pool: &PgPool, id_str: &str, status_str: &str) -> Res
             "success:".green().bold(),
             colorize_status(status.as_db_str()),
         );
+        if let Some(n) = note {
+            println!("  Note: {n}");
+        }
     } else {
         println!("{} Finding not found.", "warning:".yellow().bold());
     }

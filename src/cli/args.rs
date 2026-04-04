@@ -75,6 +75,10 @@ pub enum Commands {
         #[arg(long)]
         scope: Option<String>,
 
+        /// Skip TLS certificate verification (for self-signed certs, local dev)
+        #[arg(long, short = 'k')]
+        insecure: bool,
+
         /// Exclude URLs matching pattern from scanning
         #[arg(long)]
         exclude: Option<String>,
@@ -351,8 +355,12 @@ pub enum FindingCommands {
         /// Finding UUID
         id: String,
 
-        /// New status (new, acknowledged, `false_positive`, remediated, verified)
+        /// New status (`new`, `acknowledged`, `false_positive`, `wont_fix`, `accepted_risk`, `remediated`, `verified`)
         status: String,
+
+        /// Rationale for the status change (e.g., why it's a false positive)
+        #[arg(short, long)]
+        note: Option<String>,
     },
 }
 

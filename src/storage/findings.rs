@@ -107,7 +107,7 @@ pub async fn save_findings(
     Ok(new_count)
 }
 
-/// Update the lifecycle status of a tracked finding.
+/// Update the lifecycle status of a tracked finding with an optional note.
 ///
 /// # Errors
 ///
@@ -116,13 +116,16 @@ pub async fn update_finding_status(
     pool: &PgPool,
     finding_id: Uuid,
     status: VulnStatus,
+    note: Option<&str>,
 ) -> Result<bool> {
-    let result = sqlx::query("UPDATE tracked_findings SET status = $2 WHERE id = $1")
-        .bind(finding_id)
-        .bind(status.as_db_str())
-        .execute(pool)
-        .await
-        .map_err(|e| ScorchError::Database(format!("update finding status: {e}")))?;
+    let result =
+        sqlx::query("UPDATE tracked_findings SET status = $2, status_note = $3 WHERE id = $1")
+            .bind(finding_id)
+            .bind(status.as_db_str())
+            .bind(note)
+            .execute(pool)
+            .await
+            .map_err(|e| ScorchError::Database(format!("update finding status: {e}")))?;
 
     Ok(result.rows_affected() > 0)
 }

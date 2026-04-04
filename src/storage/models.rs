@@ -115,6 +115,8 @@ pub struct TrackedFinding {
     pub seen_count: i32,
     /// Current lifecycle status.
     pub status: String,
+    /// Rationale for the current status (e.g., why it's `false_positive` or `wont_fix`).
+    pub status_note: Option<String>,
     /// Timestamp of initial detection.
     pub found_at: DateTime<Utc>,
 }
@@ -132,6 +134,10 @@ pub enum VulnStatus {
     Acknowledged,
     /// Determined to be a false positive.
     FalsePositive,
+    /// Known issue, deliberately not fixing (with rationale).
+    WontFix,
+    /// Risk accepted — real issue but mitigated by other controls.
+    AcceptedRisk,
     /// Fix has been applied.
     Remediated,
     /// Fix verified by a subsequent scan.
@@ -148,6 +154,8 @@ impl VulnStatus {
             "new" => Some(Self::New),
             "acknowledged" => Some(Self::Acknowledged),
             "false_positive" => Some(Self::FalsePositive),
+            "wont_fix" => Some(Self::WontFix),
+            "accepted_risk" => Some(Self::AcceptedRisk),
             "remediated" => Some(Self::Remediated),
             "verified" => Some(Self::Verified),
             _ => None,
@@ -161,6 +169,8 @@ impl VulnStatus {
             Self::New => "new",
             Self::Acknowledged => "acknowledged",
             Self::FalsePositive => "false_positive",
+            Self::WontFix => "wont_fix",
+            Self::AcceptedRisk => "accepted_risk",
             Self::Remediated => "remediated",
             Self::Verified => "verified",
         }
@@ -212,6 +222,8 @@ mod tests {
             VulnStatus::New,
             VulnStatus::Acknowledged,
             VulnStatus::FalsePositive,
+            VulnStatus::WontFix,
+            VulnStatus::AcceptedRisk,
             VulnStatus::Remediated,
             VulnStatus::Verified,
         ];
