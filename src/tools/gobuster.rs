@@ -48,18 +48,14 @@ impl ScanModule for GobusterModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let url = ctx.target.url.as_str();
 
+        let wordlist = ctx.config.wordlists.directory.as_deref().map_or_else(
+            || "/usr/share/wordlists/dirb/common.txt".to_string(),
+            |p| p.to_string_lossy().into_owned(),
+        );
+
         let output = subprocess::run_tool(
             "gobuster",
-            &[
-                "dir",
-                "-u",
-                url,
-                "-w",
-                "/usr/share/wordlists/dirb/common.txt",
-                "-q",
-                "--no-error",
-                "--no-color",
-            ],
+            &["dir", "-u", url, "-w", &wordlist, "-q", "--no-error", "--no-color"],
             Duration::from_secs(300),
         )
         .await?;

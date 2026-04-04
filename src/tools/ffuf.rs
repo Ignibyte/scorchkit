@@ -37,13 +37,18 @@ impl ScanModule for FfufModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = format!("{}/FUZZ", ctx.target.base_url());
 
+        let wordlist = ctx.config.wordlists.directory.as_deref().map_or_else(
+            || "/usr/share/wordlists/dirb/common.txt".to_string(),
+            |p| p.to_string_lossy().into_owned(),
+        );
+
         let output = subprocess::run_tool(
             "ffuf",
             &[
                 "-u",
                 &target,
                 "-w",
-                "/usr/share/wordlists/dirb/common.txt",
+                &wordlist,
                 "-mc",
                 "200,301,302,403",
                 "-fc",

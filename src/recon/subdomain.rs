@@ -39,7 +39,18 @@ impl ScanModule for SubdomainModule {
         let mut findings = Vec::new();
         let mut discovered: Vec<String> = Vec::new();
 
-        for prefix in SUBDOMAIN_WORDLIST {
+        // Use custom wordlist from config, or fall back to built-in
+        let custom_words = ctx
+            .config
+            .wordlists
+            .subdomain
+            .as_deref()
+            .and_then(|p| crate::config::load_wordlist(p).ok());
+        let default_words: Vec<String> =
+            SUBDOMAIN_WORDLIST.iter().map(|&s| String::from(s)).collect();
+        let words = custom_words.as_ref().unwrap_or(&default_words);
+
+        for prefix in words {
             let subdomain = format!("{prefix}.{domain}");
 
             // Use tokio's DNS resolution

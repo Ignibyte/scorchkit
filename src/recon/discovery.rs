@@ -83,6 +83,37 @@ impl ScanModule for DiscoveryModule {
             }
         }
 
+        // Check additional paths from custom wordlist if configured
+        if let Some(ref wordlist_path) = ctx.config.wordlists.directory {
+            if let Ok(extra_paths) = crate::config::load_wordlist(wordlist_path) {
+                for path in &extra_paths {
+                    let path =
+                        if path.starts_with('/') { path.clone() } else { format!("/{path}") };
+                    let full_url = format!("{base_url}{path}");
+                    let Ok(response) = ctx.http_client.get(&full_url).send().await else {
+                        continue;
+                    };
+                    let status = response.status();
+                    if status.is_success() {
+                        let body = response.text().await.unwrap_or_default();
+                        if !is_soft_404(&body, &path) {
+                            findings.push(
+                                Finding::new(
+                                    "discovery",
+                                    Severity::Low,
+                                    "Discovered Path",
+                                    format!("Path {path} is accessible"),
+                                    &full_url,
+                                )
+                                .with_evidence(format!("HTTP {} at {full_url}", status.as_u16()))
+                                .with_confidence(0.6),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // Check for directory listing on the root
         check_directory_listing(ctx, &base_url, &mut findings).await?;
 

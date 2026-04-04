@@ -56,10 +56,18 @@ impl ScanModule for VhostModule {
         let baseline_body = baseline.text().await.unwrap_or_default();
         let baseline_len = baseline_body.len();
 
-        // Test common vhost prefixes
+        // Test vhost prefixes: custom wordlist or built-in
         let mut discovered = Vec::new();
+        let custom_words = ctx
+            .config
+            .wordlists
+            .vhost
+            .as_deref()
+            .and_then(|p| crate::config::load_wordlist(p).ok());
+        let default_words: Vec<String> = VHOST_PREFIXES.iter().map(|&s| String::from(s)).collect();
+        let words = custom_words.as_ref().unwrap_or(&default_words);
 
-        for &prefix in VHOST_PREFIXES {
+        for prefix in words {
             let vhost = format!("{prefix}.{domain}");
 
             let Ok(response) = ctx.http_client.get(url).header("Host", &vhost).send().await else {
