@@ -27,6 +27,9 @@ pub struct Cli {
     pub output: Option<OutputFormat>,
 }
 
+// JUSTIFICATION: Run variant has many CLI flags — this is inherent to a feature-rich CLI;
+// boxing would add indirection for the most common code path
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Run all default scans against a target
@@ -62,6 +65,10 @@ pub enum Commands {
         /// Scan profile: quick, standard, thorough
         #[arg(long, default_value = "standard")]
         profile: String,
+
+        /// Scan template: web-app, api, graphql, wordpress, spa, network, full
+        #[arg(long)]
+        template: Option<String>,
 
         /// HTTP proxy URL (e.g., `http://127.0.0.1:8080` for Burp Suite)
         #[arg(long)]
@@ -284,6 +291,18 @@ pub enum ProjectCommands {
     Intelligence {
         /// Project name or UUID
         project: String,
+    },
+
+    /// List scan history for a project
+    Scans {
+        /// Project name or UUID
+        project: String,
+    },
+
+    /// Show details for a specific scan
+    ScanShow {
+        /// Scan UUID
+        id: String,
     },
 
     /// Manage project targets

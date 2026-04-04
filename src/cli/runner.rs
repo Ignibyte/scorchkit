@@ -36,6 +36,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
             analyze,
             plan,
             profile,
+            template,
             proxy,
             min_confidence,
             insecure,
@@ -126,6 +127,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                     analyze,
                     plan,
                     &profile,
+                    template.as_deref(),
                     min_confidence,
                     project.as_deref(),
                     database_url.as_deref(),
@@ -178,6 +180,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 None,
                 None,
                 None,
+                None,
             )
             .await
         }
@@ -194,6 +197,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 false,
                 false,
                 "standard",
+                None,
                 None,
                 None,
                 None,
@@ -286,6 +290,10 @@ async fn run_project_command(
         args::ProjectCommands::Target { command: target_cmd } => {
             run_target_command(&pool, target_cmd).await
         }
+        args::ProjectCommands::Scans { project } => {
+            crate::cli::project::list_scans(&pool, &project).await
+        }
+        args::ProjectCommands::ScanShow { id } => crate::cli::project::show_scan(&pool, &id).await,
     }
 }
 
@@ -462,6 +470,7 @@ async fn run_scan(
     analyze: bool,
     plan: bool,
     profile: &str,
+    template: Option<&str>,
     min_confidence: Option<f64>,
     project_name: Option<&str>,
     database_url: Option<&str>,
@@ -561,6 +570,15 @@ async fn run_scan(
             let planned_ids: Vec<String> =
                 scan_plan.recommendations.iter().map(|r| r.module_id.clone()).collect();
             orchestrator.filter_by_ids(&planned_ids);
+        }
+    } else if let Some(tmpl) = template {
+        if !orchestrator.apply_template(tmpl) {
+            return Err(ScorchError::Config(format!(
+                "unknown template '{tmpl}'. Available: web-app, api, graphql, wordpress, spa, network, full"
+            )));
+        }
+        if !quiet {
+            println!("{} Using template: {}", "Template:".cyan().bold(), tmpl.cyan());
         }
     } else {
         orchestrator.apply_profile(profile);

@@ -463,3 +463,116 @@ pub async fn resolve_project(
         .await?
         .ok_or_else(|| ScorchError::Config(format!("project '{project_ref}' not found")))
 }
+
+/// List scan history for a project.
+///
+/// # Errors
+///
+/// Returns an error if the project is not found or the database query fails.
+pub async fn list_scans(pool: &PgPool, project_ref: &str) -> Result<()> {
+    let project = resolve_project(pool, project_ref).await?;
+    let scan_list = scans::list_scans(pool, project.id).await?;
+
+    if scan_list.is_empty() {
+        println!("No scans found for project '{}'.", project.name);
+        return Ok(());
+    }
+
+    println!(
+        "Scan history for '{}' ({} scan{})\n",
+        project.name.cyan().bold(),
+        scan_list.len(),
+        if scan_list.len() == 1 { "" } else { "s" }
+    );
+
+    for scan in &scan_list {
+        let duration = scan
+            .completed_at.map_or_else(|| "running".to_string(), |end| {
+                let secs = (end - scan.started_at).num_seconds();
+                if secs < 60 {
+                    format!("{secs}s")
+                } else {
+                    format!("{}m {}s", secs / 60, secs % 60)
+                }
+            });
+
+        let summary: serde_json::Value = scan.summary.clone();
+        let total = summary.get("total_findings").and_then(serde_json::Value::as_u64).unwrap_or(0);
+
+        println!(
+            "  {} {} | {} | {} modules | {} findings | {}",
+            scan.id.to_string().dimmed(),
+            scan.started_at.format("%Y-%m-%d %H:%M").to_string().dimmed(),
+            scan.profile.cyan(),
+            scan.modules_run.len(),
+            total,
+            duration.dimmed(),
+        );
+    }
+
+    println!();
+    println!("  Use {} to see details for a specific scan.", "project scan-show <id>".dimmed());
+    Ok(())
+}
+
+/// Show detailed information for a specific scan.
+///
+/// # Errors
+///
+/// Returns an error if the scan is not found or the database query fails.
+pub async fn show_scan(pool: &PgPool, id_str: &str) -> Result<()> {
+    let id = Uuid::parse_str(id_str)
+        .map_err(|e| ScorchError::Config(format!("invalid scan UUID '{id_str}': {e}")))?;
+
+    let scan = scans::get_scan(pool, id)
+        .await?
+        .ok_or_else(|| ScorchError::Config(format!("scan '{id_str}' not found")))?;
+
+    println!("{}", "Scan Details".bold().underline());
+    println!();
+    println!("        ID: {}", scan.id.to_string().dimmed());
+    println!("    Target: {}", scan.target_url.cyan());
+    println!("   Profile: {}", scan.profile.cyan());
+    println!("   Started: {}", scan.started_at.format("%Y-%m-%d %H:%M:%S UTC"));
+    if let Some(end) = scan.completed_at {
+        let secs = (end - scan.started_at).num_seconds();
+        println!("  Duration: {secs}s");
+    }
+
+    let summary: serde_json::Value = scan.summary.clone();
+    println!();
+    println!("  {}", "Summary".bold());
+    if let Some(total) = summary.get("total_findings").and_then(serde_json::Value::as_u64) {
+        println!("    Total findings: {}", total.to_string().bold());
+    }
+    for (key, label) in [
+        ("critical", "Critical"),
+        ("high", "High"),
+        ("medium", "Medium"),
+        ("low", "Low"),
+        ("info", "Info"),
+    ] {
+        if let Some(count) = summary.get(key).and_then(serde_json::Value::as_u64) {
+            if count > 0 {
+                println!("    {label}: {count}");
+            }
+        }
+    }
+
+    println!();
+    println!("  {} ({})", "Modules Run".bold(), scan.modules_run.len());
+    for m in &scan.modules_run {
+        println!("    {}", m.cyan());
+    }
+
+    if !scan.modules_skipped.is_empty() {
+        println!();
+        println!("  {} ({})", "Modules Skipped".bold(), scan.modules_skipped.len());
+        for m in &scan.modules_skipped {
+            println!("    {}", m.dimmed());
+        }
+    }
+
+    println!();
+    Ok(())
+}

@@ -68,6 +68,135 @@ impl Orchestrator {
         // Thorough and standard: keep all modules (default behavior)
     }
 
+    /// Apply a named scan template — a curated set of modules for a target type.
+    ///
+    /// Returns `true` if the template was found and applied, `false` otherwise.
+    // JUSTIFICATION: Template definitions are declarative data — splitting the match arms
+    // into separate functions would scatter the template catalog across multiple locations
+    #[allow(clippy::too_many_lines)]
+    pub fn apply_template(&mut self, template: &str) -> bool {
+        let module_ids: &[&str] = match template {
+            "web-app" => &[
+                "headers",
+                "tech",
+                "ssl",
+                "misconfig",
+                "csrf",
+                "injection",
+                "xss",
+                "ssrf",
+                "xxe",
+                "path_traversal",
+                "ssti",
+                "redirect",
+                "sensitive",
+                "auth",
+                "upload",
+                "clickjacking",
+                "cors",
+                "csp",
+                "crawler",
+                "discovery",
+                "dom_xss",
+                "crlf",
+                "host_header",
+                "ratelimit",
+                "js_analysis",
+            ],
+            "api" => &[
+                "headers",
+                "ssl",
+                "misconfig",
+                "injection",
+                "nosql",
+                "api",
+                "api_schema",
+                "cors",
+                "jwt",
+                "ratelimit",
+                "auth",
+                "idor",
+                "mass_assignment",
+                "ssrf",
+                "sensitive",
+            ],
+            "graphql" => &[
+                "headers",
+                "ssl",
+                "graphql",
+                "injection",
+                "cors",
+                "jwt",
+                "auth",
+                "ratelimit",
+                "sensitive",
+                "nosql",
+            ],
+            "wordpress" => &[
+                "headers",
+                "tech",
+                "ssl",
+                "misconfig",
+                "discovery",
+                "wpscan",
+                "nuclei",
+                "xss",
+                "injection",
+                "sensitive",
+                "crawler",
+            ],
+            "spa" => &[
+                "headers",
+                "ssl",
+                "cors",
+                "csp",
+                "dom_xss",
+                "js_analysis",
+                "xss",
+                "api",
+                "jwt",
+                "clickjacking",
+                "sensitive",
+                "crawler",
+            ],
+            "network" => &[
+                "ssl",
+                "headers",
+                "dns",
+                "subdomain",
+                "cloud",
+                "smuggling",
+                "cname_takeover",
+                "nmap",
+                "sslyze",
+                "testssl",
+                "dnsx",
+                "dnsrecon",
+            ],
+            "full" => &[], // Empty means keep all — same as thorough
+            _ => return false,
+        };
+
+        if !module_ids.is_empty() {
+            self.modules.retain(|m| module_ids.contains(&m.id()));
+        }
+        true
+    }
+
+    /// List all available scan template names and their descriptions.
+    #[must_use]
+    pub fn list_templates() -> Vec<(&'static str, &'static str, usize)> {
+        vec![
+            ("web-app", "Standard web application assessment", 25),
+            ("api", "REST API security testing", 15),
+            ("graphql", "GraphQL API security testing", 10),
+            ("wordpress", "WordPress-specific assessment", 11),
+            ("spa", "Single-page application (React/Vue/Angular)", 12),
+            ("network", "Network infrastructure & DNS", 12),
+            ("full", "All modules (same as --profile thorough)", 77),
+        ]
+    }
+
     /// Run all registered modules concurrently (up to `max_concurrent_modules`).
     ///
     /// # Errors
