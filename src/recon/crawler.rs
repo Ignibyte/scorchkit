@@ -8,8 +8,8 @@ use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
-use crate::engine::shared_data::keys;
 use crate::engine::severity::Severity;
+use crate::engine::shared_data::keys;
 
 /// Crawls the target to discover all endpoints, forms, and parameters.
 #[derive(Debug)]
