@@ -180,6 +180,149 @@ impl Orchestrator {
             modules_skipped,
         ))
     }
+
+    /// Run modules in two phases: recon first, then scanners/tools.
+    ///
+    /// This enables inter-module data sharing — recon modules publish
+    /// discovered data (URLs, forms, technologies) that scanner modules
+    /// consume via `ScanContext::shared_data`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the semaphore is closed or a fatal scan error occurs.
+    pub async fn run_phased(&mut self, quiet: bool) -> Result<ScanResult> {
+        let started_at = Utc::now();
+        let scan_id = Uuid::new_v4().to_string();
+        let max_concurrent = self.ctx.config.scan.max_concurrent_modules;
+
+        // Partition modules into recon and non-recon
+        let (recon, scanners): (Vec<_>, Vec<_>) =
+            self.modules.iter().partition(|m| m.category() == ModuleCategory::Recon);
+
+        if !quiet {
+            println!(
+                "{} {} recon + {} scanner module{}",
+                "Phased scan:".bold(),
+                recon.len(),
+                scanners.len(),
+                if recon.len() + scanners.len() == 1 { "" } else { "s" }
+            );
+            println!();
+        }
+
+        let mut all_findings: Vec<Finding> = Vec::new();
+        let mut modules_run: Vec<String> = Vec::new();
+        let mut modules_skipped: Vec<(String, String)> = Vec::new();
+
+        // Phase 1: Run recon modules
+        run_module_batch(
+            &recon,
+            &self.ctx,
+            max_concurrent,
+            quiet,
+            &mut all_findings,
+            &mut modules_run,
+            &mut modules_skipped,
+        )
+        .await?;
+
+        if !quiet && !scanners.is_empty() {
+            println!(
+                "\n{} Recon complete — shared data available for scanners\n",
+                ">>>".cyan().bold()
+            );
+        }
+
+        // Phase 2: Run scanner/tool modules (can read shared data from recon)
+        run_module_batch(
+            &scanners,
+            &self.ctx,
+            max_concurrent,
+            quiet,
+            &mut all_findings,
+            &mut modules_run,
+            &mut modules_skipped,
+        )
+        .await?;
+
+        all_findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+
+        Ok(ScanResult::new(
+            scan_id,
+            self.ctx.target.clone(),
+            started_at,
+            all_findings,
+            modules_run,
+            modules_skipped,
+        ))
+    }
+}
+
+/// Run a batch of modules concurrently, collecting findings and status.
+// JUSTIFICATION: Vec<Box<dyn ScanModule>> is the module storage type; &[&Box] is natural for partitioned references
+#[allow(clippy::borrowed_box)]
+async fn run_module_batch(
+    modules: &[&Box<dyn ScanModule>],
+    ctx: &crate::engine::scan_context::ScanContext,
+    max_concurrent: usize,
+    quiet: bool,
+    findings: &mut Vec<Finding>,
+    modules_run: &mut Vec<String>,
+    modules_skipped: &mut Vec<(String, String)>,
+) -> Result<()> {
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
+
+    for module in modules {
+        if module.requires_external_tool() {
+            if let Some(tool) = module.required_tool() {
+                if !is_tool_installed(tool) {
+                    if !quiet {
+                        println!(
+                            "  {} {} (requires: {})",
+                            "SKIP".yellow().bold(),
+                            module.name(),
+                            tool.dimmed()
+                        );
+                    }
+                    modules_skipped.push((
+                        module.id().to_string(),
+                        format!("external tool '{tool}' not found"),
+                    ));
+                    continue;
+                }
+            }
+        }
+
+        let permit = semaphore.clone().acquire_owned().await.map_err(|e| {
+            crate::engine::error::ScorchError::Cancelled { reason: format!("semaphore error: {e}") }
+        })?;
+
+        let module_name = module.name().to_string();
+        let module_id = module.id().to_string();
+        let spinner = if quiet { None } else { Some(progress::module_spinner(&module_name)) };
+
+        let result = module.run(ctx).await;
+        drop(permit);
+
+        match result {
+            Ok(found) => {
+                if let Some(pb) = &spinner {
+                    progress::finish_success(pb, &module_name, found.len());
+                }
+                modules_run.push(module_id);
+                findings.extend(found);
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                if let Some(pb) = &spinner {
+                    progress::finish_error(pb, &module_name, &err_str);
+                }
+                modules_skipped.push((module_id, err_str));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn is_tool_installed(tool: &str) -> bool {

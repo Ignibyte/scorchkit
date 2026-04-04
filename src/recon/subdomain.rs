@@ -113,6 +113,13 @@ impl ScanModule for SubdomainModule {
             }
         }
 
+        // Publish discovered subdomains for downstream modules
+        if !discovered.is_empty() {
+            let subdomain_names: Vec<String> =
+                discovered.iter().filter_map(|s| s.split(" ->").next().map(String::from)).collect();
+            ctx.shared_data.publish(crate::engine::shared_data::keys::SUBDOMAINS, subdomain_names);
+        }
+
         Ok(findings)
     }
 }

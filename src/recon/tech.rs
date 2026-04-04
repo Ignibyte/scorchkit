@@ -54,6 +54,10 @@ impl ScanModule for TechModule {
         detect_framework_signatures(&headers, &body, url, &mut findings);
         detect_cms_indicators(&body, url, &mut findings);
 
+        // Publish detected technologies for downstream modules
+        let techs: Vec<String> = findings.iter().map(|f| f.title.clone()).collect();
+        ctx.shared_data.publish(crate::engine::shared_data::keys::TECHNOLOGIES, techs);
+
         Ok(findings)
     }
 }

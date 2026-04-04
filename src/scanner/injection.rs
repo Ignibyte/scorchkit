@@ -59,6 +59,14 @@ impl ScanModule for InjectionModule {
             test_form(ctx, form, &mut findings).await?;
         }
 
+        // Test URLs discovered by the crawler (inter-module sharing)
+        let shared_urls = ctx.shared_data.get(crate::engine::shared_data::keys::URLS);
+        for shared_url in &shared_urls {
+            if shared_url != url && !links.contains(shared_url) {
+                test_url_params(ctx, shared_url, &mut findings).await?;
+            }
+        }
+
         Ok(findings)
     }
 }

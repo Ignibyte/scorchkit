@@ -8,6 +8,7 @@ use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
+use crate::engine::shared_data::keys;
 use crate::engine::severity::Severity;
 
 /// Crawls the target to discover all endpoints, forms, and parameters.
@@ -96,6 +97,12 @@ impl ScanModule for CrawlerModule {
                 &mut discovered_js,
             );
         }
+
+        // Publish discovered data for downstream modules
+        ctx.shared_data.publish(keys::URLS, discovered_urls.iter().cloned().collect());
+        ctx.shared_data
+            .publish(keys::FORMS, discovered_forms.iter().map(|f| f.url.clone()).collect());
+        ctx.shared_data.publish(keys::PARAMS, discovered_params.iter().cloned().collect());
 
         Ok(build_crawl_findings(
             &visited,
