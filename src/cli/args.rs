@@ -32,12 +32,16 @@ pub enum Commands {
     /// Run all default scans against a target
     Run {
         /// Target URL, domain, or IP
-        #[arg(required_unless_present = "targets_file")]
+        #[arg(required_unless_present_any = ["targets_file", "resume"])]
         target: Option<String>,
 
         /// File with one target per line (replaces positional target)
         #[arg(long, conflicts_with = "target")]
         targets_file: Option<PathBuf>,
+
+        /// Resume an interrupted scan from a checkpoint file
+        #[arg(long, conflicts_with_all = ["target", "targets_file"])]
+        resume: Option<PathBuf>,
 
         /// Specific modules to run (comma-separated)
         #[arg(short, long)]

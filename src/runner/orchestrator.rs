@@ -181,6 +181,157 @@ impl Orchestrator {
         ))
     }
 
+    /// Run all modules with checkpoint support for resume-on-interrupt.
+    ///
+    /// After each module completes, a checkpoint file is saved. If `resume_from`
+    /// is provided, completed modules are skipped and their findings are merged.
+    /// The checkpoint file is deleted on successful scan completion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the semaphore is closed or a fatal scan error occurs.
+    // JUSTIFICATION: Checkpoint logic is a cohesive unit — module loop + checkpoint save + resume display;
+    // splitting would scatter the checkpoint lifecycle across multiple functions
+    #[allow(clippy::too_many_lines)]
+    pub async fn run_with_checkpoint(
+        &self,
+        quiet: bool,
+        checkpoint_path: &std::path::Path,
+        resume_from: Option<&super::checkpoint::ScanCheckpoint>,
+    ) -> Result<ScanResult> {
+        use super::checkpoint;
+
+        let started_at = resume_from.map_or_else(Utc::now, |cp| cp.started_at);
+        let scan_id =
+            resume_from.map_or_else(|| Uuid::new_v4().to_string(), |cp| cp.scan_id.clone());
+        let max_concurrent = self.ctx.config.scan.max_concurrent_modules;
+
+        // Initialize checkpoint state from resume or fresh
+        let mut cp = resume_from.map_or_else(
+            || {
+                let module_ids: Vec<String> =
+                    self.modules.iter().map(|m| m.id().to_string()).collect();
+                let config_hash = checkpoint::hash_config(
+                    &self.ctx.config.scan.profile,
+                    &module_ids,
+                    self.ctx.target.url.as_str(),
+                );
+                checkpoint::ScanCheckpoint::new(
+                    &scan_id,
+                    self.ctx.target.url.as_str(),
+                    &self.ctx.config.scan.profile,
+                    config_hash,
+                )
+            },
+            Clone::clone,
+        );
+
+        let resumed_count = cp.completed_modules.len();
+        if resumed_count > 0 && !quiet {
+            println!(
+                "{} {} module{} already complete from checkpoint",
+                "Resuming:".cyan().bold(),
+                resumed_count,
+                if resumed_count == 1 { "" } else { "s" }
+            );
+        }
+
+        // Filter to modules that haven't completed yet
+        let mut runnable: Vec<&dyn ScanModule> = Vec::new();
+        let mut modules_skipped: Vec<(String, String)> = Vec::new();
+
+        for module in &self.modules {
+            if cp.is_completed(module.id()) {
+                continue; // Already done in previous run
+            }
+            if module.requires_external_tool() {
+                if let Some(tool) = module.required_tool() {
+                    if !is_tool_installed(tool) {
+                        if !quiet {
+                            println!(
+                                "  {} {} (requires: {})",
+                                "SKIP".yellow().bold(),
+                                module.name(),
+                                tool.dimmed()
+                            );
+                        }
+                        modules_skipped.push((
+                            module.id().to_string(),
+                            format!("external tool '{tool}' not found"),
+                        ));
+                        continue;
+                    }
+                }
+            }
+            runnable.push(module.as_ref());
+        }
+
+        if !quiet {
+            let total = runnable.len() + resumed_count;
+            println!(
+                "{} {}/{} module{} remaining",
+                "Running".bold(),
+                runnable.len(),
+                total,
+                if runnable.len() == 1 { "" } else { "s" }
+            );
+            println!();
+        }
+
+        // Run remaining modules with semaphore
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
+        let ctx = &self.ctx;
+
+        for module in runnable {
+            let permit = semaphore.clone().acquire_owned().await.map_err(|e| {
+                crate::engine::error::ScorchError::Cancelled {
+                    reason: format!("semaphore error: {e}"),
+                }
+            })?;
+
+            let module_name = module.name().to_string();
+            let module_id = module.id().to_string();
+            let spinner = if quiet { None } else { Some(progress::module_spinner(&module_name)) };
+
+            let result = module.run(ctx).await;
+            drop(permit);
+
+            match result {
+                Ok(findings) => {
+                    if let Some(pb) = &spinner {
+                        progress::finish_success(pb, &module_name, findings.len());
+                    }
+                    cp.record_module(&module_id, &findings);
+                    // Save checkpoint after each module
+                    let _ = checkpoint::save_checkpoint(&cp, checkpoint_path);
+                }
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if let Some(pb) = &spinner {
+                        progress::finish_error(pb, &module_name, &err_str);
+                    }
+                    modules_skipped.push((module_id, err_str));
+                }
+            }
+        }
+
+        // Scan complete — remove checkpoint file
+        checkpoint::remove_checkpoint(checkpoint_path);
+
+        let modules_run = cp.completed_modules.clone();
+        let mut all_findings = cp.findings;
+        all_findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+
+        Ok(ScanResult::new(
+            scan_id,
+            self.ctx.target.clone(),
+            started_at,
+            all_findings,
+            modules_run,
+            modules_skipped,
+        ))
+    }
+
     /// Run modules in two phases: recon first, then scanners/tools.
     ///
     /// This enables inter-module data sharing — recon modules publish
