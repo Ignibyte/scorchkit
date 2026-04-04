@@ -32,10 +32,14 @@ use sqlx::PgPool;
 
 use crate::engine::error::{Result, ScorchError};
 
-/// Connect to a PostgreSQL database and return a connection pool.
+/// Connect to a `PostgreSQL` database and return a connection pool.
 ///
-/// The `database_url` should be a full PostgreSQL connection string,
+/// The `database_url` should be a full `PostgreSQL` connection string,
 /// e.g., `postgresql://user:password@localhost:5432/scorchkit`.
+///
+/// # Errors
+///
+/// Returns an error if the database connection fails.
 pub async fn connect(database_url: &str) -> Result<PgPool> {
     PgPoolOptions::new()
         .max_connections(5)
@@ -45,6 +49,10 @@ pub async fn connect(database_url: &str) -> Result<PgPool> {
 }
 
 /// Connect with a custom maximum connection count.
+///
+/// # Errors
+///
+/// Returns an error if the database connection fails.
 pub async fn connect_with_max(database_url: &str, max_connections: u32) -> Result<PgPool> {
     PgPoolOptions::new()
         .max_connections(max_connections)

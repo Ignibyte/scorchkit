@@ -12,6 +12,10 @@ use crate::engine::error::{Result, ScorchError};
 ///
 /// Uses `sqlx::migrate!()` to embed migration files at compile time
 /// from the `migrations/` directory at the crate root.
+///
+/// # Errors
+///
+/// Returns an error if a migration fails to apply.
 pub async fn run_migrations(pool: &PgPool) -> Result<()> {
     sqlx::migrate!("./migrations")
         .run(pool)

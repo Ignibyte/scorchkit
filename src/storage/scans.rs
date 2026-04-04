@@ -12,6 +12,10 @@ use super::models::ScanRecord;
 use crate::engine::error::{Result, ScorchError};
 
 /// Save a new scan record for a project.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 // JUSTIFICATION: save_scan maps directly to the scan_records table columns;
 // bundling into a struct would add unnecessary indirection for an internal API.
 #[allow(clippy::too_many_arguments)]
@@ -46,6 +50,10 @@ pub async fn save_scan(
 }
 
 /// Get a scan record by ID.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn get_scan(pool: &PgPool, id: Uuid) -> Result<Option<ScanRecord>> {
     sqlx::query_as::<_, ScanRecord>("SELECT * FROM scan_records WHERE id = $1")
         .bind(id)
@@ -55,6 +63,10 @@ pub async fn get_scan(pool: &PgPool, id: Uuid) -> Result<Option<ScanRecord>> {
 }
 
 /// List all scans for a project, newest first.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn list_scans(pool: &PgPool, project_id: Uuid) -> Result<Vec<ScanRecord>> {
     sqlx::query_as::<_, ScanRecord>(
         "SELECT * FROM scan_records WHERE project_id = $1 \

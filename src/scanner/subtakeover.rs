@@ -87,7 +87,8 @@ impl ScanModule for SubdomainTakeoverModule {
                              records regularly to prevent future takeovers.",
                         )
                         .with_owasp("A05:2021 Security Misconfiguration")
-                        .with_cwe(200),
+                        .with_cwe(200)
+                        .with_confidence(0.8),
                     );
                     break; // Found takeover on this subdomain, no need to try other scheme
                 }

@@ -104,7 +104,8 @@ fn parse_paramspider_output(stdout: &str, target_url: &str) -> Vec<Finding> {
         target_url,
     )
     .with_evidence(format!("{count} parameterized URLs, {} unique params", param_names.len()))
-    .with_owasp("A03:2021 Injection")]
+    .with_owasp("A03:2021 Injection")
+    .with_confidence(0.6)]
 }
 
 #[cfg(test)]

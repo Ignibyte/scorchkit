@@ -87,7 +87,8 @@ impl ScanModule for AuthSessionModule {
                      Use server-side session storage to avoid multiple tracking cookies.",
                 )
                 .with_owasp("A07:2021 Identification and Authentication Failures")
-                .with_cwe(613),
+                .with_cwe(613)
+                .with_confidence(0.7),
             );
         }
 
@@ -198,7 +199,8 @@ fn check_entropy(cookie: &SessionCookie, url: &str, findings: &mut Vec<Finding>)
                  session IDs of at least 128 bits (32 hex characters or 22 base64 characters).",
             )
             .with_owasp("A07:2021 Identification and Authentication Failures")
-            .with_cwe(330),
+            .with_cwe(330)
+            .with_confidence(0.7),
         );
         return;
     }
@@ -230,7 +232,8 @@ fn check_entropy(cookie: &SessionCookie, url: &str, findings: &mut Vec<Finding>)
                  user-derived session identifiers.",
             )
             .with_owasp("A07:2021 Identification and Authentication Failures")
-            .with_cwe(330),
+            .with_cwe(330)
+            .with_confidence(0.7),
         );
     }
 }
@@ -297,7 +300,8 @@ fn check_expiry(cookie: &SessionCookie, url: &str, findings: &mut Vec<Finding>) 
                      with idle timeout, or 8-24 hours maximum for remember-me tokens.",
                 )
                 .with_owasp("A07:2021 Identification and Authentication Failures")
-                .with_cwe(613),
+                .with_cwe(613)
+                .with_confidence(0.7),
             );
         }
         return;
@@ -329,7 +333,8 @@ fn check_expiry(cookie: &SessionCookie, url: &str, findings: &mut Vec<Finding>) 
                 .with_evidence(format!("Expires: {expires}"))
                 .with_remediation("Set reasonable session expiry times (hours, not years)")
                 .with_owasp("A07:2021 Identification and Authentication Failures")
-                .with_cwe(613),
+                .with_cwe(613)
+                .with_confidence(0.7),
             );
         }
     }
@@ -403,7 +408,8 @@ async fn check_session_fixation(
                  cookie upon successful login.",
             )
             .with_owasp("A07:2021 Identification and Authentication Failures")
-            .with_cwe(384),
+            .with_cwe(384)
+            .with_confidence(0.7),
         );
     }
 
@@ -496,7 +502,8 @@ async fn check_logout_invalidation(
                  client-side cookie deletion.",
             )
             .with_owasp("A07:2021 Identification and Authentication Failures")
-            .with_cwe(613),
+            .with_cwe(613)
+            .with_confidence(0.7),
         );
     }
 

@@ -104,7 +104,8 @@ impl ScanModule for WebSocketModule {
                          Configure the server to reject ws:// connections.",
                     )
                     .with_owasp("A02:2021 Cryptographic Failures")
-                    .with_cwe(319),
+                    .with_cwe(319)
+                    .with_confidence(0.7),
                 );
             }
 
@@ -230,7 +231,8 @@ async fn test_cswsh(endpoint: &WsEndpoint, legitimate_origin: &str, findings: &m
                  Implement CSRF tokens in the WebSocket handshake.",
             )
             .with_owasp("A01:2021 Broken Access Control")
-            .with_cwe(346),
+            .with_cwe(346)
+            .with_confidence(0.7),
         );
     }
 }
@@ -271,7 +273,8 @@ async fn test_unauth_access(endpoint: &WsEndpoint, findings: &mut Vec<Finding>) 
                  Do not rely solely on browser-sent cookies for WebSocket auth.",
             )
             .with_owasp("A07:2021 Identification and Authentication Failures")
-            .with_cwe(306),
+            .with_cwe(306)
+            .with_confidence(0.7),
         );
     }
 }

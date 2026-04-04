@@ -40,11 +40,11 @@ impl ScanModule for CewlModule {
         )
         .await?;
 
-        parse_cewl_output(&output.stdout, target)
+        Ok(parse_cewl_output(&output.stdout, target))
     }
 }
 
-fn parse_cewl_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_cewl_output(output: &str, target_url: &str) -> Vec<Finding> {
     let words: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
     let mut findings = Vec::new();
 
@@ -54,9 +54,38 @@ fn parse_cewl_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
 
         findings.push(
             Finding::new("cewl", Severity::Info, format!("{count} Words Extracted from Target"), format!("CeWL extracted {count} unique words from the target. These can be used for targeted password attacks."), target_url)
-                .with_evidence(format!("Sample words: {}", sample.iter().map(|w| **w).collect::<Vec<_>>().join(", "))),
+                .with_evidence(format!("Sample words: {}", sample.iter().map(|w| **w).collect::<Vec<_>>().join(", ")))
+                .with_confidence(0.5),
         );
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for CeWL wordlist output parser.
+
+    /// Verify that `parse_cewl_output` correctly counts extracted words
+    /// and includes a sample in the evidence.
+    #[test]
+    fn test_parse_cewl_output() {
+        let output = "password\nadministrator\nexample\nlogin\nsecurity\n";
+
+        let findings = parse_cewl_output(output, "https://example.com");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].title.contains("5 Words"));
+        assert_eq!(findings[0].severity, Severity::Info);
+        let evidence = findings[0].evidence.as_deref().unwrap_or("");
+        assert!(evidence.contains("password"));
+    }
+
+    /// Verify that `parse_cewl_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_cewl_output_empty() {
+        let findings = parse_cewl_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

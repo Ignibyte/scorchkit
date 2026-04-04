@@ -187,7 +187,8 @@ async fn test_introspection(
                  field from the schema. Allow introspection only in development.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(200),
+            .with_cwe(200)
+            .with_confidence(0.7),
         );
     }
 }
@@ -251,7 +252,8 @@ async fn test_depth_abuse(ctx: &ScanContext, endpoint: &GqlEndpoint, findings: &
                      maximum depth (typically 5-10 levels).",
                 )
                 .with_owasp("A04:2021 Insecure Design")
-                .with_cwe(770),
+                .with_cwe(770)
+                .with_confidence(0.7),
             );
         }
     }
@@ -305,7 +307,8 @@ async fn test_batch_abuse(ctx: &ScanContext, endpoint: &GqlEndpoint, findings: &
                          rate limiting within batches.",
                     )
                     .with_owasp("A04:2021 Insecure Design")
-                    .with_cwe(770),
+                    .with_cwe(770)
+                    .with_confidence(0.7),
                 );
             }
         }
@@ -360,7 +363,8 @@ async fn test_field_suggestions(
                  error formatting. In graphql-js: override the validation rules.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(200),
+            .with_cwe(200)
+            .with_confidence(0.7),
         );
     }
 }
@@ -434,7 +438,8 @@ async fn test_mutation_enumeration(
                  visibility. Apply field-level authorization to all mutations.",
             )
             .with_owasp("A01:2021 Broken Access Control")
-            .with_cwe(200),
+            .with_cwe(200)
+            .with_confidence(0.7),
         );
     }
 }

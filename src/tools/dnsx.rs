@@ -1,6 +1,6 @@
 //! `DNSx` wrapper for fast DNS resolution and record queries.
 //!
-//! Wraps ProjectDiscovery's `dnsx` tool for fast DNS resolution,
+//! Wraps `ProjectDiscovery`'s `dnsx` tool for fast DNS resolution,
 //! wildcard detection, and multi-record-type queries. Complements
 //! the built-in subdomain module and amass/subfinder wrappers.
 
@@ -15,7 +15,7 @@ use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
 use crate::runner::subprocess;
 
-/// Fast DNS resolution and record queries via DNSx.
+/// Fast DNS resolution and record queries via `DNSx`.
 #[derive(Debug)]
 pub struct DnsxModule;
 
@@ -59,9 +59,9 @@ impl ScanModule for DnsxModule {
     }
 }
 
-/// Parse DNSx plain-text output into a consolidated finding.
+/// Parse `DNSx` plain-text output into a consolidated finding.
 ///
-/// DNSx outputs one line per resolved record in the format:
+/// `DNSx` outputs one line per resolved record in the format:
 /// `domain [IP/record]`. Results are consolidated into a single
 /// finding with count and sample records.
 #[must_use]
@@ -88,7 +88,8 @@ fn parse_dnsx_output(stdout: &str, target_url: &str) -> Vec<Finding> {
         target_url,
     )
     .with_evidence(format!("{count} DNS records resolved"))
-    .with_owasp("A05:2021 Security Misconfiguration")]
+    .with_owasp("A05:2021 Security Misconfiguration")
+    .with_confidence(0.8)]
 }
 
 #[cfg(test)]

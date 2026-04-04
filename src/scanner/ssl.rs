@@ -44,7 +44,8 @@ impl ScanModule for SslModule {
             )
             .with_remediation("Enable HTTPS with a valid TLS certificate")
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(319)]);
+            .with_cwe(319)
+            .with_confidence(0.9)]);
         }
 
         let domain = ctx.target.domain.as_deref().ok_or_else(|| ScorchError::InvalidTarget {
@@ -71,7 +72,8 @@ impl ScanModule for SslModule {
                         format!("Could not establish a TLS connection: {e}"),
                         url,
                     )
-                    .with_owasp("A02:2021 Cryptographic Failures"),
+                    .with_owasp("A02:2021 Cryptographic Failures")
+                    .with_confidence(0.9),
                 );
             }
         }
@@ -81,7 +83,7 @@ impl ScanModule for SslModule {
 }
 
 /// Certificate information extracted from the TLS handshake.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct CertInfo {
     subject_cn: String,
@@ -230,7 +232,8 @@ fn check_expiration(cert: &CertInfo, url: &str, findings: &mut Vec<Finding>) {
             ))
             .with_remediation("Renew the TLS certificate immediately")
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(295),
+            .with_cwe(295)
+            .with_confidence(0.9),
         );
     } else if cert.days_until_expiry < 30 {
         findings.push(
@@ -249,7 +252,8 @@ fn check_expiration(cert: &CertInfo, url: &str, findings: &mut Vec<Finding>) {
                 cert.subject_cn, cert.not_after, cert.days_until_expiry
             ))
             .with_remediation("Renew the TLS certificate before it expires")
-            .with_owasp("A02:2021 Cryptographic Failures"),
+            .with_owasp("A02:2021 Cryptographic Failures")
+            .with_confidence(0.9),
         );
     }
 }
@@ -273,7 +277,8 @@ fn check_self_signed(cert: &CertInfo, url: &str, findings: &mut Vec<Finding>) {
                 "Use a certificate from a trusted Certificate Authority (e.g., Let's Encrypt)",
             )
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(295),
+            .with_cwe(295)
+            .with_confidence(0.9),
         );
     }
 }
@@ -295,7 +300,8 @@ fn check_weak_signature(cert: &CertInfo, url: &str, findings: &mut Vec<Finding>)
             .with_evidence(format!("Signature Algorithm: {}", cert.signature_algorithm))
             .with_remediation("Reissue the certificate with SHA-256 or stronger")
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(328),
+            .with_cwe(328)
+            .with_confidence(0.9),
         );
     }
 }
@@ -334,15 +340,138 @@ fn check_subject_mismatch(cert: &CertInfo, domain: &str, url: &str, findings: &m
             ))
             .with_remediation("Obtain a certificate that includes this domain name")
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(295),
+            .with_cwe(295)
+            .with_confidence(0.9),
         );
     }
 }
 
 fn matches_wildcard(cert_name: &str, domain: &str) -> bool {
-    if let Some(suffix) = cert_name.strip_prefix("*.") {
+    cert_name.strip_prefix("*.").is_some_and(|suffix| {
         domain.ends_with(suffix) && domain.matches('.').count() == suffix.matches('.').count() + 1
-    } else {
-        false
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the TLS/SSL analysis module's pure helper functions.
+
+    /// Verify that `matches_wildcard` correctly matches single-level wildcard certificates
+    /// and rejects multi-level, bare-domain, and non-matching domains.
+    #[test]
+    fn test_matches_wildcard() {
+        // Arrange & Assert: valid single-level wildcard matches
+        assert!(matches_wildcard("*.example.com", "www.example.com"));
+        assert!(matches_wildcard("*.example.com", "api.example.com"));
+
+        // Should not match the bare domain (no subdomain prefix)
+        assert!(!matches_wildcard("*.example.com", "example.com"));
+
+        // Should not match multi-level subdomains
+        assert!(!matches_wildcard("*.example.com", "a.b.example.com"));
+
+        // Non-wildcard cert should never match via this function
+        assert!(!matches_wildcard("www.example.com", "www.example.com"));
+
+        // Completely different domain
+        assert!(!matches_wildcard("*.example.com", "www.other.com"));
+    }
+
+    /// Verify that `check_expiration` produces a Critical finding for expired certificates
+    /// and a Medium finding for certificates expiring within 30 days, but no finding
+    /// for certificates with ample remaining validity.
+    #[test]
+    fn test_check_expiration_findings() {
+        // Arrange: expired cert
+        let expired = CertInfo {
+            subject_cn: "expired.example.com".to_string(),
+            issuer_cn: "Test CA".to_string(),
+            not_before: "2020-01-01".to_string(),
+            not_after: "2021-01-01".to_string(),
+            days_until_expiry: -365,
+            is_expired: true,
+            is_self_signed: false,
+            signature_algorithm: "SHA-256 with RSA".to_string(),
+            san_names: vec![],
+        };
+        let mut findings = Vec::new();
+
+        // Act
+        check_expiration(&expired, "https://expired.example.com", &mut findings);
+
+        // Assert
+        assert_eq!(findings.len(), 1, "Expected one finding for expired cert");
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert!(findings[0].title.contains("Expired"));
+
+        // Arrange: expiring in 15 days
+        let soon = CertInfo { days_until_expiry: 15, is_expired: false, ..expired };
+        let mut soon_findings = Vec::new();
+
+        // Act
+        check_expiration(&soon, "https://soon.example.com", &mut soon_findings);
+
+        // Assert
+        assert_eq!(soon_findings.len(), 1, "Expected one finding for cert expiring soon");
+        assert_eq!(soon_findings[0].severity, Severity::Medium);
+
+        // Arrange: valid cert with 365 days remaining
+        let valid = CertInfo {
+            subject_cn: "valid.example.com".to_string(),
+            issuer_cn: "Real CA".to_string(),
+            not_before: "2024-01-01".to_string(),
+            not_after: "2026-01-01".to_string(),
+            days_until_expiry: 365,
+            is_expired: false,
+            is_self_signed: false,
+            signature_algorithm: "SHA-256 with RSA".to_string(),
+            san_names: vec![],
+        };
+        let mut valid_findings = Vec::new();
+
+        // Act
+        check_expiration(&valid, "https://valid.example.com", &mut valid_findings);
+
+        // Assert
+        assert!(valid_findings.is_empty(), "No finding expected for valid cert");
+    }
+
+    /// Verify that `check_weak_signature` flags certificates using weak algorithms
+    /// (SHA-1, MD5) and passes those using strong algorithms (SHA-256).
+    #[test]
+    fn test_check_weak_signature() {
+        // Arrange: weak signature
+        let weak = CertInfo {
+            subject_cn: "weak.example.com".to_string(),
+            issuer_cn: "Test CA".to_string(),
+            not_before: "2024-01-01".to_string(),
+            not_after: "2026-01-01".to_string(),
+            days_until_expiry: 365,
+            is_expired: false,
+            is_self_signed: false,
+            signature_algorithm: "SHA-1 with RSA (WEAK)".to_string(),
+            san_names: vec![],
+        };
+        let mut findings = Vec::new();
+
+        // Act
+        check_weak_signature(&weak, "https://weak.example.com", &mut findings);
+
+        // Assert
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert!(findings[0].title.contains("Weak"));
+
+        // Arrange: strong signature
+        let strong = CertInfo { signature_algorithm: "SHA-256 with RSA".to_string(), ..weak };
+        let mut strong_findings = Vec::new();
+
+        // Act
+        check_weak_signature(&strong, "https://strong.example.com", &mut strong_findings);
+
+        // Assert
+        assert!(strong_findings.is_empty(), "No finding expected for SHA-256");
     }
 }

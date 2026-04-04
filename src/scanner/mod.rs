@@ -2,20 +2,31 @@ mod acl;
 mod api;
 mod api_schema;
 mod auth;
+mod clickjacking;
 mod cmdi;
 mod cors;
+mod crlf;
 mod csp;
 mod csrf;
+mod dom_xss;
 mod graphql;
+mod host_header;
 mod idor;
 mod injection;
 mod jwt;
+mod ldap;
+mod mass_assignment;
 mod misconfig;
+mod nosql;
+mod path_traversal;
+mod prototype_pollution;
 mod ratelimit;
 mod redirect;
 mod sensitive;
+mod smuggling;
 mod ssl;
 mod ssrf;
+mod ssti;
 mod subtakeover;
 mod upload;
 mod waf;
@@ -53,5 +64,16 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(api::ApiSecurityModule),
         Box::new(api_schema::ApiSchemaModule),
         Box::new(ratelimit::RateLimitModule),
+        Box::new(path_traversal::PathTraversalModule),
+        Box::new(ssti::SstiModule),
+        Box::new(crlf::CrlfModule),
+        Box::new(host_header::HostHeaderModule),
+        Box::new(nosql::NosqlModule),
+        Box::new(ldap::LdapModule),
+        Box::new(smuggling::SmugglingModule),
+        Box::new(prototype_pollution::PrototypePollutionModule),
+        Box::new(mass_assignment::MassAssignmentModule),
+        Box::new(clickjacking::ClickjackingModule),
+        Box::new(dom_xss::DomXssModule),
     ]
 }

@@ -61,12 +61,12 @@ impl ScanModule for FeroxbusterModule {
         )
         .await?;
 
-        parse_feroxbuster_output(&output.stdout, target)
+        Ok(parse_feroxbuster_output(&output.stdout, target))
     }
 }
 
 /// Parse feroxbuster JSON-lines output into findings.
-fn parse_feroxbuster_output(output: &str, _target_url: &str) -> Result<Vec<Finding>> {
+fn parse_feroxbuster_output(output: &str, _target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     for line in output.lines() {
@@ -107,7 +107,8 @@ fn parse_feroxbuster_output(output: &str, _target_url: &str) -> Result<Vec<Findi
             .with_evidence(format!(
                 "HTTP {status} | Size: {content_length} bytes | Category: {category}"
             ))
-            .with_owasp("A05:2021 Security Misconfiguration"),
+            .with_owasp("A05:2021 Security Misconfiguration")
+            .with_confidence(0.6),
         );
     }
 
@@ -115,7 +116,7 @@ fn parse_feroxbuster_output(output: &str, _target_url: &str) -> Result<Vec<Findi
     findings.sort_by(|a, b| b.severity.cmp(&a.severity));
     findings.truncate(50);
 
-    Ok(findings)
+    findings
 }
 
 /// Classify discovered paths by severity and category.
@@ -164,4 +165,35 @@ fn classify_discovered_path(url: &str) -> (Severity, &'static str) {
     }
 
     (Severity::Info, "content")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for feroxbuster JSON-lines output parser.
+
+    /// Verify that `parse_feroxbuster_output` correctly extracts discovered
+    /// paths and classifies their severity.
+    #[test]
+    fn test_parse_feroxbuster_output() {
+        let output = r#"{"type":"response","url":"https://example.com/.env","status":200,"content_length":512}
+{"type":"response","url":"https://example.com/admin","status":200,"content_length":1024}
+{"type":"response","url":"https://example.com/index.html","status":200,"content_length":4096}
+{"type":"stats","requests":1000}"#;
+
+        let findings = parse_feroxbuster_output(output, "https://example.com");
+        assert_eq!(findings.len(), 3);
+        // .env is critical (secrets)
+        let env_finding = findings.iter().find(|f| f.title.contains(".env"));
+        assert!(env_finding.is_some());
+        assert_eq!(env_finding.expect("env finding should exist").severity, Severity::Critical);
+    }
+
+    /// Verify that `parse_feroxbuster_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_feroxbuster_output_empty() {
+        let findings = parse_feroxbuster_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

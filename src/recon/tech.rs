@@ -54,6 +54,10 @@ impl ScanModule for TechModule {
         detect_framework_signatures(&headers, &body, url, &mut findings);
         detect_cms_indicators(&body, url, &mut findings);
 
+        // Publish detected technologies for downstream modules
+        let techs: Vec<String> = findings.iter().map(|f| f.title.clone()).collect();
+        ctx.shared_data.publish(crate::engine::shared_data::keys::TECHNOLOGIES, techs);
+
         Ok(findings)
     }
 }
@@ -78,7 +82,8 @@ fn detect_server_tech(
                     format!("Server technology identified: {tech_list}"),
                     url,
                 )
-                .with_evidence(format!("Server: {val}")),
+                .with_evidence(format!("Server: {val}"))
+                .with_confidence(0.7),
             );
         }
     }
@@ -97,7 +102,8 @@ fn detect_powered_by(headers: &reqwest::header::HeaderMap, url: &str, findings: 
                     format!("The X-Powered-By header reveals: {val}"),
                     url,
                 )
-                .with_evidence(format!("X-Powered-By: {val}")),
+                .with_evidence(format!("X-Powered-By: {val}"))
+                .with_confidence(0.7),
             );
         }
     }
@@ -114,7 +120,8 @@ fn detect_powered_by(headers: &reqwest::header::HeaderMap, url: &str, findings: 
                     format!("{header_name} header reveals version: {val}"),
                     url,
                 )
-                .with_evidence(format!("{header_name}: {val}")),
+                .with_evidence(format!("{header_name}: {val}"))
+                .with_confidence(0.7),
             );
         }
     }
@@ -139,7 +146,8 @@ fn detect_meta_generator(body: &str, url: &str, findings: &mut Vec<Finding>) {
                         format!("The page declares its generator: {content}"),
                         url,
                     )
-                    .with_evidence(format!("<meta name=\"generator\" content=\"{content}\">")),
+                    .with_evidence(format!("<meta name=\"generator\" content=\"{content}\">"))
+                    .with_confidence(0.7),
                 );
             }
         }
@@ -184,7 +192,8 @@ fn detect_cookie_tech(
             .with_evidence(format!(
                 "Cookies: {}",
                 detected.iter().map(|(c, _)| *c).collect::<Vec<_>>().join(", ")
-            )),
+            ))
+            .with_confidence(0.7),
         );
     }
 }
@@ -245,7 +254,8 @@ fn detect_framework_signatures(
                 format!("The target appears to use {tech}"),
                 url,
             )
-            .with_evidence("Detected via response signatures".to_string()),
+            .with_evidence("Detected via response signatures".to_string())
+            .with_confidence(0.7),
         );
     }
 }
@@ -283,7 +293,8 @@ fn detect_cms_indicators(body: &str, url: &str, findings: &mut Vec<Finding>) {
                 format!("Asset paths in the HTML suggest {cms} is in use"),
                 url,
             )
-            .with_evidence("Detected via CSS/JS resource paths".to_string()),
+            .with_evidence("Detected via CSS/JS resource paths".to_string())
+            .with_confidence(0.7),
         );
     }
 }
@@ -402,3 +413,78 @@ const ASSET_PATH_PATTERNS: &[(&str, &str)] = &[
     ("/skin/frontend/", "Magento"),
     ("/static/version", "Magento 2"),
 ];
+
+#[cfg(test)]
+mod tests {
+    /// Unit tests for technology fingerprinting helpers.
+    use super::*;
+
+    /// Verify `identify_server` detects Nginx from a server header.
+    #[test]
+    fn test_identify_server_nginx() {
+        // Arrange
+        let header = "nginx/1.24.0";
+
+        // Act
+        let techs = identify_server(header);
+
+        // Assert
+        assert_eq!(techs.len(), 1);
+        assert_eq!(techs[0], "Nginx");
+    }
+
+    /// Verify `identify_server` detects Apache from a server header.
+    #[test]
+    fn test_identify_server_apache() {
+        // Arrange
+        let header = "Apache/2.4.52 (Ubuntu)";
+
+        // Act
+        let techs = identify_server(header);
+
+        // Assert
+        assert_eq!(techs.len(), 1);
+        assert_eq!(techs[0], "Apache");
+    }
+
+    /// Verify `identify_server` detects Microsoft IIS from a server header.
+    #[test]
+    fn test_identify_server_iis() {
+        // Arrange
+        let header = "Microsoft-IIS/10.0";
+
+        // Act
+        let techs = identify_server(header);
+
+        // Assert
+        assert_eq!(techs.len(), 1);
+        assert_eq!(techs[0], "Microsoft IIS");
+    }
+
+    /// Verify `identify_server` returns an empty list for an unknown server header.
+    #[test]
+    fn test_identify_server_unknown() {
+        // Arrange
+        let header = "MyCustomServer/3.0";
+
+        // Act
+        let techs = identify_server(header);
+
+        // Assert
+        assert!(techs.is_empty());
+    }
+
+    /// Verify `identify_server` performs case-insensitive matching.
+    #[test]
+    fn test_identify_server_case_insensitive() {
+        // Arrange
+        let header = "NGINX";
+
+        // Act
+        let techs = identify_server(header);
+
+        // Assert
+        assert_eq!(techs.len(), 1);
+        assert_eq!(techs[0], "Nginx");
+    }
+}

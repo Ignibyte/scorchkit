@@ -14,6 +14,9 @@ pub struct AppConfig {
     pub ai: AiConfig,
     pub report: ReportConfig,
     pub database: DatabaseConfig,
+    /// Custom wordlist paths for brute-force and enumeration modules.
+    #[serde(default)]
+    pub wordlists: WordlistConfig,
     /// Webhook endpoints for scan lifecycle notifications.
     #[serde(default)]
     pub webhooks: Vec<crate::runner::hooks::WebhookConfig>,
@@ -23,7 +26,7 @@ pub struct AppConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DatabaseConfig {
-    /// PostgreSQL connection URL (e.g., `postgresql://user:pass@localhost/scorchkit`).
+    /// `PostgreSQL` connection URL (e.g., `postgresql://user:pass@localhost/scorchkit`).
     /// If `None`, storage features are disabled.
     pub url: Option<String>,
     /// Maximum number of connections in the pool.
@@ -59,7 +62,7 @@ pub struct ScanConfig {
     pub rate_limit: u32,
     /// Scan profile: quick, standard, thorough.
     pub profile: String,
-    /// HTTP/HTTPS proxy URL (e.g., http://127.0.0.1:8080 for Burp).
+    /// HTTP/HTTPS proxy URL (e.g., <http://127.0.0.1:8080> for Burp).
     pub proxy: Option<String>,
     /// Scope: only scan URLs matching these patterns (glob). Empty = target domain only.
     #[serde(default)]
@@ -150,6 +153,7 @@ pub struct ToolsConfig {
 
 impl ToolsConfig {
     /// Get the binary path for a tool, falling back to the tool name (PATH lookup).
+    #[must_use]
     pub fn get_path(&self, tool: &str) -> String {
         let override_path = match tool {
             "nmap" => &self.nmap,
@@ -221,7 +225,53 @@ impl Default for ReportConfig {
     }
 }
 
+/// Custom wordlist paths for brute-force and enumeration modules.
+///
+/// When a path is set, the corresponding module reads lines from that file
+/// instead of using its built-in default wordlist. Paths that don't exist
+/// cause a warning and fall back to built-in defaults.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct WordlistConfig {
+    /// Wordlist for directory brute-force (used by discovery, feroxbuster, ffuf, gobuster).
+    pub directory: Option<PathBuf>,
+    /// Wordlist for subdomain enumeration (one prefix per line).
+    pub subdomain: Option<PathBuf>,
+    /// Wordlist for virtual host discovery (one prefix per line).
+    pub vhost: Option<PathBuf>,
+    /// Wordlist for parameter fuzzing (one parameter name per line).
+    pub params: Option<PathBuf>,
+}
+
+/// Load a wordlist from a file, returning one entry per non-empty, non-comment line.
+///
+/// Lines starting with `#` are treated as comments and skipped.
+/// Leading/trailing whitespace is trimmed from each line.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read.
+pub fn load_wordlist(path: &std::path::Path) -> crate::engine::error::Result<Vec<String>> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        crate::engine::error::ScorchError::Config(format!(
+            "failed to read wordlist {}: {e}",
+            path.display()
+        ))
+    })?;
+    Ok(content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(String::from)
+        .collect())
+}
+
 impl AppConfig {
+    /// Load application configuration from an optional TOML file path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the config file cannot be read or contains invalid TOML.
     pub fn load(path: Option<&std::path::Path>) -> crate::engine::error::Result<Self> {
         if let Some(path) = path {
             if path.exists() {
@@ -243,9 +293,70 @@ impl AppConfig {
         Ok(Self::default())
     }
 
+    /// Serialize the default configuration as a TOML string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization to TOML fails.
     pub fn default_toml() -> crate::engine::error::Result<String> {
         toml::to_string_pretty(&Self::default()).map_err(|e| {
             crate::engine::error::ScorchError::Config(format!("failed to serialize config: {e}"))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify all wordlist paths default to None.
+    #[test]
+    fn wordlist_config_defaults_to_none() {
+        let wl = WordlistConfig::default();
+        assert!(wl.directory.is_none());
+        assert!(wl.subdomain.is_none());
+        assert!(wl.vhost.is_none());
+        assert!(wl.params.is_none());
+    }
+
+    /// Verify `load_wordlist` skips comment lines and blank lines.
+    #[test]
+    fn load_wordlist_skips_comments_and_blanks() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("test.txt");
+        std::fs::write(&path, "# comment\nadmin\n\n  api  \n# another comment\nstaging\n")
+            .expect("write test file");
+        let words = load_wordlist(&path).expect("load wordlist");
+        assert_eq!(words, vec!["admin", "api", "staging"]);
+    }
+
+    /// Verify `load_wordlist` returns an error for a missing file.
+    #[test]
+    fn load_wordlist_returns_error_for_missing() {
+        let result = load_wordlist(std::path::Path::new("/nonexistent/wordlist.txt"));
+        assert!(result.is_err());
+    }
+
+    /// Verify TOML deserialization of `[wordlists]` section.
+    #[test]
+    fn wordlist_config_deserialize() {
+        let toml_str = r#"
+[wordlists]
+directory = "/opt/SecLists/Discovery/Web-Content/common.txt"
+subdomain = "/opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).expect("parse TOML");
+        assert_eq!(
+            config.wordlists.directory.as_deref(),
+            Some(std::path::Path::new("/opt/SecLists/Discovery/Web-Content/common.txt"))
+        );
+        assert_eq!(
+            config.wordlists.subdomain.as_deref(),
+            Some(std::path::Path::new(
+                "/opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt"
+            ))
+        );
+        assert!(config.wordlists.vhost.is_none());
+        assert!(config.wordlists.params.is_none());
     }
 }

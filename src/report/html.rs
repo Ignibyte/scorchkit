@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::path::PathBuf;
 
 use crate::config::ReportConfig;
@@ -5,6 +6,10 @@ use crate::engine::error::Result;
 use crate::engine::scan_result::ScanResult;
 
 /// Save a scan result as a self-contained HTML file.
+///
+/// # Errors
+///
+/// Returns an error if the output directory cannot be created or the file cannot be written.
 pub fn save_report(result: &ScanResult, config: &ReportConfig) -> Result<PathBuf> {
     let output_dir = &config.output_dir;
     std::fs::create_dir_all(output_dir)?;
@@ -18,9 +23,8 @@ pub fn save_report(result: &ScanResult, config: &ReportConfig) -> Result<PathBuf
     Ok(path)
 }
 
-fn render_html(result: &ScanResult) -> String {
-    let s = &result.summary;
-
+/// Render the findings section of the HTML report.
+fn render_findings_html(result: &ScanResult) -> String {
     let mut findings_html = String::new();
     for (i, f) in result.findings.iter().enumerate() {
         let sev_class = f.severity.to_string();
@@ -28,12 +32,17 @@ fn render_html(result: &ScanResult) -> String {
         let remediation = f.remediation.as_deref().unwrap_or("");
         let owasp = f.owasp_category.as_deref().unwrap_or("");
         let cwe = f.cwe_id.map_or(String::new(), |c| format!("CWE-{c}"));
+        // JUSTIFICATION: confidence is 0.0–1.0, well within u8 range
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let confidence_pct = (f.confidence * 100.0) as u8;
 
-        findings_html.push_str(&format!(
+        let _ = write!(
+            findings_html,
             r#"<div class="finding {sev_class}">
   <div class="finding-header">
     <span class="finding-num">#{num}</span>
     <span class="severity-badge {sev_class}">{severity}</span>
+    <span class="confidence-badge">{confidence}%</span>
     <span class="finding-title">{title}</span>
   </div>
   <p class="finding-desc">{desc}</p>
@@ -47,6 +56,7 @@ fn render_html(result: &ScanResult) -> String {
 "#,
             num = i + 1,
             severity = f.severity.to_string().to_uppercase(),
+            confidence = confidence_pct,
             title = html_escape(&f.title),
             desc = html_escape(&f.description),
             target = html_escape(&f.affected_target),
@@ -66,8 +76,14 @@ fn render_html(result: &ScanResult) -> String {
                     html_escape(remediation)
                 )
             },
-        ));
+        );
     }
+    findings_html
+}
+
+fn render_html(result: &ScanResult) -> String {
+    let s = &result.summary;
+    let findings_html = render_findings_html(result);
 
     format!(
         r#"<!DOCTYPE html>
@@ -105,6 +121,7 @@ fn render_html(result: &ScanResult) -> String {
   .severity-badge.medium {{ background: #d29922; color: #000; }}
   .severity-badge.low {{ background: #3fb950; color: #000; }}
   .severity-badge.info {{ background: #58a6ff; color: #000; }}
+  .confidence-badge {{ padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; background: #30363d; color: #8b949e; }}
   .finding-title {{ font-weight: 600; }}
   .finding-desc {{ color: #8b949e; margin-bottom: 0.5rem; }}
   .finding-meta {{ font-size: 0.9rem; }}

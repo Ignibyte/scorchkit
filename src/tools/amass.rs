@@ -47,11 +47,11 @@ impl ScanModule for AmassModule {
         )
         .await?;
 
-        parse_amass_output(&output.stdout, ctx.target.url.as_str())
+        Ok(parse_amass_output(&output.stdout, ctx.target.url.as_str()))
     }
 }
 
-fn parse_amass_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_amass_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut subdomains = Vec::new();
 
     for line in output.lines() {
@@ -78,9 +78,38 @@ fn parse_amass_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
                 format!("Amass found {count} subdomains via passive enumeration."),
                 target_url,
             )
-            .with_evidence(format!("Subdomains:\n    {list}")),
+            .with_evidence(format!("Subdomains:\n    {list}"))
+            .with_confidence(0.8),
         );
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for Amass JSON-lines output parser.
+
+    /// Verify that `parse_amass_output` correctly aggregates subdomains
+    /// from Amass JSON-lines output into a consolidated finding.
+    #[test]
+    fn test_parse_amass_output() {
+        let output = r#"{"name":"api.example.com","domain":"example.com","addresses":[{"ip":"1.2.3.4"}]}
+{"name":"mail.example.com","domain":"example.com","addresses":[{"ip":"1.2.3.5"}]}
+{"name":"api.example.com","domain":"example.com","addresses":[{"ip":"1.2.3.4"}]}"#;
+
+        let findings = parse_amass_output(output, "https://example.com");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].title.contains("2 Subdomains"));
+        assert_eq!(findings[0].severity, Severity::Info);
+    }
+
+    /// Verify that `parse_amass_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_amass_output_empty() {
+        let findings = parse_amass_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

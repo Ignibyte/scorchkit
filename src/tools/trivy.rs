@@ -59,7 +59,7 @@ impl ScanModule for TrivyModule {
     }
 }
 
-/// Map Trivy/CVSS severity strings to ScorchKit severity levels.
+/// Map Trivy/CVSS severity strings to `ScorchKit` severity levels.
 fn map_trivy_severity(severity: &str) -> Severity {
     match severity.to_uppercase().as_str() {
         "CRITICAL" => Severity::Critical,
@@ -125,7 +125,8 @@ fn parse_trivy_output(stdout: &str, target_url: &str) -> Vec<Finding> {
                 ))
                 .with_remediation(format!("Update {pkg_name} from {installed} to {fixed}."))
                 .with_owasp("A06:2021 Vulnerable and Outdated Components")
-                .with_cwe(1104),
+                .with_cwe(1104)
+                .with_confidence(0.8),
             );
         }
     }

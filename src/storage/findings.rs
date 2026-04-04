@@ -1,7 +1,7 @@
 //! Finding persistence with fingerprint-based deduplication.
 //!
-//! When a finding is saved, its fingerprint (SHA-256 of module_id + title +
-//! affected_target) is checked against existing findings for the same project.
+//! When a finding is saved, its fingerprint (SHA-256 of `module_id` + title +
+//! `affected_target`) is checked against existing findings for the same project.
 //! If a match exists, `seen_count` is incremented and `last_seen` is updated
 //! instead of creating a duplicate row.
 
@@ -38,6 +38,10 @@ pub fn fingerprint(finding: &Finding) -> String {
 /// - Otherwise, insert a new tracked finding.
 ///
 /// Returns the number of new findings created (not counting updates).
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn save_findings(
     pool: &PgPool,
     project_id: Uuid,
@@ -56,7 +60,7 @@ pub async fn save_findings(
             "UPDATE tracked_findings \
              SET last_seen = now(), seen_count = seen_count + 1, scan_id = $3, \
                  evidence = COALESCE($4, evidence), \
-                 raw_finding = $5 \
+                 raw_finding = $5, confidence = $6 \
              WHERE project_id = $1 AND fingerprint = $2",
         )
         .bind(project_id)
@@ -64,6 +68,7 @@ pub async fn save_findings(
         .bind(scan_id)
         .bind(&finding.evidence)
         .bind(&raw_json)
+        .bind(finding.confidence)
         .execute(pool)
         .await
         .map_err(|e| ScorchError::Database(format!("update finding: {e}")))?;
@@ -74,8 +79,8 @@ pub async fn save_findings(
                 "INSERT INTO tracked_findings \
                  (scan_id, project_id, fingerprint, module_id, severity, \
                   title, description, affected_target, evidence, \
-                  remediation, owasp_category, cwe_id, raw_finding) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                  remediation, owasp_category, cwe_id, raw_finding, confidence) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
             )
             .bind(scan_id)
             .bind(project_id)
@@ -88,8 +93,9 @@ pub async fn save_findings(
             .bind(&finding.evidence)
             .bind(&finding.remediation)
             .bind(&finding.owasp_category)
-            .bind(finding.cwe_id.map(|id| id.cast_signed()))
+            .bind(finding.cwe_id.map(u32::cast_signed))
             .bind(&raw_json)
+            .bind(finding.confidence)
             .execute(pool)
             .await
             .map_err(|e| ScorchError::Database(format!("insert finding: {e}")))?;
@@ -102,6 +108,10 @@ pub async fn save_findings(
 }
 
 /// Update the lifecycle status of a tracked finding.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn update_finding_status(
     pool: &PgPool,
     finding_id: Uuid,
@@ -118,6 +128,10 @@ pub async fn update_finding_status(
 }
 
 /// Query findings for a project filtered by severity.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn find_by_severity(
     pool: &PgPool,
     project_id: Uuid,
@@ -136,6 +150,10 @@ pub async fn find_by_severity(
 }
 
 /// Query findings for a project filtered by lifecycle status.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn find_by_status(
     pool: &PgPool,
     project_id: Uuid,
@@ -154,6 +172,10 @@ pub async fn find_by_status(
 }
 
 /// Get all findings for a specific scan.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn find_by_scan(pool: &PgPool, scan_id: Uuid) -> Result<Vec<TrackedFinding>> {
     sqlx::query_as::<_, TrackedFinding>(
         "SELECT * FROM tracked_findings WHERE scan_id = $1 \
@@ -183,6 +205,10 @@ pub async fn list_findings(pool: &PgPool, project_id: Uuid) -> Result<Vec<Tracke
 }
 
 /// Get a single tracked finding by ID.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn get_finding(pool: &PgPool, id: Uuid) -> Result<Option<TrackedFinding>> {
     sqlx::query_as::<_, TrackedFinding>("SELECT * FROM tracked_findings WHERE id = $1")
         .bind(id)

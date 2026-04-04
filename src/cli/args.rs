@@ -32,7 +32,16 @@ pub enum Commands {
     /// Run all default scans against a target
     Run {
         /// Target URL, domain, or IP
-        target: String,
+        #[arg(required_unless_present_any = ["targets_file", "resume"])]
+        target: Option<String>,
+
+        /// File with one target per line (replaces positional target)
+        #[arg(long, conflicts_with = "target")]
+        targets_file: Option<PathBuf>,
+
+        /// Resume an interrupted scan from a checkpoint file
+        #[arg(long, conflicts_with_all = ["target", "targets_file"])]
+        resume: Option<PathBuf>,
 
         /// Specific modules to run (comma-separated)
         #[arg(short, long)]
@@ -57,6 +66,10 @@ pub enum Commands {
         /// HTTP proxy URL (e.g., `http://127.0.0.1:8080` for Burp Suite)
         #[arg(long)]
         proxy: Option<String>,
+
+        /// Minimum confidence threshold (0.0–1.0) — hide findings below this level
+        #[arg(long)]
+        min_confidence: Option<f64>,
 
         /// Restrict scope to URLs matching pattern (e.g., "*.example.com")
         #[arg(long)]

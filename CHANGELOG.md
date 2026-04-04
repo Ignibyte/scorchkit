@@ -2,7 +2,53 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [1.0.0] - 2026-04-04
+
+### Added
+- **Finding confidence scores** — Every finding now carries a `confidence: f64` (0.0–1.0) indicating false-positive likelihood. 6 tiers from 0.4 (static analysis) to 0.9 (definitive checks). All 225 Finding::new call sites across 77 modules set explicit confidence. New `--min-confidence` CLI flag filters findings below threshold. Confidence displayed in terminal, HTML, SARIF (as `rank`), and PDF reports. Storage layer persists via new `003_add_confidence.sql` migration. Backwards-compatible: old JSON reports without confidence deserialize with default 0.5. 8 new tests. (#82)
+- **Scan resume/checkpoint** — New `--resume <checkpoint-file>` CLI flag to resume interrupted scans. After each module completes, a checkpoint JSON file is saved with scan state (completed modules, findings, config hash). On resume, completed modules are skipped. Checkpoint auto-deleted on scan completion. All scans now checkpoint by default. `src/runner/checkpoint.rs` with `ScanCheckpoint` struct, `save/load/remove` functions. 6 new tests. (#84)
+- **Inter-module data sharing** — New `SharedData` store in `ScanContext` enables modules to share discovered data. Crawler publishes URLs, forms, and parameters. Tech module publishes detected technologies. Subdomain module publishes discovered subdomains. Injection and XSS scanners consume shared URLs for expanded attack surface. New `Orchestrator::run_phased()` runs recon modules first, then scanners. Thread-safe via `RwLock`. 5 new tests. (#83)
+- **Multi-target scanning** — New `--targets-file <path>` CLI flag on the `run` command accepts a file with one target per line. Supports `#` comments and blank lines. Targets are scanned sequentially with per-target progress display. Individual target failures are logged but don't abort the batch. Summary printed at end showing total scanned and any errors. Mutually exclusive with the positional `<target>` argument. `parse_targets_file()` in `engine/target.rs`. 3 new tests. (#81)
+- **Custom wordlists configuration** — New `[wordlists]` section in `config.toml` with per-purpose paths: `directory` (dir brute-force), `subdomain` (DNS enumeration), `vhost` (virtual host discovery), `params` (parameter fuzzing). Built-in modules (subdomain, vhost, discovery) check config first, fall back to hardcoded defaults. Tool wrappers (ffuf, gobuster) pass configured wordlist path to external tools. `load_wordlist()` helper reads files with comment/blank-line support. 4 new tests. (#85)
+- **Path Traversal / LFI scanner** (`path_traversal`) — Detects directory traversal and local file inclusion via 24 payloads covering depth variations (1-8 levels), URL encoding, double encoding, null byte bypasses, backslash (Windows), UTF-8 overlong encoding, and filter bypass techniques. Matches 12 file content indicators for Linux (`/etc/passwd`, `/etc/shadow`) and Windows (`win.ini`, `boot.ini`, hosts). CWE-22, OWASP A01:2021. `src/scanner/path_traversal.rs` with 7 tests (#70)
+- **SSTI scanner** (`ssti`) — Detects server-side template injection across 8 template engines (Jinja2, Twig, Freemarker, ERB, Mako, Velocity, Smarty, Pebble) via 10 safe mathematical expression payloads. Boundary-aware response matching avoids false positives from CSS/pixel values. Engine identification from error messages (19 fingerprints). Tests query params, form fields, and HTTP headers (User-Agent, Referer). CWE-1336, OWASP A03:2021. `src/scanner/ssti.rs` with 7 tests (#70)
+- **CRLF injection scanner** (`crlf`) — Detects HTTP response splitting via 7 payload variants: standard `%0d%0a`, double-encoded, unicode, bare LF/CR, Set-Cookie injection, and tab-prefixed. Checks response headers for injected canary headers. CWE-113, OWASP A03:2021. `src/scanner/crlf.rs` with 5 tests (#72)
+- **Host header injection scanner** (`host_header`) — Detects host header poisoning via 5 override headers (X-Forwarded-Host, X-Host, X-Forwarded-Server, X-Original-URL, X-Rewrite-URL). Checks response body for reflected canary and HTML attributes (href, src, action) for cache poisoning. CWE-644, OWASP A03:2021/A05:2021. `src/scanner/host_header.rs` with 5 tests (#72)
+- **NoSQL injection scanner** (`nosql`) — Detects MongoDB/CouchDB/Redis injection via 12 payloads: `$gt`, `$ne`, `$regex`, `$exists` operators, bracket notation, `$where` JavaScript injection, boolean-based blind. Error-based detection (21 patterns), 500 status detection, response size differential. JSON body injection for auth bypass. CWE-943, OWASP A03:2021. `src/scanner/nosql.rs` with 5 tests (#73)
+- **LDAP injection scanner** (`ldap`) — Detects LDAP filter injection via 11 payloads: wildcard, filter-closing, OR injection, null byte, escaped metacharacters. Error-based detection (24 patterns) covering PHP, Java, Python, Active Directory LDAP implementations. CWE-90, OWASP A03:2021. `src/scanner/ldap.rs` with 5 tests (#73)
+- **HTTP request smuggling scanner** (`smuggling`) — Heuristic-based CL.TE/TE.CL/TE.TE risk detection via proxy indicator analysis (17 CDN/proxy headers), `Transfer-Encoding` obfuscation variant testing (9 variants), and `Content-Length` handling inconsistency checks. Reports risk indicators with evidence strength-based severity since `reqwest` normalizes TE headers. CWE-444, OWASP A05:2021. `src/scanner/smuggling.rs` with 5 tests (#74)
+- **Prototype pollution scanner** (`prototype_pollution`) — Detects `__proto__` and `constructor.prototype` injection via 4 JSON body payloads and 3 query parameter payloads. Checks for canary reflection and server errors. CWE-1321, OWASP A08:2021. `src/scanner/prototype_pollution.rs` with 4 tests (#75)
+- **Mass assignment scanner** (`mass_assignment`) — Detects over-posting via 12 privileged field injections (`role`, `isAdmin`, `price`, `permissions`, etc.) in JSON POST bodies. Compares against baseline to avoid false positives. CWE-915, OWASP A04:2021. `src/scanner/mass_assignment.rs` with 4 tests (#75)
+- **Clickjacking scanner** (`clickjacking`) — Active test for missing frame protection: flags only when BOTH `X-Frame-Options` AND CSP `frame-ancestors` are absent. Only checks HTML pages. CWE-1021, OWASP A05:2021. `src/scanner/clickjacking.rs` with 5 tests (#76)
+- **DOM XSS scanner** (`dom_xss`) — Static JavaScript source/sink analysis: 12 DOM sources (`location.hash`, `document.referrer`, etc.) and 15 sinks (`innerHTML`, `eval`, `document.write`, etc.). Flags source+sink combinations and orphan critical sinks. CWE-79, OWASP A07:2021. `src/scanner/dom_xss.rs` with 5 tests (#76)
+- **JS file analysis recon** (`js_analysis`) — Extracts secrets (17 patterns: AWS keys, Stripe, GitHub/GitLab tokens, private keys), API endpoints (13 patterns), and source map references from inline and external JavaScript files. CWE-540/CWE-615. `src/recon/js_analysis.rs` with 6 tests (#77)
+- **CNAME takeover + cert transparency recon** (`cname_takeover`) — Detects dangling CNAME records via 16 service fingerprints (GitHub Pages, Heroku, S3, Shopify, etc.) and enumerates subdomains via crt.sh certificate transparency logs. CWE-923/CWE-200. `src/recon/cname_takeover.rs` with 4 tests (#78)
+- **Virtual host discovery recon** (`vhost`) — Brute-forces Host header with 36 common prefixes (admin, api, staging, etc.) and detects unique vhosts via response differential analysis. `src/recon/vhost.rs` with 2 tests (#78)
+- **Cloud metadata + bucket enumeration recon** (`cloud`) — Detects cloud providers from 17 response header indicators (AWS, GCP, Azure, Cloudflare, etc.) and enumerates S3 buckets with 19 domain-derived name suffixes. CWE-200/CWE-284. `src/recon/cloud.rs` with 5 tests (#79)
+- Total scanner modules: 35 built-in (was 24). Total recon modules: 10 (was 6).
+- Total tests: 419 default (was 345), 555 MCP (was 481)
+
 ## [0.29.0] - 2026-03-30
+
+### Changed
+- **Final test coverage sweep** — Added 72 new tests across 30 files (#69). Clears entire test backlog.
+  - Scanner unit tests: ssl (3), misconfig (3), ratelimit (3), redirect (3), api_schema (3), waf (3)
+  - Tool wrapper parser tests: 22 tools × 2 tests (nmap, nuclei, nikto, sqlmap, feroxbuster, sslyze, zap, ffuf, metasploit, wafw00f, testssl, wpscan, amass, subfinder, dalfox, hydra, httpx, theharvester, arjun, cewl, droopescan, interactsh)
+  - MCP integration tests: project_status (2), plan_scan (2), analyze_findings (2)
+  - Attack chain correlation tests: sqli, ssrf, idor, credential compromise (4)
+  - Total: 409→481 tests (MCP), 283→345 tests (default)
+- **Test coverage expansion** — Added 88 new tests across 14 files (#68). Scanner coverage 37%→62%, recon 17%→100%, MCP scheduling 0→8 tests.
+  - OWASP scanner unit tests: xss (6), ssrf (6), injection (8), cmdi (3), csrf (3), jwt (12), idor (8), sensitive (4)
+  - Recon module unit tests: headers (7), tech (5), discovery (9), crawler (6), subdomain (3)
+  - MCP scheduling integration tests: `schedule_scan` (4), `run_due_scans` (4)
+  - Total: 319→409 tests (MCP), 201→283 tests (default)
+- **Clippy zero-warnings cleanup** — Resolved all 185 clippy pedantic/style warnings across 64 files (#67). Zero-warning builds on both default and `--features mcp` configurations.
+  - 35 `doc_markdown` backtick fixes in doc comments
+  - 23 `manual_let_else` refactors (if-let → let...else)
+  - 21 tool wrapper `parse_*_output()` signatures simplified (`Result<Vec<Finding>>` → `Vec<Finding>`)
+  - 30 `# Errors` doc sections added to `Result`-returning functions
+  - ~76 mixed idiom fixes (or_fun_call, map_or_else, format_push_string, must_use, const_fn, etc.)
+  - 4 helper function extractions for too_many_lines (crawler, injection, xss, html)
 
 ### Added
 - **Deep tool validation** (`doctor --deep`) — Version checks, min-version enforcement, nuclei template freshness, remediation hints for 33 external tools. `src/cli/doctor.rs` with `ToolSpec`, `Version` comparison, 8 new tests (#48)

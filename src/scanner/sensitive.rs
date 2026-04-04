@@ -79,7 +79,8 @@ fn check_secrets(body: &str, url: &str, findings: &mut Vec<Finding>) {
                         .with_evidence(format!("...{snippet}..."))
                         .with_remediation(format!("Remove {name} from client-facing responses. Use environment variables server-side."))
                         .with_owasp("A02:2021 Cryptographic Failures")
-                        .with_cwe(200),
+                        .with_cwe(200)
+                        .with_confidence(0.7),
                 );
             }
         }
@@ -124,7 +125,8 @@ fn check_secrets(body: &str, url: &str, findings: &mut Vec<Finding>) {
                                 .with_evidence(format!("{p}{}", &value_chars[..value_chars.len().min(20)]))
                                 .with_remediation("Remove credentials from client-facing responses.")
                                 .with_owasp("A02:2021 Cryptographic Failures")
-                                .with_cwe(200),
+                                .with_cwe(200)
+                                .with_confidence(0.7),
                         );
                         break; // One per indicator type
                     }
@@ -146,7 +148,8 @@ async fn check_source_maps(
             Finding::new("sensitive", Severity::Low, "Source Map Reference Found", "The response contains a sourceMappingURL reference. Source maps expose original source code.", url)
                 .with_remediation("Remove source maps from production builds")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(540),
+                .with_cwe(540)
+                .with_confidence(0.7),
         );
     }
 
@@ -163,7 +166,8 @@ async fn check_source_maps(
                             .with_evidence(format!("HTTP 200 at {map_url}"))
                             .with_remediation("Remove .map files from production or restrict access")
                             .with_owasp("A05:2021 Security Misconfiguration")
-                            .with_cwe(540),
+                            .with_cwe(540)
+                            .with_confidence(0.7),
                     );
                     break;
                 }
@@ -193,3 +197,84 @@ const SECRET_PATTERNS: &[(&str, &str, Severity)] = &[
     ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9", "Hardcoded JWT", Severity::Medium),
     ("password", "Password Reference", Severity::Info),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the sensitive data exposure module's secret detection logic.
+
+    /// Verify that `check_secrets` detects an AWS access key pattern in the response body.
+    #[test]
+    fn test_check_secrets_aws_key() {
+        // Use a realistic-looking key without false-positive trigger words like "example"
+        let body = r#"config = { "aws_access_key": "AKIAIOSFODNN7REALKEYZ" }"#;
+        let mut findings = Vec::new();
+
+        check_secrets(body, "https://target.com", &mut findings);
+
+        assert!(
+            findings.iter().any(|f| f.title.contains("AWS")),
+            "Should detect AWS Access Key ID pattern (AKIA)"
+        );
+    }
+
+    /// Verify that `check_secrets` detects GitHub personal access token patterns.
+    #[test]
+    fn test_check_secrets_github_token() {
+        let body = r#"{"token": "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890"}"#;
+        let mut findings = Vec::new();
+
+        check_secrets(body, "https://example.com", &mut findings);
+
+        assert!(
+            findings.iter().any(|f| f.title.contains("GitHub")),
+            "Should detect GitHub Personal Access Token pattern (ghp_)"
+        );
+    }
+
+    /// Verify that `check_secrets` produces no findings for a clean body with
+    /// no secret patterns.
+    #[test]
+    fn test_check_secrets_no_secrets() {
+        let body =
+            "<html><body><h1>Welcome to our site!</h1><p>Nothing to see here.</p></body></html>";
+        let mut findings = Vec::new();
+
+        check_secrets(body, "https://example.com", &mut findings);
+
+        assert!(
+            findings.is_empty(),
+            "Should produce no findings for clean body, found: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+    }
+
+    /// Verify that `check_secrets` detects multiple distinct secret patterns when
+    /// the body contains more than one type of exposed credential.
+    #[test]
+    fn test_check_secrets_multiple() {
+        let body = r#"
+            keys:
+              stripe: "sk_live_aBcDeFgHiJkLmNoPqRsTuVwXyZ123"
+              slack: "xoxb-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx"
+        "#;
+        let mut findings = Vec::new();
+
+        check_secrets(body, "https://example.com", &mut findings);
+
+        assert!(
+            findings.len() >= 2,
+            "Should detect at least 2 different secret patterns, found {}",
+            findings.len()
+        );
+        assert!(
+            findings.iter().any(|f| f.title.contains("Stripe")),
+            "Should detect Stripe secret key"
+        );
+        assert!(
+            findings.iter().any(|f| f.title.contains("Slack")),
+            "Should detect Slack bot token"
+        );
+    }
+}

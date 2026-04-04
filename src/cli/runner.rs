@@ -15,6 +15,13 @@ use crate::report;
 use crate::runner::orchestrator::Orchestrator;
 
 /// Execute the CLI command.
+///
+/// # Errors
+///
+/// Returns an error if the dispatched subcommand fails.
+// JUSTIFICATION: CLI dispatch function — match arms are the natural structure;
+// extraction would scatter dispatch logic
+#[allow(clippy::too_many_lines)]
 pub async fn execute(cli: Cli) -> Result<()> {
     let config = AppConfig::load(cli.config.as_deref())?;
     let config = Arc::new(config);
@@ -22,12 +29,15 @@ pub async fn execute(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Run {
             target,
+            targets_file,
+            resume,
             modules,
             skip,
             analyze,
             plan,
             profile,
             proxy,
+            min_confidence,
             scope,
             exclude,
             project,
@@ -47,21 +57,106 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 }
                 Arc::new(c)
             };
-            run_scan(
-                &config,
-                &target,
-                modules,
-                skip,
-                None,
-                cli.output,
-                cli.quiet,
-                analyze,
-                plan,
-                &profile,
-                project.as_deref(),
-                database_url.as_deref(),
-            )
-            .await
+
+            // Handle --resume: load checkpoint and run with resume
+            if let Some(ref checkpoint_file) = resume {
+                use crate::runner::checkpoint;
+                let cp = checkpoint::load_checkpoint(checkpoint_file)?;
+                if !cli.quiet {
+                    println!(
+                        "{} Resuming scan {} for {}",
+                        ">>>".cyan().bold(),
+                        cp.scan_id,
+                        cp.target.cyan()
+                    );
+                }
+                return run_scan_with_resume(
+                    &config,
+                    &cp,
+                    modules,
+                    skip,
+                    cli.output,
+                    cli.quiet,
+                    analyze,
+                    plan,
+                    min_confidence,
+                    project.as_deref(),
+                    database_url.as_deref(),
+                )
+                .await;
+            }
+
+            // Build target list: single target or from file
+            let target_list = if let Some(ref file) = targets_file {
+                crate::engine::target::parse_targets_file(file)?
+            } else if let Some(ref t) = target {
+                vec![t.clone()]
+            } else {
+                return Err(ScorchError::Config(
+                    "either <target> or --targets-file is required".to_string(),
+                ));
+            };
+
+            let total = target_list.len();
+            let mut errors = Vec::new();
+
+            for (i, target_str) in target_list.iter().enumerate() {
+                if total > 1 && !cli.quiet {
+                    println!(
+                        "\n{} Scanning target {}/{}: {}",
+                        ">>>".cyan().bold(),
+                        i + 1,
+                        total,
+                        target_str.cyan()
+                    );
+                }
+
+                if let Err(e) = run_scan(
+                    &config,
+                    target_str,
+                    modules.clone(),
+                    skip.clone(),
+                    None,
+                    cli.output.clone(),
+                    cli.quiet,
+                    analyze,
+                    plan,
+                    &profile,
+                    min_confidence,
+                    project.as_deref(),
+                    database_url.as_deref(),
+                )
+                .await
+                {
+                    if total > 1 {
+                        // Multi-target: log error and continue
+                        if !cli.quiet {
+                            println!("{} Target {} failed: {e}", "ERR".red().bold(), target_str);
+                        }
+                        errors.push((target_str.clone(), e.to_string()));
+                    } else {
+                        // Single target: propagate error
+                        return Err(e);
+                    }
+                }
+            }
+
+            // Print multi-target summary
+            if total > 1 && !cli.quiet {
+                println!("\n{}", "━".repeat(50).dimmed());
+                println!(
+                    "  {} target{} scanned, {} failed",
+                    total,
+                    if total == 1 { "" } else { "s" },
+                    errors.len()
+                );
+                for (t, e) in &errors {
+                    println!("    {} {}: {}", "✗".red(), t, e);
+                }
+                println!("{}", "━".repeat(50).dimmed());
+            }
+
+            Ok(())
         }
 
         Commands::Recon { target, modules } => {
@@ -76,6 +171,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 false,
                 false,
                 "standard",
+                None,
                 None,
                 None,
             )
@@ -96,6 +192,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 "standard",
                 None,
                 None,
+                None,
             )
             .await
         }
@@ -106,7 +203,10 @@ pub async fn execute(cli: Cli) -> Result<()> {
 
         Commands::Diff { baseline, current } => run_diff(&baseline, &current),
 
-        Commands::Modules { check_tools } => list_modules(check_tools),
+        Commands::Modules { check_tools } => {
+            list_modules(check_tools);
+            Ok(())
+        }
 
         Commands::Init { target, project, database_url } => {
             super::init::run_init(target.as_deref(), project.as_deref(), database_url.as_deref())
@@ -243,9 +343,110 @@ async fn run_schedule_command(
     }
 }
 
+/// Resume an interrupted scan from a checkpoint file.
+// JUSTIFICATION: Resume mirrors run_scan's parameter set minus target (from checkpoint)
+#[allow(clippy::too_many_arguments)]
+async fn run_scan_with_resume(
+    config: &Arc<AppConfig>,
+    checkpoint: &crate::runner::checkpoint::ScanCheckpoint,
+    modules: Option<String>,
+    skip: Option<String>,
+    output_format: Option<OutputFormat>,
+    quiet: bool,
+    analyze: bool,
+    _plan: bool,
+    min_confidence: Option<f64>,
+    project_name: Option<&str>,
+    database_url: Option<&str>,
+) -> Result<()> {
+    use crate::runner::checkpoint;
+
+    let target = Target::parse(&checkpoint.target)?;
+    let http_client = build_http_client(config)?;
+    let ctx = ScanContext::new(target, Arc::clone(config), http_client);
+
+    let module_filter: Option<Vec<String>> =
+        modules.map(|m| m.split(',').map(|s| s.trim().to_string()).collect());
+    let skip_filter: Option<Vec<String>> =
+        skip.map(|s| s.split(',').map(|s| s.trim().to_string()).collect());
+
+    let mut orchestrator = Orchestrator::new(ctx);
+    orchestrator.register_default_modules();
+    orchestrator.apply_profile(&checkpoint.profile);
+
+    if let Some(ref include) = module_filter {
+        orchestrator.filter_by_ids(include);
+    }
+    if let Some(ref exclude) = skip_filter {
+        orchestrator.exclude_by_ids(exclude);
+    }
+
+    let cp_path = checkpoint::checkpoint_path(&config.report.output_dir, &checkpoint.scan_id);
+    let mut result = orchestrator.run_with_checkpoint(quiet, &cp_path, Some(checkpoint)).await?;
+
+    if let Some(min_conf) = min_confidence {
+        result.filter_by_confidence(min_conf);
+    }
+
+    // Save report
+    match output_format {
+        Some(OutputFormat::Json) | None => {
+            let path = report::json::save_report(&result, &config.report)?;
+            if !quiet {
+                println!("\n{} {}", "Report saved:".green().bold(), path.display());
+            }
+        }
+        Some(OutputFormat::Html) => {
+            let path = report::html::save_report(&result, &config.report)?;
+            if !quiet {
+                println!("\n{} {}", "HTML report saved:".green().bold(), path.display());
+            }
+        }
+        Some(OutputFormat::Sarif) => {
+            let path = report::sarif::save_report(&result, &config.report)?;
+            if !quiet {
+                println!("\n{} {}", "SARIF report saved:".green().bold(), path.display());
+            }
+        }
+        Some(OutputFormat::Pdf) => {
+            let path = report::pdf::save_report(&result, &config.report)?;
+            if !quiet {
+                println!("\n{} {}", "PDF report saved:".green().bold(), path.display());
+            }
+        }
+        _ => {}
+    }
+
+    if !quiet {
+        report::terminal::print_report(&result);
+    }
+
+    if matches!(output_format, Some(OutputFormat::Json)) {
+        let json = serde_json::to_string_pretty(&result)?;
+        println!("{json}");
+    }
+
+    // Persist to database if --project was specified
+    if let Some(name) = project_name {
+        persist_scan_results(config, name, database_url, &result, quiet).await?;
+    }
+
+    // AI analysis
+    let should_analyze = analyze || config.ai.auto_analyze;
+    if should_analyze && config.ai.enabled {
+        use crate::ai::prompts::AnalysisFocus;
+        run_ai_analysis(config, &result, AnalysisFocus::Summary, quiet, None).await?;
+    }
+
+    Ok(())
+}
+
 // JUSTIFICATION: run_scan maps directly to CLI flag combinations; bundling into a struct
 // would add indirection for an internal dispatch function with no external callers.
 #[allow(clippy::too_many_arguments)]
+// JUSTIFICATION: CLI dispatch function — match arms are the natural structure;
+// extraction would scatter dispatch logic
+#[allow(clippy::too_many_lines)]
 async fn run_scan(
     config: &Arc<AppConfig>,
     target_str: &str,
@@ -257,6 +458,7 @@ async fn run_scan(
     analyze: bool,
     plan: bool,
     profile: &str,
+    min_confidence: Option<f64>,
     project_name: Option<&str>,
     database_url: Option<&str>,
 ) -> Result<()> {
@@ -370,7 +572,17 @@ async fn run_scan(
         orchestrator.exclude_by_ids(exclude);
     }
 
-    let result = orchestrator.run(quiet).await?;
+    // Run with checkpoint support (enables --resume on future interrupted scans)
+    let cp_path = crate::runner::checkpoint::checkpoint_path(
+        &config.report.output_dir,
+        &uuid::Uuid::new_v4().to_string(),
+    );
+    let mut result = orchestrator.run_with_checkpoint(quiet, &cp_path, None).await?;
+
+    // Apply confidence filter before reporting (but after persistence-eligible collection)
+    if let Some(min_conf) = min_confidence {
+        result.filter_by_confidence(min_conf);
+    }
 
     // Save report
     match output_format {
@@ -627,7 +839,7 @@ async fn build_analyze_project_context(
     Ok(None)
 }
 
-fn list_modules(check_tools: bool) -> Result<()> {
+fn list_modules(check_tools: bool) {
     let modules = crate::runner::orchestrator::all_modules();
 
     println!();
@@ -659,8 +871,6 @@ fn list_modules(check_tools: bool) -> Result<()> {
         );
     }
     println!();
-
-    Ok(())
 }
 
 fn build_http_client(config: &AppConfig) -> Result<reqwest::Client> {

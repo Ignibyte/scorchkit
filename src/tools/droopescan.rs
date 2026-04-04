@@ -40,11 +40,11 @@ impl ScanModule for DroopescanModule {
         )
         .await?;
 
-        parse_droopescan_output(&output.stdout, target)
+        Ok(parse_droopescan_output(&output.stdout, target))
     }
 }
 
-fn parse_droopescan_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_droopescan_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(output) {
@@ -58,7 +58,8 @@ fn parse_droopescan_output(output: &str, target_url: &str) -> Result<Vec<Finding
                     format!("Droopescan identified CMS version: {version}"),
                     target_url,
                 )
-                .with_evidence(format!("Version: {version}")),
+                .with_evidence(format!("Version: {version}"))
+                .with_confidence(0.7),
             );
         }
 
@@ -75,7 +76,8 @@ fn parse_droopescan_output(output: &str, target_url: &str) -> Result<Vec<Finding
                         format!("CMS plugin detected: {name} version {version}"),
                         target_url,
                     )
-                    .with_evidence(format!("{name} {version}")),
+                    .with_evidence(format!("{name} {version}"))
+                    .with_confidence(0.7),
                 );
             }
         }
@@ -94,12 +96,43 @@ fn parse_droopescan_output(output: &str, target_url: &str) -> Result<Vec<Finding
                             desc,
                             url,
                         )
-                        .with_owasp("A05:2021 Security Misconfiguration"),
+                        .with_owasp("A05:2021 Security Misconfiguration")
+                        .with_confidence(0.7),
                     );
                 }
             }
         }
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for Droopescan JSON output parser.
+
+    /// Verify that `parse_droopescan_output` correctly extracts CMS version,
+    /// plugins, and interesting URLs from Droopescan JSON output.
+    #[test]
+    fn test_parse_droopescan_output() {
+        let output = r#"{"version":"8.9.20","plugins":[{"name":"views","version":"8.x-3.14"}],"interesting_urls":[{"url":"https://example.com/CHANGELOG.txt","description":"Default changelog file"}]}"#;
+
+        let findings = parse_droopescan_output(output, "https://example.com");
+        assert_eq!(findings.len(), 3);
+        let version = findings.iter().find(|f| f.title.contains("8.9.20"));
+        assert!(version.is_some());
+        let plugin = findings.iter().find(|f| f.title.contains("views"));
+        assert!(plugin.is_some());
+        let interesting = findings.iter().find(|f| f.title.contains("CHANGELOG"));
+        assert!(interesting.is_some());
+    }
+
+    /// Verify that `parse_droopescan_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_droopescan_output_empty() {
+        let findings = parse_droopescan_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

@@ -47,11 +47,11 @@ impl ScanModule for SubfinderModule {
         )
         .await?;
 
-        parse_subfinder_output(&output.stdout, ctx.target.url.as_str())
+        Ok(parse_subfinder_output(&output.stdout, ctx.target.url.as_str()))
     }
 }
 
-fn parse_subfinder_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_subfinder_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut subdomains = Vec::new();
 
     for line in output.lines() {
@@ -84,9 +84,38 @@ fn parse_subfinder_output(output: &str, target_url: &str) -> Result<Vec<Finding>
                 format!("Subfinder found {count} subdomains."),
                 target_url,
             )
-            .with_evidence(format!("Subdomains:\n    {list}")),
+            .with_evidence(format!("Subdomains:\n    {list}"))
+            .with_confidence(0.8),
         );
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for Subfinder output parser (JSON and plain text).
+
+    /// Verify that `parse_subfinder_output` correctly aggregates subdomains
+    /// from Subfinder JSON-lines output into a consolidated finding.
+    #[test]
+    fn test_parse_subfinder_output() {
+        let output = r#"{"host":"api.example.com","source":"crtsh"}
+{"host":"cdn.example.com","source":"dnsdumpster"}
+{"host":"mail.example.com","source":"hackertarget"}"#;
+
+        let findings = parse_subfinder_output(output, "https://example.com");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].title.contains("3 Subdomains"));
+        assert_eq!(findings[0].severity, Severity::Info);
+    }
+
+    /// Verify that `parse_subfinder_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_subfinder_output_empty() {
+        let findings = parse_subfinder_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

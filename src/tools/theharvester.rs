@@ -44,11 +44,11 @@ impl ScanModule for TheHarvesterModule {
         )
         .await?;
 
-        parse_harvester_output(&output.stdout, ctx.target.url.as_str())
+        Ok(parse_harvester_output(&output.stdout, ctx.target.url.as_str()))
     }
 }
 
-fn parse_harvester_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_harvester_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     let mut emails = Vec::new();
     let mut hosts = Vec::new();
@@ -93,7 +93,8 @@ fn parse_harvester_output(output: &str, target_url: &str) -> Result<Vec<Finding>
                 "theHarvester found publicly exposed email addresses.",
                 target_url,
             )
-            .with_evidence(format!("Emails:\n    {}", emails.join("\n    "))),
+            .with_evidence(format!("Emails:\n    {}", emails.join("\n    ")))
+            .with_confidence(0.6),
         );
     }
     if !hosts.is_empty() {
@@ -105,9 +106,46 @@ fn parse_harvester_output(output: &str, target_url: &str) -> Result<Vec<Finding>
                 "theHarvester found associated hosts.",
                 target_url,
             )
-            .with_evidence(format!("Hosts:\n    {}", hosts.join("\n    "))),
+            .with_evidence(format!("Hosts:\n    {}", hosts.join("\n    ")))
+            .with_confidence(0.6),
         );
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for theHarvester section-based text output parser.
+
+    /// Verify that `parse_harvester_output` correctly extracts emails and
+    /// hosts from theHarvester section-delimited text output.
+    #[test]
+    fn test_parse_harvester_output() {
+        let output = "\
+[*] Emails found:\n\
+admin@example.com\n\
+contact@example.com\n\
+[*] Hosts found:\n\
+www.example.com:1.2.3.4\n\
+mail.example.com:1.2.3.5\n\
+[*] Done\n";
+
+        let findings = parse_harvester_output(output, "https://example.com");
+        assert_eq!(findings.len(), 2);
+        let emails = findings.iter().find(|f| f.title.contains("Emails"));
+        assert!(emails.is_some());
+        assert!(emails.expect("email finding should exist").title.contains("2 Emails"));
+        let hosts = findings.iter().find(|f| f.title.contains("Hosts"));
+        assert!(hosts.is_some());
+    }
+
+    /// Verify that `parse_harvester_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_harvester_output_empty() {
+        let findings = parse_harvester_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

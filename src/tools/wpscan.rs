@@ -9,7 +9,7 @@ use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
 use crate::runner::subprocess;
 
-/// WordPress vulnerability scanning via WPScan.
+/// `WordPress` vulnerability scanning via `WPScan`.
 #[derive(Debug)]
 pub struct WpscanModule;
 
@@ -44,16 +44,16 @@ impl ScanModule for WpscanModule {
         )
         .await?;
 
-        parse_wpscan_output(&output.stdout, target)
+        Ok(parse_wpscan_output(&output.stdout, target))
     }
 }
 
-fn parse_wpscan_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_wpscan_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let json: serde_json::Value = match serde_json::from_str(output) {
         Ok(v) => v,
-        Err(_) => return Ok(findings),
+        Err(_) => return findings,
     };
 
     // WordPress version vulnerabilities
@@ -67,7 +67,8 @@ fn parse_wpscan_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
                 format!("WordPress version {wp_ver} is installed."),
                 target_url,
             )
-            .with_evidence(format!("WordPress version: {wp_ver}")),
+            .with_evidence(format!("WordPress version: {wp_ver}"))
+            .with_confidence(0.8),
         );
 
         if let Some(vulns) = version.get("vulnerabilities").and_then(|v| v.as_array()) {
@@ -90,7 +91,7 @@ fn parse_wpscan_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
                 if !vuln_type.is_empty() {
                     f = f.with_evidence(format!("Type: {vuln_type}"));
                 }
-                findings.push(f);
+                findings.push(f.with_confidence(0.8));
             }
         }
     }
@@ -114,11 +115,41 @@ fn parse_wpscan_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
                     if let Some(fix) = fixed_in {
                         f = f.with_remediation(format!("Update {name} to {fix} or later"));
                     }
-                    findings.push(f);
+                    findings.push(f.with_confidence(0.8));
                 }
             }
         }
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for WPScan JSON output parser.
+
+    /// Verify that `parse_wpscan_output` correctly extracts WordPress version
+    /// info and plugin vulnerabilities from WPScan JSON output.
+    #[test]
+    fn test_parse_wpscan_output() {
+        let output = r#"{"version":{"number":"5.8.1","vulnerabilities":[{"title":"WP 5.8.1 XSS Vulnerability","vuln_type":"XSS","fixed_in":"5.8.2"}]},"plugins":{"contact-form-7":{"vulnerabilities":[{"title":"CF7 RCE","fixed_in":"5.5.4"}]}}}"#;
+
+        let findings = parse_wpscan_output(output, "https://example.com");
+        // 1 version info + 1 version vuln + 1 plugin vuln = 3
+        assert_eq!(findings.len(), 3);
+        let version_info = findings.iter().find(|f| f.title.contains("WordPress 5.8.1"));
+        assert!(version_info.is_some());
+        let plugin_vuln = findings.iter().find(|f| f.title.contains("contact-form-7"));
+        assert!(plugin_vuln.is_some());
+        assert_eq!(plugin_vuln.expect("plugin vuln should exist").severity, Severity::High);
+    }
+
+    /// Verify that `parse_wpscan_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_wpscan_output_empty() {
+        let findings = parse_wpscan_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

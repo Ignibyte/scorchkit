@@ -44,11 +44,11 @@ impl ScanModule for HydraModule {
         )
         .await?;
 
-        parse_hydra_output(&output.stdout, ctx.target.url.as_str())
+        Ok(parse_hydra_output(&output.stdout, ctx.target.url.as_str()))
     }
 }
 
-fn parse_hydra_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_hydra_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     for line in output.lines() {
         if line.contains("login:") && line.contains("password:") {
@@ -63,9 +63,40 @@ fn parse_hydra_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
                 .with_evidence(line.trim().to_string())
                 .with_remediation("Change default credentials immediately")
                 .with_owasp("A07:2021 Identification and Authentication Failures")
-                .with_cwe(798),
+                .with_cwe(798)
+                .with_confidence(0.9),
             );
         }
     }
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for Hydra console output parser.
+
+    /// Verify that `parse_hydra_output` correctly extracts credential
+    /// findings from Hydra output containing login/password pairs.
+    #[test]
+    fn test_parse_hydra_output() {
+        let output = "\
+Hydra v9.4 starting\n\
+[DATA] attacking http-get://example.com:443/admin\n\
+[443][http-get] host: example.com   login: admin   password: admin\n\
+1 of 1 target completed, 1 valid password found\n";
+
+        let findings = parse_hydra_output(output, "https://example.com");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert_eq!(findings[0].cwe_id, Some(798));
+    }
+
+    /// Verify that `parse_hydra_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_hydra_output_empty() {
+        let findings = parse_hydra_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

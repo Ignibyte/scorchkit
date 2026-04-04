@@ -83,7 +83,7 @@ pub struct TrackedFinding {
     pub scan_id: Uuid,
     /// The project this finding belongs to.
     pub project_id: Uuid,
-    /// Stable dedup hash: SHA-256(module_id || title || affected_target).
+    /// Stable dedup hash: SHA-256(module_id || title || `affected_target`).
     pub fingerprint: String,
     /// Which module produced this finding.
     pub module_id: String,
@@ -105,6 +105,8 @@ pub struct TrackedFinding {
     pub cwe_id: Option<i32>,
     /// Full original finding as JSON for lossless round-tripping.
     pub raw_finding: serde_json::Value,
+    /// Confidence score (0.0–1.0) indicating false-positive likelihood.
+    pub confidence: f64,
     /// When this finding was first detected.
     pub first_seen: DateTime<Utc>,
     /// When this finding was most recently detected.
@@ -154,7 +156,7 @@ impl VulnStatus {
 
     /// Convert to the database string representation.
     #[must_use]
-    pub fn as_db_str(self) -> &'static str {
+    pub const fn as_db_str(self) -> &'static str {
         match self {
             Self::New => "new",
             Self::Acknowledged => "acknowledged",

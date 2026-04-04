@@ -1,3 +1,4 @@
+pub mod checkpoint;
 pub mod hooks;
 pub mod orchestrator;
 pub mod plugin;

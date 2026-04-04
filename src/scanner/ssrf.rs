@@ -64,9 +64,8 @@ async fn test_ssrf_param(
     param_name: &str,
     findings: &mut Vec<Finding>,
 ) -> Result<()> {
-    let parsed = match Url::parse(url_str) {
-        Ok(u) => u,
-        Err(_) => return Ok(()),
+    let Ok(parsed) = Url::parse(url_str) else {
+        return Ok(());
     };
 
     let params: Vec<(String, String)> =
@@ -86,9 +85,8 @@ async fn test_ssrf_param(
             }
         }
 
-        let response = match ctx.http_client.get(test_url.as_str()).send().await {
-            Ok(r) => r,
-            Err(_) => continue,
+        let Ok(response) = ctx.http_client.get(test_url.as_str()).send().await else {
+            continue;
         };
 
         let status = response.status();
@@ -116,7 +114,8 @@ async fn test_ssrf_param(
                      172.16.0.0/12, 192.168.0.0/16, 169.254.169.254).",
                 )
                 .with_owasp("A10:2021 Server-Side Request Forgery")
-                .with_cwe(918),
+                .with_cwe(918)
+                .with_confidence(0.7),
             );
             return Ok(());
         }
@@ -137,7 +136,8 @@ async fn test_ssrf_param(
                 .with_evidence(format!("Payload: {payload} | HTTP 500"))
                 .with_remediation("Investigate whether this parameter processes URLs server-side")
                 .with_owasp("A10:2021 Server-Side Request Forgery")
-                .with_cwe(918),
+                .with_cwe(918)
+                .with_confidence(0.7),
             );
             return Ok(());
         }
@@ -152,9 +152,8 @@ async fn test_own_params(
     url_str: &str,
     findings: &mut Vec<Finding>,
 ) -> Result<()> {
-    let parsed = match Url::parse(url_str) {
-        Ok(u) => u,
-        Err(_) => return Ok(()),
+    let Ok(parsed) = Url::parse(url_str) else {
+        return Ok(());
     };
 
     let params: Vec<(String, String)> =
@@ -237,14 +236,13 @@ fn contains_ssrf_indicator(body: &str, payload: &str) -> bool {
     let lower = body.to_lowercase();
 
     // Cloud metadata indicators
-    if payload.contains("169.254.169.254") {
-        if lower.contains("ami-id")
+    if payload.contains("169.254.169.254")
+        && (lower.contains("ami-id")
             || lower.contains("instance-id")
             || lower.contains("security-credentials")
-            || lower.contains("iam")
-        {
-            return true;
-        }
+            || lower.contains("iam"))
+    {
+        return true;
     }
 
     // Internal service indicators
@@ -268,3 +266,82 @@ const SSRF_PAYLOADS: &[(&str, &str)] = &[
     ("http://10.0.0.1", "internal 10.x range"),
     ("http://192.168.1.1", "internal 192.168.x range"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the SSRF detection module's pure helper functions.
+
+    /// Verify that `looks_like_url_param` identifies parameters whose names
+    /// match common URL/redirect parameter patterns.
+    #[test]
+    fn test_looks_like_url_param_by_name() {
+        assert!(looks_like_url_param("redirect_uri", ""));
+        assert!(looks_like_url_param("return_url", ""));
+        assert!(looks_like_url_param("callback", ""));
+        assert!(looks_like_url_param("src", ""));
+        assert!(looks_like_url_param("destination", ""));
+    }
+
+    /// Verify that `looks_like_url_param` identifies parameters whose values
+    /// start with URL schemes, even when the name is generic.
+    #[test]
+    fn test_looks_like_url_param_by_value() {
+        assert!(looks_like_url_param("data", "https://example.com"));
+        assert!(looks_like_url_param("data", "http://example.com"));
+        assert!(looks_like_url_param("ref", "//cdn.example.com/img.png"));
+    }
+
+    /// Verify that `looks_like_url_param` rejects parameters that do not look
+    /// like URLs by either name or value.
+    #[test]
+    fn test_looks_like_url_param_rejects_non_url() {
+        assert!(!looks_like_url_param("username", "alice"));
+        assert!(!looks_like_url_param("age", "30"));
+        assert!(!looks_like_url_param("color", "blue"));
+    }
+
+    /// Verify that `contains_ssrf_indicator` detects AWS metadata indicators
+    /// when the payload targets the metadata IP address.
+    #[test]
+    fn test_contains_ssrf_indicator_aws_metadata() {
+        let body = r#"{"ami-id": "ami-12345", "instance-id": "i-abcdef"}"#;
+        let payload = "http://169.254.169.254/latest/meta-data/";
+
+        assert!(contains_ssrf_indicator(body, payload));
+    }
+
+    /// Verify that `contains_ssrf_indicator` returns false when the response
+    /// body contains no internal resource indicators.
+    #[test]
+    fn test_contains_ssrf_indicator_absent() {
+        let body = "<html><body>Normal web page content</body></html>";
+        let payload = "http://169.254.169.254/latest/meta-data/";
+
+        assert!(!contains_ssrf_indicator(body, payload));
+    }
+
+    /// Verify that `extract_url_params` finds links whose query parameters
+    /// contain URL-like values from HTML anchor elements.
+    #[test]
+    fn test_extract_url_params() -> std::result::Result<(), url::ParseError> {
+        // Arrange
+        let base = Url::parse("https://example.com/")?;
+        let body = r#"
+            <html><body>
+                <a href="/proxy?url=https://other.com/page">External</a>
+                <a href="/search?q=test">Search</a>
+            </body></html>
+        "#;
+
+        // Act
+        let results = extract_url_params(body, &base);
+
+        // Assert: only the link with a URL-like param value should match
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, "url");
+
+        Ok(())
+    }
+}

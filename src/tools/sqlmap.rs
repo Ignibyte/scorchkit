@@ -51,7 +51,8 @@ impl ScanModule for SqlmapModule {
                 "The target URL has no query parameters. Provide a URL with \
                  parameters for sqlmap testing (e.g., https://target.com/page?id=1).",
                 target,
-            )]);
+            )
+            .with_confidence(0.9)]);
         }
 
         let output = subprocess::run_tool(
@@ -72,12 +73,12 @@ impl ScanModule for SqlmapModule {
         )
         .await?;
 
-        parse_sqlmap_output(&output.stdout, target)
+        Ok(parse_sqlmap_output(&output.stdout, target))
     }
 }
 
 /// Parse sqlmap console output into findings.
-fn parse_sqlmap_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_sqlmap_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     let lines: Vec<&str> = output.lines().collect();
 
@@ -121,7 +122,8 @@ fn parse_sqlmap_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
                      Never concatenate user input into SQL queries.",
                 )
                 .with_owasp("A03:2021 Injection")
-                .with_cwe(89),
+                .with_cwe(89)
+                .with_confidence(0.9),
             );
         }
 
@@ -137,21 +139,64 @@ fn parse_sqlmap_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
                     format!("sqlmap identified the back-end database as {dbms}."),
                     target_url,
                 )
-                .with_evidence(format!("DBMS: {dbms}")),
+                .with_evidence(format!("DBMS: {dbms}"))
+                .with_confidence(0.9),
             );
         }
     }
 
     // If no specific injection found but sqlmap ran, note it
     if findings.is_empty() {
-        findings.push(Finding::new(
-            "sqlmap",
-            Severity::Info,
-            "SQLMap: No Injection Points Found",
-            "sqlmap did not find any SQL injection vulnerabilities at the tested level/risk.",
-            target_url,
-        ));
+        findings.push(
+            Finding::new(
+                "sqlmap",
+                Severity::Info,
+                "SQLMap: No Injection Points Found",
+                "sqlmap did not find any SQL injection vulnerabilities at the tested level/risk.",
+                target_url,
+            )
+            .with_confidence(0.9),
+        );
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for sqlmap console output parser.
+
+    /// Verify that `parse_sqlmap_output` correctly extracts confirmed SQL
+    /// injection findings and identified database type.
+    #[test]
+    fn test_parse_sqlmap_output() {
+        let output = "\
+[*] starting at 12:00:00\n\
+Parameter: id (GET)\n\
+Type: boolean-based blind\n\
+[INFO] the back-end DBMS is MySQL\n\
+back-end DBMS: MySQL >= 5.0\n\
+[INFO] parameter 'id' is vulnerable\n";
+
+        let findings = parse_sqlmap_output(output, "https://example.com?id=1");
+        // Should have a Critical injection finding and an Info DBMS finding
+        assert!(findings.len() >= 2);
+        let critical = findings.iter().find(|f| f.severity == Severity::Critical);
+        assert!(critical.is_some());
+        assert!(critical.expect("critical finding should exist").title.contains("SQL Injection"));
+        let dbms = findings.iter().find(|f| f.title.contains("Database Identified"));
+        assert!(dbms.is_some());
+    }
+
+    /// Verify that `parse_sqlmap_output` returns an info finding when no
+    /// injection is detected.
+    #[test]
+    fn test_parse_sqlmap_output_empty() {
+        let findings = parse_sqlmap_output("", "https://example.com");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Info);
+        assert!(findings[0].title.contains("No Injection"));
+    }
 }

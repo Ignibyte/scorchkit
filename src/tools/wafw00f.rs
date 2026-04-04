@@ -44,11 +44,11 @@ impl ScanModule for Wafw00fModule {
         )
         .await?;
 
-        parse_wafw00f_output(&output.stdout, target)
+        Ok(parse_wafw00f_output(&output.stdout, target))
     }
 }
 
-fn parse_wafw00f_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_wafw00f_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(output) {
@@ -72,7 +72,8 @@ fn parse_wafw00f_output(output: &str, target_url: &str) -> Result<Vec<Finding>> 
                             &desc,
                             target_url,
                         )
-                        .with_evidence(desc),
+                        .with_evidence(desc)
+                        .with_confidence(0.7),
                     );
                 }
             }
@@ -91,19 +92,49 @@ fn parse_wafw00f_output(output: &str, target_url: &str) -> Result<Vec<Finding>> 
                         line.trim(),
                         target_url,
                     )
-                    .with_evidence(line.trim().to_string()),
+                    .with_evidence(line.trim().to_string())
+                    .with_confidence(0.7),
                 );
             } else if line.contains("No WAF") {
-                findings.push(Finding::new(
-                    "wafw00f",
-                    Severity::Info,
-                    "No WAF Detected",
-                    "No Web Application Firewall was detected.",
-                    target_url,
-                ));
+                findings.push(
+                    Finding::new(
+                        "wafw00f",
+                        Severity::Info,
+                        "No WAF Detected",
+                        "No Web Application Firewall was detected.",
+                        target_url,
+                    )
+                    .with_confidence(0.7),
+                );
             }
         }
     }
 
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for wafw00f output parser (JSON and text fallback).
+
+    /// Verify that `parse_wafw00f_output` correctly extracts WAF detection
+    /// results from wafw00f JSON array output.
+    #[test]
+    fn test_parse_wafw00f_output() {
+        let output = r#"[{"url":"https://example.com","detected":true,"firewall":"Cloudflare","manufacturer":"Cloudflare Inc."}]"#;
+
+        let findings = parse_wafw00f_output(output, "https://example.com");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].title.contains("Cloudflare"));
+        assert_eq!(findings[0].severity, Severity::Info);
+    }
+
+    /// Verify that `parse_wafw00f_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_wafw00f_output_empty() {
+        let findings = parse_wafw00f_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

@@ -1,7 +1,7 @@
 //! Agent configuration for autonomous pentest operations.
 //!
 //! Defines safety constraints, authorized targets, and operational
-//! parameters for ScorchKit Agent SDK integrations.
+//! parameters for `ScorchKit` Agent SDK integrations.
 
 use serde::{Deserialize, Serialize};
 

@@ -54,13 +54,19 @@ pub fn print_diff(baseline: &ScanResult, current: &ScanResult) {
 
     println!("  {} findings → {} findings", bs.total_findings, cs.total_findings);
 
+    // JUSTIFICATION: finding counts are small, well within i64 range
+    #[allow(clippy::cast_possible_wrap)]
     let delta = cs.total_findings as i64 - bs.total_findings as i64;
-    if delta > 0 {
-        println!("  Trend: {} {}", format!("+{delta}").red(), "more findings".dimmed());
-    } else if delta < 0 {
-        println!("  Trend: {} {}", format!("{delta}").green(), "fewer findings".dimmed());
-    } else {
-        println!("  Trend: {}", "unchanged".dimmed());
+    match delta.cmp(&0) {
+        std::cmp::Ordering::Greater => {
+            println!("  Trend: {} {}", format!("+{delta}").red(), "more findings".dimmed());
+        }
+        std::cmp::Ordering::Less => {
+            println!("  Trend: {} {}", format!("{delta}").green(), "fewer findings".dimmed());
+        }
+        std::cmp::Ordering::Equal => {
+            println!("  Trend: {}", "unchanged".dimmed());
+        }
     }
 
     // New findings

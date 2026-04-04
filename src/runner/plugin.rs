@@ -52,7 +52,7 @@ pub struct PluginDef {
     /// Command timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout_seconds: u64,
-    /// Output format: "lines" (consolidated finding), "json_lines" (JSON per line),
+    /// Output format: "lines" (consolidated finding), "`json_lines`" (JSON per line),
     /// or "json" (single JSON array).
     #[serde(default = "default_format")]
     pub output_format: String,
@@ -82,7 +82,7 @@ fn default_severity() -> String {
 pub struct PluginModule {
     /// The plugin definition.
     def: PluginDef,
-    /// Leaked static strings for ScanModule trait (plugins live for program lifetime).
+    /// Leaked static strings for `ScanModule` trait (plugins live for program lifetime).
     id_static: &'static str,
     name_static: &'static str,
     desc_static: &'static str,
@@ -207,7 +207,8 @@ fn parse_lines(stdout: &str, target_url: &str, plugin_id: &str, severity: &str) 
         format!("Plugin '{plugin_id}' produced {count} results. Sample: {}", sample.join("; ")),
         target_url,
     )
-    .with_evidence(format!("{count} lines of output"))]
+    .with_evidence(format!("{count} lines of output"))
+    .with_confidence(0.5)]
 }
 
 /// Parse JSON-lines output — each line is a JSON object.
@@ -262,6 +263,7 @@ fn json_to_finding(
 
     Finding::new(plugin_id, parse_severity(severity), title, description, target_url)
         .with_evidence(obj.to_string())
+        .with_confidence(0.5)
 }
 
 /// Load all plugin definitions from a directory.

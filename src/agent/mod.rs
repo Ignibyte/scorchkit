@@ -1,7 +1,7 @@
 //! Agent SDK support for autonomous pentest operations.
 //!
 //! Provides configuration, system prompts, and manifest generation
-//! for integrating ScorchKit with the Claude Agent SDK. The agent
+//! for integrating `ScorchKit` with the Claude Agent SDK. The agent
 //! module does not run agents directly — it produces the configuration
 //! that Agent SDK clients (Python/TypeScript) consume.
 //!
@@ -29,7 +29,7 @@ use prompt::AGENT_SYSTEM_PROMPT;
 /// Generate a JSON manifest for Claude Agent SDK consumption.
 ///
 /// The manifest contains everything an Agent SDK client needs to
-/// connect to ScorchKit's MCP server and run an autonomous pentest:
+/// connect to `ScorchKit`'s MCP server and run an autonomous pentest:
 /// - MCP server connection command
 /// - System prompt with pentest methodology
 /// - Agent configuration (scope, depth, safety constraints)

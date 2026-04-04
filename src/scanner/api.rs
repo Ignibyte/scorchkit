@@ -104,7 +104,8 @@ async fn test_data_exposure(ctx: &ScanContext, _url: &str, findings: &mut Vec<Fi
                      in API responses. Use DTOs/serializers to control output shape.",
                 )
                 .with_owasp("API3: Excessive Data Exposure")
-                .with_cwe(213),
+                .with_cwe(213)
+                .with_confidence(0.7),
             );
             return; // Found one, enough evidence
         }
@@ -155,7 +156,8 @@ async fn test_shadow_apis(ctx: &ScanContext, base: &str, findings: &mut Vec<Find
                  restrict access to internal/deprecated API paths.",
             )
             .with_owasp("API9: Improper Assets Management")
-            .with_cwe(912),
+            .with_cwe(912)
+            .with_confidence(0.7),
         );
     }
 }
@@ -222,7 +224,8 @@ async fn test_mass_assignment(ctx: &ScanContext, base: &str, findings: &mut Vec<
                          database models. Use separate DTOs for input validation.",
                     )
                     .with_owasp("API6: Mass Assignment")
-                    .with_cwe(915),
+                    .with_cwe(915)
+                    .with_confidence(0.7),
                 );
                 return;
             }
@@ -286,7 +289,8 @@ async fn test_rate_limiting(
                          Consider progressive delays or account lockout.",
                     )
                     .with_owasp("API4: Lack of Resources & Rate Limiting")
-                    .with_cwe(770),
+                    .with_cwe(770)
+                    .with_confidence(0.7),
                 );
                 return Ok(());
             }
@@ -322,7 +326,8 @@ async fn test_content_negotiation(ctx: &ScanContext, url: &str, findings: &mut V
                      support is intentional and XXE protections are in place.",
                 )
                 .with_owasp("API8: Injection")
-                .with_cwe(436),
+                .with_cwe(436)
+                .with_confidence(0.7),
             );
         }
     }

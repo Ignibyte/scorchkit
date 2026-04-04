@@ -65,9 +65,8 @@ async fn test_url_params_redirect(
     url_str: &str,
     findings: &mut Vec<Finding>,
 ) -> Result<()> {
-    let parsed = match Url::parse(url_str) {
-        Ok(u) => u,
-        Err(_) => return Ok(()),
+    let Ok(parsed) = Url::parse(url_str) else {
+        return Ok(());
     };
 
     let params: Vec<(String, String)> =
@@ -105,7 +104,8 @@ async fn test_url_params_redirect(
                                 .with_evidence(format!("Parameter: {param_name} | Payload: {evil_url} | Location: {loc}"))
                                 .with_remediation("Validate redirect destinations against an allowlist of trusted domains")
                                 .with_owasp("A01:2021 Broken Access Control")
-                                .with_cwe(601),
+                                .with_cwe(601)
+                                .with_confidence(0.8),
                         );
                         return Ok(());
                     }
@@ -160,3 +160,82 @@ const REDIRECT_PARAM_NAMES: &[&str] = &[
     "returnto",
     "return_to",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the open redirect detection module's helpers and constant data.
+
+    /// Verify that `REDIRECT_PARAM_NAMES` is non-empty, contains well-known redirect
+    /// parameter names, and all entries are lowercase without whitespace.
+    #[test]
+    fn test_redirect_param_names_integrity() {
+        // Arrange & Assert: minimum count
+        assert!(
+            REDIRECT_PARAM_NAMES.len() >= 10,
+            "Expected at least 10 redirect param names, found {}",
+            REDIRECT_PARAM_NAMES.len()
+        );
+
+        // Well-known redirect parameters are present
+        assert!(REDIRECT_PARAM_NAMES.contains(&"redirect"));
+        assert!(REDIRECT_PARAM_NAMES.contains(&"url"));
+        assert!(REDIRECT_PARAM_NAMES.contains(&"next"));
+        assert!(REDIRECT_PARAM_NAMES.contains(&"redirect_uri"));
+
+        // All entries are well-formed
+        for name in REDIRECT_PARAM_NAMES {
+            assert!(!name.is_empty(), "Param name should not be empty");
+            assert_eq!(*name, name.to_lowercase(), "Param name '{name}' should be lowercase");
+            assert!(!name.contains(' '), "Param name '{name}' should not contain spaces");
+        }
+    }
+
+    /// Verify that `extract_redirect_links` extracts links with redirect-like parameters
+    /// from HTML and filters to same-host links only.
+    #[test]
+    fn test_extract_redirect_links_finds_redirect_params() {
+        // Arrange
+        let base = Url::parse("https://example.com/").expect("valid base URL");
+        let html = r#"
+            <html><body>
+                <a href="/login?redirect=https://example.com/dashboard">Login</a>
+                <a href="/page?next=/home">Next page</a>
+                <a href="https://evil.com/?url=foo">External</a>
+                <a href="/about">No redirect param</a>
+            </body></html>
+        "#;
+
+        // Act
+        let links = extract_redirect_links(html, &base);
+
+        // Assert: should find same-host links with redirect-like params
+        assert!(!links.is_empty(), "Expected at least one redirect link extracted");
+        // All extracted links should be on the same host
+        for link in &links {
+            let parsed = Url::parse(link).expect("extracted link should be a valid URL");
+            assert_eq!(parsed.host(), base.host(), "Extracted link should be same-host");
+        }
+    }
+
+    /// Verify that `extract_redirect_links` returns an empty list when no links
+    /// have redirect-related query parameters.
+    #[test]
+    fn test_extract_redirect_links_empty_when_no_redirect_params() {
+        // Arrange
+        let base = Url::parse("https://example.com/").expect("valid base URL");
+        let html = r#"
+            <html><body>
+                <a href="/about">About</a>
+                <a href="/contact?subject=hello">Contact</a>
+            </body></html>
+        "#;
+
+        // Act
+        let links = extract_redirect_links(html, &base);
+
+        // Assert
+        assert!(links.is_empty(), "No redirect links expected from HTML without redirect params");
+    }
+}

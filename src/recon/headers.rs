@@ -74,7 +74,8 @@ fn check_hsts(headers: &reqwest::header::HeaderMap, url: &str, findings: &mut Ve
                     "Add header: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(319),
+                .with_cwe(319)
+                .with_confidence(0.9),
             );
         }
         Some(value) => {
@@ -95,7 +96,8 @@ fn check_hsts(headers: &reqwest::header::HeaderMap, url: &str, findings: &mut Ve
                         )
                         .with_evidence(format!("Strict-Transport-Security: {val}"))
                         .with_remediation("Set max-age to at least 31536000 (1 year)")
-                        .with_owasp("A05:2021 Security Misconfiguration"),
+                        .with_owasp("A05:2021 Security Misconfiguration")
+                        .with_confidence(0.9),
                     );
                 }
             }
@@ -111,7 +113,8 @@ fn check_hsts(headers: &reqwest::header::HeaderMap, url: &str, findings: &mut Ve
                         url,
                     )
                     .with_evidence(format!("Strict-Transport-Security: {val}"))
-                    .with_owasp("A05:2021 Security Misconfiguration"),
+                    .with_owasp("A05:2021 Security Misconfiguration")
+                    .with_confidence(0.9),
                 );
             }
         }
@@ -137,7 +140,8 @@ fn check_csp(headers: &reqwest::header::HeaderMap, url: &str, findings: &mut Vec
                      Content-Security-Policy: default-src 'self'",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(693),
+                .with_cwe(693)
+                .with_confidence(0.9),
             );
         }
         Some(value) => {
@@ -158,7 +162,8 @@ fn check_csp(headers: &reqwest::header::HeaderMap, url: &str, findings: &mut Vec
                         "Remove 'unsafe-inline' and use nonces or hashes for inline scripts",
                     )
                     .with_owasp("A05:2021 Security Misconfiguration")
-                    .with_cwe(693),
+                    .with_cwe(693)
+                    .with_confidence(0.9),
                 );
             }
 
@@ -174,7 +179,8 @@ fn check_csp(headers: &reqwest::header::HeaderMap, url: &str, findings: &mut Vec
                     .with_evidence(format!("Content-Security-Policy: {val}"))
                     .with_remediation("Remove 'unsafe-eval' from the CSP policy")
                     .with_owasp("A05:2021 Security Misconfiguration")
-                    .with_cwe(693),
+                    .with_cwe(693)
+                    .with_confidence(0.9),
                 );
             }
 
@@ -190,7 +196,8 @@ fn check_csp(headers: &reqwest::header::HeaderMap, url: &str, findings: &mut Vec
                     )
                     .with_evidence(format!("Content-Security-Policy: {val}"))
                     .with_remediation("Replace wildcard sources with specific trusted domains")
-                    .with_owasp("A05:2021 Security Misconfiguration"),
+                    .with_owasp("A05:2021 Security Misconfiguration")
+                    .with_confidence(0.9),
                 );
             }
         }
@@ -214,7 +221,8 @@ fn check_x_frame_options(
             )
             .with_remediation("Add header: X-Frame-Options: DENY (or SAMEORIGIN)")
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(1021),
+            .with_cwe(1021)
+            .with_confidence(0.9),
         );
     }
 }
@@ -236,7 +244,8 @@ fn check_x_content_type_options(
             )
             .with_remediation("Add header: X-Content-Type-Options: nosniff")
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(693),
+            .with_cwe(693)
+            .with_confidence(0.9),
         );
     }
 }
@@ -258,7 +267,8 @@ fn check_referrer_policy(
                     url,
                 )
                 .with_remediation("Add header: Referrer-Policy: strict-origin-when-cross-origin")
-                .with_owasp("A05:2021 Security Misconfiguration"),
+                .with_owasp("A05:2021 Security Misconfiguration")
+                .with_confidence(0.9),
             );
         }
         Some(value) => {
@@ -279,7 +289,8 @@ fn check_referrer_policy(
                     .with_remediation(
                         "Use a stricter policy: strict-origin-when-cross-origin or no-referrer",
                     )
-                    .with_owasp("A05:2021 Security Misconfiguration"),
+                    .with_owasp("A05:2021 Security Misconfiguration")
+                    .with_confidence(0.9),
                 );
             }
         }
@@ -304,7 +315,8 @@ fn check_permissions_policy(
             .with_remediation(
                 "Add header: Permissions-Policy: camera=(), microphone=(), geolocation=()",
             )
-            .with_owasp("A05:2021 Security Misconfiguration"),
+            .with_owasp("A05:2021 Security Misconfiguration")
+            .with_confidence(0.9),
         );
     }
 }
@@ -332,7 +344,8 @@ fn check_x_xss_protection(
                 .with_remediation(
                     "Set X-XSS-Protection: 0 and rely on Content-Security-Policy instead",
                 )
-                .with_owasp("A05:2021 Security Misconfiguration"),
+                .with_owasp("A05:2021 Security Misconfiguration")
+                .with_confidence(0.9),
             );
         }
     }
@@ -361,7 +374,8 @@ fn check_server_disclosure(
                 .with_evidence(format!("Server: {val}"))
                 .with_remediation("Remove or minimize the Server header value")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(200),
+                .with_cwe(200)
+                .with_confidence(0.9),
             );
         }
     }
@@ -388,7 +402,8 @@ fn check_x_powered_by(
             .with_evidence(format!("X-Powered-By: {val}"))
             .with_remediation("Remove the X-Powered-By header")
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(200),
+            .with_cwe(200)
+            .with_confidence(0.9),
         );
     }
 }
@@ -411,4 +426,111 @@ fn has_csp_frame_ancestors(headers: &reqwest::header::HeaderMap) -> bool {
         .get("content-security-policy")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|csp| csp.contains("frame-ancestors"))
+}
+
+#[cfg(test)]
+mod tests {
+    /// Unit tests for HTTP security header analysis helpers.
+    use super::*;
+    use reqwest::header::HeaderMap;
+
+    /// Verify `extract_max_age` parses a valid max-age value from an HSTS header.
+    #[test]
+    fn test_extract_max_age_valid() {
+        // Arrange
+        let hsts = "max-age=31536000";
+
+        // Act
+        let result = extract_max_age(hsts);
+
+        // Assert
+        assert_eq!(result, Some(31_536_000));
+    }
+
+    /// Verify `extract_max_age` handles extra directives alongside max-age.
+    #[test]
+    fn test_extract_max_age_with_extra_directives() {
+        // Arrange
+        let hsts = "max-age=63072000; includeSubDomains; preload";
+
+        // Act
+        let result = extract_max_age(hsts);
+
+        // Assert
+        assert_eq!(result, Some(63_072_000));
+    }
+
+    /// Verify `extract_max_age` returns `None` for an invalid (non-numeric) max-age.
+    #[test]
+    fn test_extract_max_age_invalid() {
+        // Arrange
+        let hsts = "max-age=abc";
+
+        // Act
+        let result = extract_max_age(hsts);
+
+        // Assert
+        assert_eq!(result, None);
+    }
+
+    /// Verify `extract_max_age` returns `None` when max-age is absent from the value.
+    #[test]
+    fn test_extract_max_age_missing() {
+        // Arrange
+        let hsts = "includeSubDomains; preload";
+
+        // Act
+        let result = extract_max_age(hsts);
+
+        // Assert
+        assert_eq!(result, None);
+    }
+
+    /// Verify `has_csp_frame_ancestors` returns true when CSP contains frame-ancestors.
+    #[test]
+    fn test_has_csp_frame_ancestors_present() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
+        // Arrange
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "content-security-policy",
+            "default-src 'self'; frame-ancestors 'none'".parse()?,
+        );
+
+        // Act
+        let result = has_csp_frame_ancestors(&headers);
+
+        // Assert
+        assert!(result);
+        Ok(())
+    }
+
+    /// Verify `has_csp_frame_ancestors` returns false when CSP lacks frame-ancestors.
+    #[test]
+    fn test_has_csp_frame_ancestors_absent() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
+        // Arrange
+        let mut headers = HeaderMap::new();
+        headers.insert("content-security-policy", "default-src 'self'; script-src 'self'".parse()?);
+
+        // Act
+        let result = has_csp_frame_ancestors(&headers);
+
+        // Assert
+        assert!(!result);
+        Ok(())
+    }
+
+    /// Verify `has_csp_frame_ancestors` returns false when no CSP header is present.
+    #[test]
+    fn test_has_csp_frame_ancestors_no_header() {
+        // Arrange
+        let headers = HeaderMap::new();
+
+        // Act
+        let result = has_csp_frame_ancestors(&headers);
+
+        // Assert
+        assert!(!result);
+    }
 }

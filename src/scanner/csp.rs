@@ -149,7 +149,8 @@ fn check_missing_directives(
                         "Add `{directive}: 'none'` (or `{directive}: 'self'`) to your CSP policy."
                     ))
                     .with_owasp("A05:2021 Security Misconfiguration")
-                    .with_cwe(*cwe),
+                    .with_cwe(*cwe)
+                    .with_confidence(0.9),
             );
         }
     }
@@ -194,7 +195,8 @@ fn check_permissive_script_src(
                      protocol-based allowlists."
                 ))
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(693),
+                .with_cwe(693)
+                .with_confidence(0.9),
             );
         }
     }
@@ -232,7 +234,8 @@ fn check_permissive_default_src(
                  for each resource type that needs external origins.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(693),
+            .with_cwe(693)
+            .with_confidence(0.9),
         );
     }
 }
@@ -271,7 +274,8 @@ fn check_report_uri_leak(
                      that doesn't reveal internal hostnames or paths.",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(200),
+                .with_cwe(200)
+                .with_confidence(0.9),
             );
         }
     } else if has_report_to {
@@ -292,7 +296,8 @@ fn check_report_uri_leak(
                  hostnames or infrastructure details.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(200),
+            .with_cwe(200)
+            .with_confidence(0.9),
         );
     }
 }

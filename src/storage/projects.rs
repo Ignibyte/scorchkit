@@ -10,6 +10,10 @@ use super::models::{Project, ProjectTarget};
 use crate::engine::error::{Result, ScorchError};
 
 /// Create a new project with the given name and description.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn create_project(pool: &PgPool, name: &str, description: &str) -> Result<Project> {
     sqlx::query_as::<_, Project>(
         "INSERT INTO projects (name, description) VALUES ($1, $2) RETURNING *",
@@ -22,6 +26,10 @@ pub async fn create_project(pool: &PgPool, name: &str, description: &str) -> Res
 }
 
 /// Get a project by its unique ID.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn get_project(pool: &PgPool, id: Uuid) -> Result<Option<Project>> {
     sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = $1")
         .bind(id)
@@ -31,6 +39,10 @@ pub async fn get_project(pool: &PgPool, id: Uuid) -> Result<Option<Project>> {
 }
 
 /// List all projects, ordered by creation date (newest first).
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn list_projects(pool: &PgPool) -> Result<Vec<Project>> {
     sqlx::query_as::<_, Project>("SELECT * FROM projects ORDER BY created_at DESC")
         .fetch_all(pool)
@@ -39,6 +51,10 @@ pub async fn list_projects(pool: &PgPool) -> Result<Vec<Project>> {
 }
 
 /// Update a project's name and description.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn update_project(
     pool: &PgPool,
     id: Uuid,
@@ -58,6 +74,10 @@ pub async fn update_project(
 }
 
 /// Delete a project and all associated data (cascades).
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn delete_project(pool: &PgPool, id: Uuid) -> Result<bool> {
     let result = sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(id)
@@ -68,6 +88,10 @@ pub async fn delete_project(pool: &PgPool, id: Uuid) -> Result<bool> {
 }
 
 /// Add a target URL to a project.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn add_target(
     pool: &PgPool,
     project_id: Uuid,
@@ -87,6 +111,10 @@ pub async fn add_target(
 }
 
 /// Remove a target from a project.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn remove_target(pool: &PgPool, target_id: Uuid) -> Result<bool> {
     let result = sqlx::query("DELETE FROM project_targets WHERE id = $1")
         .bind(target_id)
@@ -110,6 +138,10 @@ pub async fn get_project_by_name(pool: &PgPool, name: &str) -> Result<Option<Pro
 }
 
 /// List all targets for a project.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn list_targets(pool: &PgPool, project_id: Uuid) -> Result<Vec<ProjectTarget>> {
     sqlx::query_as::<_, ProjectTarget>(
         "SELECT * FROM project_targets WHERE project_id = $1 \

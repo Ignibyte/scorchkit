@@ -39,15 +39,15 @@ impl ScanModule for DalfoxModule {
             Duration::from_secs(300),
         )
         .await?;
-        parse_dalfox_output(&output.stdout, target)
+        Ok(parse_dalfox_output(&output.stdout, target))
     }
 }
 
-fn parse_dalfox_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
+fn parse_dalfox_output(output: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     for line in output.lines() {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-            let msg = json["data"].as_str().or(json["message"].as_str()).unwrap_or("");
+            let msg = json["data"].as_str().or_else(|| json["message"].as_str()).unwrap_or("");
             let severity_str = json["type"].as_str().unwrap_or("V");
             let poc = json["poc"].as_str().unwrap_or("");
             let param = json["param"].as_str().unwrap_or("");
@@ -67,9 +67,36 @@ fn parse_dalfox_output(output: &str, target_url: &str) -> Result<Vec<Finding>> {
                 if !poc.is_empty() {
                     f = f.with_evidence(format!("PoC: {poc}"));
                 }
-                findings.push(f);
+                findings.push(f.with_confidence(0.8));
             }
         }
     }
-    Ok(findings)
+    findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests for Dalfox JSON-lines output parser.
+
+    /// Verify that `parse_dalfox_output` correctly extracts XSS findings
+    /// from Dalfox JSON-lines output including PoC evidence.
+    #[test]
+    fn test_parse_dalfox_output() {
+        let output = r#"{"type":"V","data":"Reflected XSS found","param":"q","poc":"https://example.com/search?q=<script>alert(1)</script>"}"#;
+
+        let findings = parse_dalfox_output(output, "https://example.com");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::High);
+        assert!(findings[0].title.contains("q"));
+        assert_eq!(findings[0].cwe_id, Some(79));
+    }
+
+    /// Verify that `parse_dalfox_output` handles empty input gracefully.
+    #[test]
+    fn test_parse_dalfox_output_empty() {
+        let findings = parse_dalfox_output("", "https://example.com");
+        assert!(findings.is_empty());
+    }
 }

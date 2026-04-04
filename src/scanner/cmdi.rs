@@ -40,9 +40,8 @@ async fn test_url_params(
     url_str: &str,
     findings: &mut Vec<Finding>,
 ) -> Result<()> {
-    let parsed = match Url::parse(url_str) {
-        Ok(u) => u,
-        Err(_) => return Ok(()),
+    let Ok(parsed) = Url::parse(url_str) else {
+        return Ok(());
     };
 
     let params: Vec<(String, String)> =
@@ -77,9 +76,8 @@ async fn test_url_params(
                 }
             }
 
-            let response = match ctx.http_client.get(test_url.as_str()).send().await {
-                Ok(r) => r,
-                Err(_) => continue,
+            let Ok(response) = ctx.http_client.get(test_url.as_str()).send().await else {
+                continue;
             };
 
             let status = response.status();
@@ -92,7 +90,8 @@ async fn test_url_params(
                         .with_evidence(format!("Parameter: {param_name} | Payload: {payload} | Marker: {marker}"))
                         .with_remediation("Never pass user input to shell commands. Use parameterized APIs instead of system()/exec().")
                         .with_owasp("A03:2021 Injection")
-                        .with_cwe(78),
+                        .with_cwe(78)
+                        .with_confidence(0.8),
                 );
                 return Ok(());
             }
@@ -104,7 +103,8 @@ async fn test_url_params(
                         .with_evidence(format!("Parameter: {param_name} | Payload: {payload} | HTTP 500"))
                         .with_remediation("Investigate whether this parameter reaches a shell command.")
                         .with_owasp("A03:2021 Injection")
-                        .with_cwe(78),
+                        .with_cwe(78)
+                        .with_confidence(0.8),
                 );
                 return Ok(());
             }
@@ -125,3 +125,46 @@ const CMDI_PAYLOADS: &[(&str, &str)] = &[
     ("; id", "uid="),
     ("$(id)", "uid="),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the command injection module's payload constant data integrity.
+
+    /// Verify that `CMDI_PAYLOADS` is non-empty and contains a reasonable number of payloads.
+    #[test]
+    fn test_cmdi_payloads_nonempty() {
+        assert!(
+            CMDI_PAYLOADS.len() >= 4,
+            "Expected at least 4 command injection payloads, found {}",
+            CMDI_PAYLOADS.len()
+        );
+    }
+
+    /// Verify that each payload has a non-empty payload string and that payloads with
+    /// markers have non-empty marker strings.
+    #[test]
+    fn test_cmdi_payloads_structure() {
+        for (i, &(payload, marker)) in CMDI_PAYLOADS.iter().enumerate() {
+            assert!(!payload.is_empty(), "Payload at index {i} has an empty payload string");
+            // Marker can be empty (e.g., "cat /etc/hostname" relies on 500 detection),
+            // but if non-empty it should be a reasonable string
+            if !marker.is_empty() {
+                assert!(marker.len() >= 3, "Marker at index {i} is suspiciously short: '{marker}'");
+            }
+        }
+    }
+
+    /// Verify that payload strings contain shell metacharacters (`;`, `|`, `` ` ``, `$(`),
+    /// confirming they are well-formed injection patterns.
+    #[test]
+    fn test_cmdi_payloads_contain_shell_metacharacters() {
+        let metacharacters = [';', '|', '`', '$'];
+
+        for &(payload, _) in CMDI_PAYLOADS {
+            let has_meta = metacharacters.iter().any(|&c| payload.contains(c));
+            assert!(has_meta, "Payload '{payload}' does not contain any shell metacharacter");
+        }
+    }
+}

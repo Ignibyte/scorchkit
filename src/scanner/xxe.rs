@@ -64,9 +64,8 @@ async fn test_xxe(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -> 
         .send()
         .await;
 
-    let response = match response {
-        Ok(r) => r,
-        Err(_) => return Ok(()), // Endpoint doesn't accept requests
+    let Ok(response) = response else {
+        return Ok(()); // Endpoint doesn't accept requests
     };
 
     let status = response.status();
@@ -89,9 +88,8 @@ async fn test_xxe(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -> 
                 .send()
                 .await;
 
-            let resp = match resp {
-                Ok(r) => r,
-                Err(_) => continue,
+            let Ok(resp) = resp else {
+                continue;
             };
 
             let resp_status = resp.status();
@@ -104,7 +102,8 @@ async fn test_xxe(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -> 
                         .with_evidence(format!("Endpoint: {url} | Marker: {marker} found in response"))
                         .with_remediation("Disable external entity processing in your XML parser. Set DTD processing to prohibited.")
                         .with_owasp("A05:2021 Security Misconfiguration")
-                        .with_cwe(611),
+                        .with_cwe(611)
+                        .with_confidence(0.7),
                 );
                 return Ok(());
             }
@@ -116,7 +115,8 @@ async fn test_xxe(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -> 
                         .with_evidence(format!("Normal XML: HTTP {status} | XXE payload: HTTP 500"))
                         .with_remediation("Disable DTD processing in your XML parser.")
                         .with_owasp("A05:2021 Security Misconfiguration")
-                        .with_cwe(611),
+                        .with_cwe(611)
+                        .with_confidence(0.7),
                 );
                 return Ok(());
             }

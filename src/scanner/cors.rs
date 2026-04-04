@@ -150,7 +150,8 @@ async fn test_origin(
                     ))
                     .with_remediation(remediation)
                     .with_owasp("A05:2021 Security Misconfiguration")
-                    .with_cwe(942),
+                    .with_cwe(942)
+                    .with_confidence(0.9),
             );
         }
     }
@@ -185,7 +186,8 @@ fn check_preflight_max_age(max_age: u64, url: &str, findings: &mut Vec<Finding>)
                  Shorter values allow faster recovery from CORS misconfigurations.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(525),
+            .with_cwe(525)
+            .with_confidence(0.9),
         );
     }
 }
@@ -220,7 +222,8 @@ fn check_method_allowlist(methods: &str, url: &str, findings: &mut Vec<Finding>)
                  requests. Typically only GET and POST are required.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(942),
+            .with_cwe(942)
+            .with_confidence(0.9),
         );
     }
 }
@@ -256,7 +259,8 @@ fn check_exposed_headers(exposed: &str, url: &str, findings: &mut Vec<Finding>) 
                  Never expose Authorization, Set-Cookie, or API key headers.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(200),
+            .with_cwe(200)
+            .with_confidence(0.9),
         );
     }
 }

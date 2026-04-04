@@ -98,7 +98,8 @@ async fn check_cors(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -
                          Never reflect the Origin header directly.",
                     )
                     .with_owasp("A05:2021 Security Misconfiguration")
-                    .with_cwe(942),
+                    .with_cwe(942)
+                    .with_confidence(0.8),
             );
         }
 
@@ -121,7 +122,8 @@ async fn check_cors(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -
                         )
                         .with_remediation("Specify explicit allowed origins instead of using wildcard")
                         .with_owasp("A05:2021 Security Misconfiguration")
-                        .with_cwe(942),
+                        .with_cwe(942)
+                        .with_confidence(0.8),
                     );
                 }
             }
@@ -141,7 +143,8 @@ async fn check_cors(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -
                 .with_evidence("Access-Control-Allow-Origin: null")
                 .with_remediation("Do not whitelist the null origin in CORS configuration")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(942),
+                .with_cwe(942)
+                .with_confidence(0.8),
             );
         }
     }
@@ -189,7 +192,8 @@ async fn check_cookies(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>
                 .with_evidence(truncate_cookie(cookie_str))
                 .with_remediation("Add the Secure flag to all session cookies")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(614),
+                .with_cwe(614)
+                .with_confidence(0.8),
             );
         }
 
@@ -209,7 +213,8 @@ async fn check_cookies(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>
                 .with_evidence(truncate_cookie(cookie_str))
                 .with_remediation("Add the HttpOnly flag to all session cookies")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(1004),
+                .with_cwe(1004)
+                .with_confidence(0.8),
             );
         }
 
@@ -229,7 +234,8 @@ async fn check_cookies(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>
                 .with_evidence(truncate_cookie(cookie_str))
                 .with_remediation("Add SameSite=Lax or SameSite=Strict to session cookies")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(1275),
+                .with_cwe(1275)
+                .with_confidence(0.8),
             );
         }
 
@@ -248,7 +254,8 @@ async fn check_cookies(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>
                 )
                 .with_evidence(truncate_cookie(cookie_str))
                 .with_remediation("SameSite=None requires the Secure flag")
-                .with_owasp("A05:2021 Security Misconfiguration"),
+                .with_owasp("A05:2021 Security Misconfiguration")
+                .with_confidence(0.8),
             );
         }
     }
@@ -314,7 +321,8 @@ async fn check_error_pages(ctx: &ScanContext, findings: &mut Vec<Finding>) -> Re
                     "Configure custom error pages that don't reveal internal details",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(209),
+                .with_cwe(209)
+                .with_confidence(0.8),
             );
             break; // One finding per error page is enough
         }
@@ -365,7 +373,8 @@ async fn check_http_methods(
                     "Disable unnecessary HTTP methods (PUT, DELETE, TRACE) in the web server configuration",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(749),
+                .with_cwe(749)
+                .with_confidence(0.8),
             );
         }
 
@@ -383,7 +392,8 @@ async fn check_http_methods(
                 .with_evidence(format!("Allow: {allow_str}"))
                 .with_remediation("Disable the TRACE method in the web server configuration")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(693),
+                .with_cwe(693)
+                .with_confidence(0.8),
             );
         }
     }
@@ -416,38 +426,124 @@ fn is_session_cookie(name: &str) -> bool {
 
 /// Truncate a cookie value for evidence display (don't leak full values).
 fn truncate_cookie(cookie_str: &str) -> String {
-    if let Some(eq_pos) = cookie_str.find('=') {
-        let name = &cookie_str[..eq_pos];
-        let rest = &cookie_str[eq_pos + 1..];
-        // Show name + first few chars of value + flags
-        if let Some(semi_pos) = rest.find(';') {
-            let value = &rest[..semi_pos];
-            let flags = &rest[semi_pos..];
-            let truncated_value =
-                if value.len() > 10 { format!("{}...", &value[..10]) } else { value.to_string() };
-            format!("{name}={truncated_value}{flags}")
-        } else {
-            let truncated =
-                if rest.len() > 10 { format!("{}...", &rest[..10]) } else { rest.to_string() };
-            format!("{name}={truncated}")
-        }
-    } else {
-        cookie_str.to_string()
-    }
+    cookie_str.find('=').map_or_else(
+        || cookie_str.to_string(),
+        |eq_pos| {
+            let name = &cookie_str[..eq_pos];
+            let rest = &cookie_str[eq_pos + 1..];
+            // Show name + first few chars of value + flags
+            rest.find(';').map_or_else(
+                || {
+                    let truncated = if rest.len() > 10 {
+                        format!("{}...", &rest[..10])
+                    } else {
+                        rest.to_string()
+                    };
+                    format!("{name}={truncated}")
+                },
+                |semi_pos| {
+                    let value = &rest[..semi_pos];
+                    let flags = &rest[semi_pos..];
+                    let truncated_value = if value.len() > 10 {
+                        format!("{}...", &value[..10])
+                    } else {
+                        value.to_string()
+                    };
+                    format!("{name}={truncated_value}{flags}")
+                },
+            )
+        },
+    )
 }
 
 /// Extract a snippet around a pattern match for evidence.
 fn extract_error_snippet(body: &str, pattern: &str) -> String {
     let lower = body.to_lowercase();
-    if let Some(pos) = lower.find(pattern) {
-        let start = pos.saturating_sub(50);
-        let end = (pos + pattern.len() + 100).min(body.len());
-        let snippet: String = body[start..end]
-            .chars()
-            .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
-            .collect();
-        format!("...{snippet}...")
-    } else {
-        format!("Pattern detected: {pattern}")
+    lower.find(pattern).map_or_else(
+        || format!("Pattern detected: {pattern}"),
+        |pos| {
+            let start = pos.saturating_sub(50);
+            let end = (pos + pattern.len() + 100).min(body.len());
+            let snippet: String = body[start..end]
+                .chars()
+                .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                .collect();
+            format!("...{snippet}...")
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unit tests for the security misconfiguration module's pure helper functions.
+
+    /// Verify that `is_session_cookie` correctly identifies session-related cookies
+    /// and rejects unrelated cookie names.
+    #[test]
+    fn test_is_session_cookie() {
+        // Arrange & Assert: known session cookie names
+        assert!(is_session_cookie("PHPSESSID"));
+        assert!(is_session_cookie("JSESSIONID"));
+        assert!(is_session_cookie("connect.sid"));
+        assert!(is_session_cookie("auth_token"));
+        assert!(is_session_cookie("csrf_token"));
+        assert!(is_session_cookie("jwt_data"));
+
+        // Non-session cookies
+        assert!(!is_session_cookie("_ga"));
+        assert!(!is_session_cookie("theme"));
+        assert!(!is_session_cookie("lang"));
+        assert!(!is_session_cookie("preferred_color"));
+    }
+
+    /// Verify that `truncate_cookie` truncates long cookie values while preserving
+    /// the name and flags, and handles short values and missing equals signs.
+    #[test]
+    fn test_truncate_cookie() {
+        // Arrange: long value with flags
+        let long_cookie =
+            "session_id=abcdefghijklmnopqrstuvwxyz; HttpOnly; Secure; SameSite=Strict";
+
+        // Act
+        let result = truncate_cookie(long_cookie);
+
+        // Assert: name preserved, value truncated, flags preserved
+        assert!(result.starts_with("session_id=abcdefghij..."));
+        assert!(result.contains("HttpOnly"));
+        assert!(result.contains("Secure"));
+
+        // Arrange: short value without flags
+        let short_cookie = "sid=abc";
+        let short_result = truncate_cookie(short_cookie);
+        assert_eq!(short_result, "sid=abc");
+
+        // Arrange: no equals sign
+        let no_eq = "malformed_cookie";
+        let no_eq_result = truncate_cookie(no_eq);
+        assert_eq!(no_eq_result, "malformed_cookie");
+    }
+
+    /// Verify that `extract_error_snippet` returns a context window around the matched
+    /// pattern and falls back to a descriptive string when the pattern is absent.
+    #[test]
+    fn test_extract_error_snippet() {
+        // Arrange: body with a known pattern
+        let body = "Some prefix text. Fatal error: unexpected condition in /var/www/app.php on line 42. More text follows.";
+
+        // Act
+        let snippet = extract_error_snippet(body, "fatal error");
+
+        // Assert: snippet contains surrounding context
+        assert!(snippet.starts_with("..."));
+        assert!(snippet.ends_with("..."));
+        assert!(snippet.to_lowercase().contains("fatal error"));
+
+        // Arrange: pattern not found
+        let missing = extract_error_snippet(body, "never_matches_xyz");
+
+        // Assert: fallback message
+        assert!(missing.contains("Pattern detected: never_matches_xyz"));
     }
 }

@@ -94,7 +94,8 @@ async fn test_admin_paths(ctx: &ScanContext, base: &str, findings: &mut Vec<Find
                      rather than exposing the interface.",
                 )
                 .with_owasp("A01:2021 Broken Access Control")
-                .with_cwe(425),
+                .with_cwe(425)
+                .with_confidence(0.6),
             );
         }
     }
@@ -153,7 +154,8 @@ async fn test_method_override(
                          to the same authorization checks as the actual HTTP method.",
                     )
                     .with_owasp("A01:2021 Broken Access Control")
-                    .with_cwe(650),
+                    .with_cwe(650)
+                    .with_confidence(0.6),
                 );
                 return Ok(()); // Found one, no need to test all headers
             }
@@ -199,7 +201,8 @@ async fn test_path_bypass(ctx: &ScanContext, base: &str, findings: &mut Vec<Find
                      string matching. Test authorization at the controller/handler level.",
                 )
                 .with_owasp("A01:2021 Broken Access Control")
-                .with_cwe(22),
+                .with_cwe(22)
+                .with_confidence(0.6),
             );
         }
     }
@@ -249,7 +252,8 @@ async fn test_forced_browsing(ctx: &ScanContext, base: &str, findings: &mut Vec<
                              authorization checks (verify the requesting user owns the resource).",
                         )
                         .with_owasp("A01:2021 Broken Access Control")
-                        .with_cwe(425),
+                        .with_cwe(425)
+                        .with_confidence(0.6),
                     );
                     return; // Found one IDOR indicator, no need to keep probing
                 }

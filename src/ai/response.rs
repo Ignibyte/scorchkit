@@ -24,8 +24,9 @@ pub fn parse_claude_response(output: &str, focus: AnalysisFocus) -> AiAnalysis {
     //  "duration_ms":3000,"duration_api_ms":2800,"num_turns":1,
     //  "result":"the analysis text...","session_id":"..."}
 
-    let (content, cost_usd, model) =
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(output) {
+    let (content, cost_usd, model) = serde_json::from_str::<serde_json::Value>(output).map_or_else(
+        |_| (output.to_string(), None, None),
+        |json| {
             let text = json["result"]
                 .as_str()
                 .or_else(|| json["content"].as_str())
@@ -36,14 +37,12 @@ pub fn parse_claude_response(output: &str, focus: AnalysisFocus) -> AiAnalysis {
             let model_val = json["model"].as_str().map(String::from);
 
             (text, cost, model_val)
-        } else {
-            // Not JSON — treat entire output as the analysis text
-            (output.to_string(), None, None)
-        };
+        },
+    );
 
     let analysis = parse_structured_analysis(&content, focus);
 
-    AiAnalysis { focus, analysis, raw_response: content.clone(), cost_usd, model }
+    AiAnalysis { focus, analysis, raw_response: content, cost_usd, model }
 }
 
 /// Attempt to parse the analysis text into a structured type based on focus.
@@ -55,18 +54,22 @@ pub fn parse_claude_response(output: &str, focus: AnalysisFocus) -> AiAnalysis {
 /// 4. Fall back to [`StructuredAnalysis::Raw`]
 fn parse_structured_analysis(content: &str, focus: AnalysisFocus) -> StructuredAnalysis {
     match focus {
-        AnalysisFocus::Summary => try_extract::<SummaryAnalysis>(content)
-            .map(StructuredAnalysis::Summary)
-            .unwrap_or_else(|| StructuredAnalysis::Raw { content: content.to_string() }),
-        AnalysisFocus::Prioritize => try_extract::<PrioritizedAnalysis>(content)
-            .map(StructuredAnalysis::Prioritized)
-            .unwrap_or_else(|| StructuredAnalysis::Raw { content: content.to_string() }),
-        AnalysisFocus::Remediate => try_extract::<RemediationAnalysis>(content)
-            .map(StructuredAnalysis::Remediation)
-            .unwrap_or_else(|| StructuredAnalysis::Raw { content: content.to_string() }),
-        AnalysisFocus::Filter => try_extract::<FilterAnalysis>(content)
-            .map(StructuredAnalysis::Filter)
-            .unwrap_or_else(|| StructuredAnalysis::Raw { content: content.to_string() }),
+        AnalysisFocus::Summary => try_extract::<SummaryAnalysis>(content).map_or_else(
+            || StructuredAnalysis::Raw { content: content.to_string() },
+            StructuredAnalysis::Summary,
+        ),
+        AnalysisFocus::Prioritize => try_extract::<PrioritizedAnalysis>(content).map_or_else(
+            || StructuredAnalysis::Raw { content: content.to_string() },
+            StructuredAnalysis::Prioritized,
+        ),
+        AnalysisFocus::Remediate => try_extract::<RemediationAnalysis>(content).map_or_else(
+            || StructuredAnalysis::Raw { content: content.to_string() },
+            StructuredAnalysis::Remediation,
+        ),
+        AnalysisFocus::Filter => try_extract::<FilterAnalysis>(content).map_or_else(
+            || StructuredAnalysis::Raw { content: content.to_string() },
+            StructuredAnalysis::Filter,
+        ),
     }
 }
 
@@ -78,6 +81,7 @@ fn parse_structured_analysis(content: &str, focus: AnalysisFocus) -> StructuredA
 /// 3. Find the first `{` ... `}` balanced block
 ///
 /// Returns `None` if all strategies fail.
+#[must_use]
 pub fn try_extract<T: DeserializeOwned>(raw: &str) -> Option<T> {
     let trimmed = raw.trim();
 
@@ -142,7 +146,7 @@ fn extract_json_block(text: &str) -> Option<&str> {
             b'}' if !in_string => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some(&text[start..start + i + 1]);
+                    return Some(&text[start..=(start + i)]);
                 }
             }
             _ => {}
@@ -159,11 +163,16 @@ fn extract_json_block(text: &str) -> Option<&str> {
 /// parsing fails (graceful degradation).
 #[must_use]
 pub fn parse_plan_response(output: &str, target: &str) -> ScanPlan {
-    let content = if let Ok(json) = serde_json::from_str::<serde_json::Value>(output) {
-        json["result"].as_str().or_else(|| json["content"].as_str()).unwrap_or(output).to_string()
-    } else {
-        output.to_string()
-    };
+    let content = serde_json::from_str::<serde_json::Value>(output).map_or_else(
+        |_| output.to_string(),
+        |json| {
+            json["result"]
+                .as_str()
+                .or_else(|| json["content"].as_str())
+                .unwrap_or(output)
+                .to_string()
+        },
+    );
 
     try_extract::<ScanPlan>(&content).unwrap_or_else(|| ScanPlan {
         target: target.to_string(),

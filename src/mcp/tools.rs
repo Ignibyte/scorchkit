@@ -543,7 +543,7 @@ impl ScorchKitServer {
         // Build a minimal ScanResult for the analyzer
         let scan_records =
             scans::list_scans(&self.pool, project.id).await.map_err(|e| e.to_string())?;
-        let target_url = scan_records.first().map(|s| s.target_url.as_str()).unwrap_or("unknown");
+        let target_url = scan_records.first().map_or("unknown", |s| s.target_url.as_str());
         let target = crate::engine::target::Target::parse(target_url).map_err(|e| e.to_string())?;
         let scan_result = crate::engine::scan_result::ScanResult::new(
             Uuid::new_v4().to_string(),
