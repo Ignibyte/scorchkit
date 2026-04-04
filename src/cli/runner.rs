@@ -29,6 +29,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Run {
             target,
+            targets_file,
             modules,
             skip,
             analyze,
@@ -55,22 +56,78 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 }
                 Arc::new(c)
             };
-            run_scan(
-                &config,
-                &target,
-                modules,
-                skip,
-                None,
-                cli.output,
-                cli.quiet,
-                analyze,
-                plan,
-                &profile,
-                min_confidence,
-                project.as_deref(),
-                database_url.as_deref(),
-            )
-            .await
+
+            // Build target list: single target or from file
+            let target_list = if let Some(ref file) = targets_file {
+                crate::engine::target::parse_targets_file(file)?
+            } else if let Some(ref t) = target {
+                vec![t.clone()]
+            } else {
+                return Err(ScorchError::Config(
+                    "either <target> or --targets-file is required".to_string(),
+                ));
+            };
+
+            let total = target_list.len();
+            let mut errors = Vec::new();
+
+            for (i, target_str) in target_list.iter().enumerate() {
+                if total > 1 && !cli.quiet {
+                    println!(
+                        "\n{} Scanning target {}/{}: {}",
+                        ">>>".cyan().bold(),
+                        i + 1,
+                        total,
+                        target_str.cyan()
+                    );
+                }
+
+                if let Err(e) = run_scan(
+                    &config,
+                    target_str,
+                    modules.clone(),
+                    skip.clone(),
+                    None,
+                    cli.output.clone(),
+                    cli.quiet,
+                    analyze,
+                    plan,
+                    &profile,
+                    min_confidence,
+                    project.as_deref(),
+                    database_url.as_deref(),
+                )
+                .await
+                {
+                    if total > 1 {
+                        // Multi-target: log error and continue
+                        if !cli.quiet {
+                            println!("{} Target {} failed: {e}", "ERR".red().bold(), target_str);
+                        }
+                        errors.push((target_str.clone(), e.to_string()));
+                    } else {
+                        // Single target: propagate error
+                        return Err(e);
+                    }
+                }
+            }
+
+            // Print multi-target summary
+            if total > 1 && !cli.quiet {
+                println!("\n{}", "━".repeat(50).dimmed());
+                println!(
+                    "  {} target{} scanned, {} failed",
+                    total,
+                    if total == 1 { "" } else { "s" },
+                    errors.len()
+                );
+                for (t, e) in &errors {
+                    println!("    {} {}: {}", "✗".red(), t, e);
+                }
+                println!("{}", "━".repeat(50).dimmed());
+            }
+
+            Ok(())
         }
 
         Commands::Recon { target, modules } => {

@@ -32,7 +32,12 @@ pub enum Commands {
     /// Run all default scans against a target
     Run {
         /// Target URL, domain, or IP
-        target: String,
+        #[arg(required_unless_present = "targets_file")]
+        target: Option<String>,
+
+        /// File with one target per line (replaces positional target)
+        #[arg(long, conflicts_with = "target")]
+        targets_file: Option<PathBuf>,
 
         /// Specific modules to run (comma-separated)
         #[arg(short, long)]

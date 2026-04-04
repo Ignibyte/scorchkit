@@ -70,6 +70,33 @@ impl Target {
     }
 }
 
+/// Parse a targets file into a list of target strings.
+///
+/// Each non-empty, non-comment line is treated as a target URL or domain.
+/// Lines starting with `#` are comments. Leading/trailing whitespace is trimmed.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read.
+pub fn parse_targets_file(path: &std::path::Path) -> Result<Vec<String>> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        ScorchError::Config(format!("failed to read targets file {}: {e}", path.display()))
+    })?;
+    let targets: Vec<String> = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(String::from)
+        .collect();
+    if targets.is_empty() {
+        return Err(ScorchError::Config(format!(
+            "targets file {} contains no valid targets",
+            path.display()
+        )));
+    }
+    Ok(targets)
+}
+
 impl std::fmt::Display for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.url)
@@ -126,5 +153,36 @@ mod tests {
     fn base_url_includes_custom_port() {
         let t = Target::parse("https://example.com:8443").unwrap();
         assert_eq!(t.base_url(), "https://example.com:8443");
+    }
+
+    /// Verify targets file parsing skips comments and blank lines.
+    #[test]
+    fn parse_targets_file_skips_comments() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("targets.txt");
+        std::fs::write(
+            &path,
+            "# Production targets\nhttps://example.com\n\n  http://test.local  \n# staging\napi.example.com\n",
+        )
+        .expect("write test file");
+        let targets = parse_targets_file(&path).expect("parse targets");
+        assert_eq!(targets, vec!["https://example.com", "http://test.local", "api.example.com"]);
+    }
+
+    /// Verify empty targets file returns an error.
+    #[test]
+    fn parse_targets_file_empty_errors() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("empty.txt");
+        std::fs::write(&path, "# only comments\n\n").expect("write test file");
+        let result = parse_targets_file(&path);
+        assert!(result.is_err());
+    }
+
+    /// Verify missing targets file returns an error.
+    #[test]
+    fn parse_targets_file_missing_errors() {
+        let result = parse_targets_file(std::path::Path::new("/nonexistent/targets.txt"));
+        assert!(result.is_err());
     }
 }
