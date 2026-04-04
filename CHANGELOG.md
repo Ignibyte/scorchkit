@@ -2,7 +2,7 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
-## [0.30.0] - 2026-04-04
+## [1.0.0] - 2026-04-04
 
 ### Added
 - **Finding confidence scores** — Every finding now carries a `confidence: f64` (0.0–1.0) indicating false-positive likelihood. 6 tiers from 0.4 (static analysis) to 0.9 (definitive checks). All 225 Finding::new call sites across 77 modules set explicit confidence. New `--min-confidence` CLI flag filters findings below threshold. Confidence displayed in terminal, HTML, SARIF (as `rank`), and PDF reports. Storage layer persists via new `003_add_confidence.sql` migration. Backwards-compatible: old JSON reports without confidence deserialize with default 0.5. 8 new tests. (#82)
