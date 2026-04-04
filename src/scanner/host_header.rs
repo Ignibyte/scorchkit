@@ -125,7 +125,8 @@ async fn test_host_header_injection(
                      header against an allowlist of expected values.",
                 )
                 .with_owasp("A03:2021 Injection")
-                .with_cwe(644),
+                .with_cwe(644)
+                .with_confidence(0.8),
             );
             // One finding per header type is enough
         }
@@ -194,7 +195,8 @@ async fn test_forwarded_host(
                      cache poisoning.",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(644),
+                .with_cwe(644)
+                .with_confidence(0.8),
             );
             return Ok(());
         }

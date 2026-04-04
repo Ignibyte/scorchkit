@@ -107,7 +107,8 @@ fn parse_feroxbuster_output(output: &str, _target_url: &str) -> Vec<Finding> {
             .with_evidence(format!(
                 "HTTP {status} | Size: {content_length} bytes | Category: {category}"
             ))
-            .with_owasp("A05:2021 Security Misconfiguration"),
+            .with_owasp("A05:2021 Security Misconfiguration")
+            .with_confidence(0.6),
         );
     }
 

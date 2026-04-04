@@ -35,6 +35,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
             plan,
             profile,
             proxy,
+            min_confidence,
             scope,
             exclude,
             project,
@@ -65,6 +66,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 analyze,
                 plan,
                 &profile,
+                min_confidence,
                 project.as_deref(),
                 database_url.as_deref(),
             )
@@ -85,6 +87,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 "standard",
                 None,
                 None,
+                None,
             )
             .await
         }
@@ -101,6 +104,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 false,
                 false,
                 "standard",
+                None,
                 None,
                 None,
             )
@@ -270,6 +274,7 @@ async fn run_scan(
     analyze: bool,
     plan: bool,
     profile: &str,
+    min_confidence: Option<f64>,
     project_name: Option<&str>,
     database_url: Option<&str>,
 ) -> Result<()> {
@@ -383,7 +388,12 @@ async fn run_scan(
         orchestrator.exclude_by_ids(exclude);
     }
 
-    let result = orchestrator.run(quiet).await?;
+    let mut result = orchestrator.run(quiet).await?;
+
+    // Apply confidence filter before reporting (but after persistence-eligible collection)
+    if let Some(min_conf) = min_confidence {
+        result.filter_by_confidence(min_conf);
+    }
 
     // Save report
     match output_format {

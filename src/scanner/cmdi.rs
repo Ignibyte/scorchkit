@@ -90,7 +90,8 @@ async fn test_url_params(
                         .with_evidence(format!("Parameter: {param_name} | Payload: {payload} | Marker: {marker}"))
                         .with_remediation("Never pass user input to shell commands. Use parameterized APIs instead of system()/exec().")
                         .with_owasp("A03:2021 Injection")
-                        .with_cwe(78),
+                        .with_cwe(78)
+                        .with_confidence(0.8),
                 );
                 return Ok(());
             }
@@ -102,7 +103,8 @@ async fn test_url_params(
                         .with_evidence(format!("Parameter: {param_name} | Payload: {payload} | HTTP 500"))
                         .with_remediation("Investigate whether this parameter reaches a shell command.")
                         .with_owasp("A03:2021 Injection")
-                        .with_cwe(78),
+                        .with_cwe(78)
+                        .with_confidence(0.8),
                 );
                 return Ok(());
             }

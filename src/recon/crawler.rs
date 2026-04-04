@@ -205,7 +205,8 @@ fn build_crawl_findings(
 
     findings.push(
         Finding::new("crawler", Severity::Info, format!("Crawled {} Pages", visited.len()), format!("Web crawler visited {} pages and discovered {} unique URLs, {} forms, {} JS files.", visited.len(), discovered_urls.len(), discovered_forms.len(), discovered_js.len()), target_url)
-            .with_evidence(format!("Pages: {} | URLs: {} | Forms: {} | Parameters: {} | JS files: {}", visited.len(), discovered_urls.len(), discovered_forms.len(), discovered_params.len(), discovered_js.len())),
+            .with_evidence(format!("Pages: {} | URLs: {} | Forms: {} | Parameters: {} | JS files: {}", visited.len(), discovered_urls.len(), discovered_forms.len(), discovered_params.len(), discovered_js.len()))
+            .with_confidence(0.5),
     );
 
     // Report forms with notable characteristics
@@ -220,7 +221,8 @@ fn build_crawl_findings(
                     format!("POST form with fields: {fields}"),
                     &form.url,
                 )
-                .with_evidence(format!("{} {} | Fields: {fields}", form.method, form.url)),
+                .with_evidence(format!("{} {} | Fields: {fields}", form.method, form.url))
+                .with_confidence(0.5),
             );
         }
     }
@@ -239,7 +241,8 @@ fn build_crawl_findings(
             .with_evidence(format!(
                 "Parameters: {}",
                 param_list.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
-            )),
+            ))
+            .with_confidence(0.5),
         );
     }
 

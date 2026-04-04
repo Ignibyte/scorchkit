@@ -146,7 +146,8 @@ async fn test_mass_assignment(
                      (Data Transfer Objects) to control which fields are accepted.",
                 )
                 .with_owasp("A04:2021 Insecure Design")
-                .with_cwe(915),
+                .with_cwe(915)
+                .with_confidence(0.6),
             );
         }
     }

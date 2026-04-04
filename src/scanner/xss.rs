@@ -178,7 +178,8 @@ async fn test_xss_param(
                          Use context-appropriate encoding (HTML entity, JavaScript, URL).",
                     )
                     .with_owasp("A03:2021 Injection")
-                    .with_cwe(79),
+                    .with_cwe(79)
+                    .with_confidence(0.8),
                 );
                 // Found confirmed XSS, no need to test more payloads
                 return Ok(());
@@ -204,7 +205,8 @@ async fn test_xss_param(
             ))
             .with_remediation("Encode all user input before rendering in HTML output.")
             .with_owasp("A03:2021 Injection")
-            .with_cwe(79),
+            .with_cwe(79)
+            .with_confidence(0.8),
         );
     } else {
         // Canary reflected but HTML is encoded - lower severity
@@ -222,7 +224,8 @@ async fn test_xss_param(
             )
             .with_evidence(format!("Parameter: {param_name} | Canary reflected but HTML-encoded"))
             .with_owasp("A03:2021 Injection")
-            .with_cwe(79),
+            .with_cwe(79)
+            .with_confidence(0.8),
         );
     }
 
@@ -286,7 +289,8 @@ async fn test_form_xss(
                 ))
                 .with_remediation("Encode all user input before rendering in HTML output.")
                 .with_owasp("A03:2021 Injection")
-                .with_cwe(79),
+                .with_cwe(79)
+                .with_confidence(0.8),
             );
             return Ok(()); // One finding per form
         }

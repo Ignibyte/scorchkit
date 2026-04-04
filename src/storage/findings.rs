@@ -60,7 +60,7 @@ pub async fn save_findings(
             "UPDATE tracked_findings \
              SET last_seen = now(), seen_count = seen_count + 1, scan_id = $3, \
                  evidence = COALESCE($4, evidence), \
-                 raw_finding = $5 \
+                 raw_finding = $5, confidence = $6 \
              WHERE project_id = $1 AND fingerprint = $2",
         )
         .bind(project_id)
@@ -68,6 +68,7 @@ pub async fn save_findings(
         .bind(scan_id)
         .bind(&finding.evidence)
         .bind(&raw_json)
+        .bind(finding.confidence)
         .execute(pool)
         .await
         .map_err(|e| ScorchError::Database(format!("update finding: {e}")))?;
@@ -78,8 +79,8 @@ pub async fn save_findings(
                 "INSERT INTO tracked_findings \
                  (scan_id, project_id, fingerprint, module_id, severity, \
                   title, description, affected_target, evidence, \
-                  remediation, owasp_category, cwe_id, raw_finding) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                  remediation, owasp_category, cwe_id, raw_finding, confidence) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
             )
             .bind(scan_id)
             .bind(project_id)
@@ -94,6 +95,7 @@ pub async fn save_findings(
             .bind(&finding.owasp_category)
             .bind(finding.cwe_id.map(u32::cast_signed))
             .bind(&raw_json)
+            .bind(finding.confidence)
             .execute(pool)
             .await
             .map_err(|e| ScorchError::Database(format!("insert finding: {e}")))?;

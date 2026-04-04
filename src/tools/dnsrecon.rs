@@ -105,7 +105,8 @@ fn parse_dnsrecon_output(stdout: &str, target_url: &str) -> Vec<Finding> {
             .with_evidence("Zone transfer (AXFR) succeeded")
             .with_remediation("Restrict zone transfers to authorized secondary nameservers only.")
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(200),
+            .with_cwe(200)
+            .with_confidence(0.8),
         );
     }
 
@@ -142,7 +143,8 @@ fn parse_dnsrecon_output(stdout: &str, target_url: &str) -> Vec<Finding> {
                 target_url,
             )
             .with_evidence(format!("{count} DNS records enumerated"))
-            .with_owasp("A05:2021 Security Misconfiguration"),
+            .with_owasp("A05:2021 Security Misconfiguration")
+            .with_confidence(0.8),
         );
     }
 

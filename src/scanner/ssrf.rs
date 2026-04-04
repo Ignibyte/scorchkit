@@ -114,7 +114,8 @@ async fn test_ssrf_param(
                      172.16.0.0/12, 192.168.0.0/16, 169.254.169.254).",
                 )
                 .with_owasp("A10:2021 Server-Side Request Forgery")
-                .with_cwe(918),
+                .with_cwe(918)
+                .with_confidence(0.7),
             );
             return Ok(());
         }
@@ -135,7 +136,8 @@ async fn test_ssrf_param(
                 .with_evidence(format!("Payload: {payload} | HTTP 500"))
                 .with_remediation("Investigate whether this parameter processes URLs server-side")
                 .with_owasp("A10:2021 Server-Side Request Forgery")
-                .with_cwe(918),
+                .with_cwe(918)
+                .with_confidence(0.7),
             );
             return Ok(());
         }

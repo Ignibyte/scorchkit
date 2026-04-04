@@ -2,9 +2,10 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
-## [0.30.0] - 2026-04-03
+## [0.30.0] - 2026-04-04
 
 ### Added
+- **Finding confidence scores** — Every finding now carries a `confidence: f64` (0.0–1.0) indicating false-positive likelihood. 6 tiers from 0.4 (static analysis) to 0.9 (definitive checks). All 225 Finding::new call sites across 77 modules set explicit confidence. New `--min-confidence` CLI flag filters findings below threshold. Confidence displayed in terminal, HTML, SARIF (as `rank`), and PDF reports. Storage layer persists via new `003_add_confidence.sql` migration. Backwards-compatible: old JSON reports without confidence deserialize with default 0.5. 8 new tests. (#82)
 - **Path Traversal / LFI scanner** (`path_traversal`) — Detects directory traversal and local file inclusion via 24 payloads covering depth variations (1-8 levels), URL encoding, double encoding, null byte bypasses, backslash (Windows), UTF-8 overlong encoding, and filter bypass techniques. Matches 12 file content indicators for Linux (`/etc/passwd`, `/etc/shadow`) and Windows (`win.ini`, `boot.ini`, hosts). CWE-22, OWASP A01:2021. `src/scanner/path_traversal.rs` with 7 tests (#70)
 - **SSTI scanner** (`ssti`) — Detects server-side template injection across 8 template engines (Jinja2, Twig, Freemarker, ERB, Mako, Velocity, Smarty, Pebble) via 10 safe mathematical expression payloads. Boundary-aware response matching avoids false positives from CSS/pixel values. Engine identification from error messages (19 fingerprints). Tests query params, form fields, and HTTP headers (User-Agent, Referer). CWE-1336, OWASP A03:2021. `src/scanner/ssti.rs` with 7 tests (#70)
 - **CRLF injection scanner** (`crlf`) — Detects HTTP response splitting via 7 payload variants: standard `%0d%0a`, double-encoded, unicode, bare LF/CR, Set-Cookie injection, and tab-prefixed. Checks response headers for injected canary headers. CWE-113, OWASP A03:2021. `src/scanner/crlf.rs` with 5 tests (#72)

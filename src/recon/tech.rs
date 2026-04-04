@@ -78,7 +78,8 @@ fn detect_server_tech(
                     format!("Server technology identified: {tech_list}"),
                     url,
                 )
-                .with_evidence(format!("Server: {val}")),
+                .with_evidence(format!("Server: {val}"))
+                .with_confidence(0.7),
             );
         }
     }
@@ -97,7 +98,8 @@ fn detect_powered_by(headers: &reqwest::header::HeaderMap, url: &str, findings: 
                     format!("The X-Powered-By header reveals: {val}"),
                     url,
                 )
-                .with_evidence(format!("X-Powered-By: {val}")),
+                .with_evidence(format!("X-Powered-By: {val}"))
+                .with_confidence(0.7),
             );
         }
     }
@@ -114,7 +116,8 @@ fn detect_powered_by(headers: &reqwest::header::HeaderMap, url: &str, findings: 
                     format!("{header_name} header reveals version: {val}"),
                     url,
                 )
-                .with_evidence(format!("{header_name}: {val}")),
+                .with_evidence(format!("{header_name}: {val}"))
+                .with_confidence(0.7),
             );
         }
     }
@@ -139,7 +142,8 @@ fn detect_meta_generator(body: &str, url: &str, findings: &mut Vec<Finding>) {
                         format!("The page declares its generator: {content}"),
                         url,
                     )
-                    .with_evidence(format!("<meta name=\"generator\" content=\"{content}\">")),
+                    .with_evidence(format!("<meta name=\"generator\" content=\"{content}\">"))
+                    .with_confidence(0.7),
                 );
             }
         }
@@ -184,7 +188,8 @@ fn detect_cookie_tech(
             .with_evidence(format!(
                 "Cookies: {}",
                 detected.iter().map(|(c, _)| *c).collect::<Vec<_>>().join(", ")
-            )),
+            ))
+            .with_confidence(0.7),
         );
     }
 }
@@ -245,7 +250,8 @@ fn detect_framework_signatures(
                 format!("The target appears to use {tech}"),
                 url,
             )
-            .with_evidence("Detected via response signatures".to_string()),
+            .with_evidence("Detected via response signatures".to_string())
+            .with_confidence(0.7),
         );
     }
 }
@@ -283,7 +289,8 @@ fn detect_cms_indicators(body: &str, url: &str, findings: &mut Vec<Finding>) {
                 format!("Asset paths in the HTML suggest {cms} is in use"),
                 url,
             )
-            .with_evidence("Detected via CSS/JS resource paths".to_string()),
+            .with_evidence("Detected via CSS/JS resource paths".to_string())
+            .with_confidence(0.7),
         );
     }
 }

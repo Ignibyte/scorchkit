@@ -81,7 +81,8 @@ impl ScanModule for DomXssModule {
                      HTML sanitization.",
                 )
                 .with_owasp("A07:2021 Cross-Site Scripting")
-                .with_cwe(79),
+                .with_cwe(79)
+                .with_confidence(0.4),
             );
         }
 
@@ -108,7 +109,8 @@ impl ScanModule for DomXssModule {
                          (textContent instead of innerHTML, etc.).",
                     )
                     .with_owasp("A07:2021 Cross-Site Scripting")
-                    .with_cwe(79),
+                    .with_cwe(79)
+                    .with_confidence(0.4),
                 );
                 break; // One finding for orphan sinks is enough
             }

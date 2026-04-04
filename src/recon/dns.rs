@@ -80,7 +80,8 @@ impl ScanModule for DnsSecurityModule {
                      Start with p=none for monitoring, then move to p=quarantine and p=reject.",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(290),
+                .with_cwe(290)
+                .with_confidence(0.8),
             );
         }
 
@@ -153,7 +154,8 @@ fn check_spf(txt_records: &[String], domain: &str, url: &str, findings: &mut Vec
                  Use -all (hard fail) to reject unauthorized senders.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(290),
+            .with_cwe(290)
+            .with_confidence(0.8),
         );
         return;
     };
@@ -175,7 +177,8 @@ fn check_spf(txt_records: &[String], domain: &str, url: &str, findings: &mut Vec
                  Restrict authorized senders to only those that legitimately send email.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(290),
+            .with_cwe(290)
+            .with_confidence(0.8),
         );
     }
 }
@@ -237,7 +240,8 @@ fn check_dmarc(txt_records: &[String], domain: &str, url: &str, findings: &mut V
                  p=none is suitable for initial monitoring but provides no protection.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(290),
+            .with_cwe(290)
+            .with_confidence(0.8),
         );
     }
 }
@@ -278,7 +282,8 @@ fn check_mx(mx_records: &[String], domain: &str, url: &str, findings: &mut Vec<F
             url,
         )
         .with_evidence(format!("{mx_count} MX records"))
-        .with_owasp("A05:2021 Security Misconfiguration"),
+        .with_owasp("A05:2021 Security Misconfiguration")
+        .with_confidence(0.8),
     );
 }
 

@@ -54,7 +54,8 @@ fn parse_cewl_output(output: &str, target_url: &str) -> Vec<Finding> {
 
         findings.push(
             Finding::new("cewl", Severity::Info, format!("{count} Words Extracted from Target"), format!("CeWL extracted {count} unique words from the target. These can be used for targeted password attacks."), target_url)
-                .with_evidence(format!("Sample words: {}", sample.iter().map(|w| **w).collect::<Vec<_>>().join(", "))),
+                .with_evidence(format!("Sample words: {}", sample.iter().map(|w| **w).collect::<Vec<_>>().join(", ")))
+                .with_confidence(0.5),
         );
     }
 

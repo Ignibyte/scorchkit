@@ -72,7 +72,8 @@ fn parse_wafw00f_output(output: &str, target_url: &str) -> Vec<Finding> {
                             &desc,
                             target_url,
                         )
-                        .with_evidence(desc),
+                        .with_evidence(desc)
+                        .with_confidence(0.7),
                     );
                 }
             }
@@ -91,16 +92,20 @@ fn parse_wafw00f_output(output: &str, target_url: &str) -> Vec<Finding> {
                         line.trim(),
                         target_url,
                     )
-                    .with_evidence(line.trim().to_string()),
+                    .with_evidence(line.trim().to_string())
+                    .with_confidence(0.7),
                 );
             } else if line.contains("No WAF") {
-                findings.push(Finding::new(
-                    "wafw00f",
-                    Severity::Info,
-                    "No WAF Detected",
-                    "No Web Application Firewall was detected.",
-                    target_url,
-                ));
+                findings.push(
+                    Finding::new(
+                        "wafw00f",
+                        Severity::Info,
+                        "No WAF Detected",
+                        "No Web Application Firewall was detected.",
+                        target_url,
+                    )
+                    .with_confidence(0.7),
+                );
             }
         }
     }

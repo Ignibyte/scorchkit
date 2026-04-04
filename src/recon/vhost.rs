@@ -107,7 +107,8 @@ impl ScanModule for VhostModule {
                      accessible from the internet. Use IP allowlists for admin vhosts.",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(200),
+                .with_cwe(200)
+                .with_confidence(0.6),
             );
         }
 

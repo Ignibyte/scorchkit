@@ -96,7 +96,8 @@ fn parse_katana_output(stdout: &str, target_url: &str) -> Vec<Finding> {
         target_url,
     )
     .with_evidence(format!("{count} URLs discovered"))
-    .with_owasp("A05:2021 Security Misconfiguration")]
+    .with_owasp("A05:2021 Security Misconfiguration")
+    .with_confidence(0.7)]
 }
 
 #[cfg(test)]

@@ -112,6 +112,7 @@ fn parse_prowler_output(stdout: &str, target_url: &str) -> Vec<Finding> {
             .with_evidence(format!("Service: {service} | Severity: {severity_str}"))
             .with_remediation("Review the Prowler check documentation for remediation steps.")
             .with_owasp("A05:2021 Security Misconfiguration")
+            .with_confidence(0.8)
         })
         .collect()
 }
@@ -151,7 +152,8 @@ fn parse_prowler_jsonl(stdout: &str, target_url: &str) -> Vec<Finding> {
                 target_url,
             )
             .with_evidence(format!("Severity: {severity_str}"))
-            .with_owasp("A05:2021 Security Misconfiguration"),
+            .with_owasp("A05:2021 Security Misconfiguration")
+            .with_confidence(0.8),
         );
     }
 

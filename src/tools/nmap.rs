@@ -98,7 +98,8 @@ fn parse_nmap_xml(xml: &str, target_url: &str) -> Vec<Finding> {
             .with_evidence(format!(
                 "Port: {port_id}/{protocol} | Service: {service_name} | Version: {service_info}"
             ))
-            .with_owasp("A05:2021 Security Misconfiguration"),
+            .with_owasp("A05:2021 Security Misconfiguration")
+            .with_confidence(0.9),
         );
 
         // Flag known outdated service versions
@@ -115,7 +116,8 @@ fn parse_nmap_xml(xml: &str, target_url: &str) -> Vec<Finding> {
                     .with_evidence(format!("Port {port_id}: {product} {version}"))
                     .with_remediation("Update to the latest stable version")
                     .with_owasp("A06:2021 Vulnerable and Outdated Components")
-                    .with_cwe(1104),
+                    .with_cwe(1104)
+                    .with_confidence(0.9),
                 );
             }
         }

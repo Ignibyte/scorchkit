@@ -65,7 +65,8 @@ fn parse_arjun_output(output: &str, target_url: &str) -> Vec<Finding> {
                             .with_evidence(format!("Parameters: {}", param_list.join(", ")))
                             .with_remediation(
                                 "Test discovered parameters for injection vulnerabilities",
-                            ),
+                            )
+                            .with_confidence(0.7),
                         );
                     }
                 }
@@ -85,7 +86,8 @@ fn parse_arjun_output(output: &str, target_url: &str) -> Vec<Finding> {
                         line.trim(),
                         target_url,
                     )
-                    .with_evidence(line.trim().to_string()),
+                    .with_evidence(line.trim().to_string())
+                    .with_confidence(0.7),
                 );
             }
         }

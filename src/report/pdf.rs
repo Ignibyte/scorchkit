@@ -227,6 +227,9 @@ fn render_findings(findings: &[crate::engine::finding::Finding]) -> String {
             let cwe = f.cwe_id.map_or_else(|| "—".to_string(), |c| format!("CWE-{c}"));
             let sev = f.severity.to_string().to_uppercase();
             let sev_class = f.severity.to_string();
+            // JUSTIFICATION: confidence is 0.0–1.0, result fits in u8
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let confidence_pct = (f.confidence * 100.0) as u8;
 
             format!(
                 r#"<div class="finding {sev_class}">
@@ -238,6 +241,7 @@ fn render_findings(findings: &[crate::engine::finding::Finding]) -> String {
     <p class="finding-desc">{desc}</p>
     <table class="finding-meta">
       <tr><th>Affected Target</th><td>{target}</td></tr>
+      <tr><th>Confidence</th><td>{confidence}%</td></tr>
       <tr><th>OWASP Category</th><td>{owasp}</td></tr>
       <tr><th>CWE</th><td>{cwe}</td></tr>
       {evidence_row}
@@ -247,6 +251,7 @@ fn render_findings(findings: &[crate::engine::finding::Finding]) -> String {
                 num = i + 1,
                 sev = sev,
                 sev_class = sev_class,
+                confidence = confidence_pct,
                 title = html_escape(&f.title),
                 desc = html_escape(&f.description),
                 target = html_escape(&f.affected_target),

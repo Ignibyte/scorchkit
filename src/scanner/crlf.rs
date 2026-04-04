@@ -241,6 +241,7 @@ fn build_crlf_finding(param_name: &str, crlf: &CrlfPayload, url_str: &str) -> Fi
     )
     .with_owasp("A03:2021 Injection")
     .with_cwe(113)
+    .with_confidence(0.9)
 }
 
 #[cfg(test)]

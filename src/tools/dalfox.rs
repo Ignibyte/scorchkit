@@ -67,7 +67,7 @@ fn parse_dalfox_output(output: &str, target_url: &str) -> Vec<Finding> {
                 if !poc.is_empty() {
                     f = f.with_evidence(format!("PoC: {poc}"));
                 }
-                findings.push(f);
+                findings.push(f.with_confidence(0.8));
             }
         }
     }

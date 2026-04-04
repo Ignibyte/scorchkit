@@ -118,7 +118,8 @@ fn detect_cloud_provider(headers: &HeaderMap, url: &str, findings: &mut Vec<Find
                  Review storage bucket policies and IAM configurations.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(200),
+            .with_cwe(200)
+            .with_confidence(0.7),
         );
     }
 }
@@ -205,7 +206,8 @@ async fn enumerate_buckets(
                  accessible. Enable bucket access logging. Use private bucket policies.",
             )
             .with_owasp("A01:2021 Broken Access Control")
-            .with_cwe(284),
+            .with_cwe(284)
+            .with_confidence(0.7),
         );
     }
 

@@ -98,7 +98,8 @@ async fn check_cors(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -
                          Never reflect the Origin header directly.",
                     )
                     .with_owasp("A05:2021 Security Misconfiguration")
-                    .with_cwe(942),
+                    .with_cwe(942)
+                    .with_confidence(0.8),
             );
         }
 
@@ -121,7 +122,8 @@ async fn check_cors(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -
                         )
                         .with_remediation("Specify explicit allowed origins instead of using wildcard")
                         .with_owasp("A05:2021 Security Misconfiguration")
-                        .with_cwe(942),
+                        .with_cwe(942)
+                        .with_confidence(0.8),
                     );
                 }
             }
@@ -141,7 +143,8 @@ async fn check_cors(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>) -
                 .with_evidence("Access-Control-Allow-Origin: null")
                 .with_remediation("Do not whitelist the null origin in CORS configuration")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(942),
+                .with_cwe(942)
+                .with_confidence(0.8),
             );
         }
     }
@@ -189,7 +192,8 @@ async fn check_cookies(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>
                 .with_evidence(truncate_cookie(cookie_str))
                 .with_remediation("Add the Secure flag to all session cookies")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(614),
+                .with_cwe(614)
+                .with_confidence(0.8),
             );
         }
 
@@ -209,7 +213,8 @@ async fn check_cookies(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>
                 .with_evidence(truncate_cookie(cookie_str))
                 .with_remediation("Add the HttpOnly flag to all session cookies")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(1004),
+                .with_cwe(1004)
+                .with_confidence(0.8),
             );
         }
 
@@ -229,7 +234,8 @@ async fn check_cookies(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>
                 .with_evidence(truncate_cookie(cookie_str))
                 .with_remediation("Add SameSite=Lax or SameSite=Strict to session cookies")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(1275),
+                .with_cwe(1275)
+                .with_confidence(0.8),
             );
         }
 
@@ -248,7 +254,8 @@ async fn check_cookies(ctx: &ScanContext, url: &str, findings: &mut Vec<Finding>
                 )
                 .with_evidence(truncate_cookie(cookie_str))
                 .with_remediation("SameSite=None requires the Secure flag")
-                .with_owasp("A05:2021 Security Misconfiguration"),
+                .with_owasp("A05:2021 Security Misconfiguration")
+                .with_confidence(0.8),
             );
         }
     }
@@ -314,7 +321,8 @@ async fn check_error_pages(ctx: &ScanContext, findings: &mut Vec<Finding>) -> Re
                     "Configure custom error pages that don't reveal internal details",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(209),
+                .with_cwe(209)
+                .with_confidence(0.8),
             );
             break; // One finding per error page is enough
         }
@@ -365,7 +373,8 @@ async fn check_http_methods(
                     "Disable unnecessary HTTP methods (PUT, DELETE, TRACE) in the web server configuration",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(749),
+                .with_cwe(749)
+                .with_confidence(0.8),
             );
         }
 
@@ -383,7 +392,8 @@ async fn check_http_methods(
                 .with_evidence(format!("Allow: {allow_str}"))
                 .with_remediation("Disable the TRACE method in the web server configuration")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(693),
+                .with_cwe(693)
+                .with_confidence(0.8),
             );
         }
     }

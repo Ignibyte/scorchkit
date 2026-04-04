@@ -85,7 +85,8 @@ impl ScanModule for UploadModule {
                         ))
                         .with_remediation(payload.remediation)
                         .with_owasp("A04:2021 Insecure Design")
-                        .with_cwe(payload.cwe),
+                        .with_cwe(payload.cwe)
+                        .with_confidence(0.6),
                     );
                 }
             }

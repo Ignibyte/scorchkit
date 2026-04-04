@@ -117,6 +117,8 @@ fn build_finding(probe: &Probe, url: &str, status: StatusCode, body: Option<&str
         }
     }
 
+    f = f.with_confidence(0.6);
+
     f
 }
 
@@ -181,7 +183,8 @@ async fn check_directory_listing(
                             "Disable directory listing in your web server configuration",
                         )
                         .with_owasp("A05:2021 Security Misconfiguration")
-                        .with_cwe(548),
+                        .with_cwe(548)
+                        .with_confidence(0.6),
                     );
                     break; // One finding is enough
                 }

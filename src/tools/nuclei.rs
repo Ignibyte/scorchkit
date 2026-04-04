@@ -140,7 +140,7 @@ fn parse_nuclei_output(output: &str, target_url: &str) -> Vec<Finding> {
             }
         }
 
-        findings.push(finding);
+        findings.push(finding.with_confidence(0.8));
     }
 
     findings

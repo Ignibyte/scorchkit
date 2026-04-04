@@ -51,7 +51,8 @@ impl ScanModule for SqlmapModule {
                 "The target URL has no query parameters. Provide a URL with \
                  parameters for sqlmap testing (e.g., https://target.com/page?id=1).",
                 target,
-            )]);
+            )
+            .with_confidence(0.9)]);
         }
 
         let output = subprocess::run_tool(
@@ -121,7 +122,8 @@ fn parse_sqlmap_output(output: &str, target_url: &str) -> Vec<Finding> {
                      Never concatenate user input into SQL queries.",
                 )
                 .with_owasp("A03:2021 Injection")
-                .with_cwe(89),
+                .with_cwe(89)
+                .with_confidence(0.9),
             );
         }
 
@@ -137,20 +139,24 @@ fn parse_sqlmap_output(output: &str, target_url: &str) -> Vec<Finding> {
                     format!("sqlmap identified the back-end database as {dbms}."),
                     target_url,
                 )
-                .with_evidence(format!("DBMS: {dbms}")),
+                .with_evidence(format!("DBMS: {dbms}"))
+                .with_confidence(0.9),
             );
         }
     }
 
     // If no specific injection found but sqlmap ran, note it
     if findings.is_empty() {
-        findings.push(Finding::new(
-            "sqlmap",
-            Severity::Info,
-            "SQLMap: No Injection Points Found",
-            "sqlmap did not find any SQL injection vulnerabilities at the tested level/risk.",
-            target_url,
-        ));
+        findings.push(
+            Finding::new(
+                "sqlmap",
+                Severity::Info,
+                "SQLMap: No Injection Points Found",
+                "sqlmap did not find any SQL injection vulnerabilities at the tested level/risk.",
+                target_url,
+            )
+            .with_confidence(0.9),
+        );
     }
 
     findings

@@ -78,7 +78,8 @@ fn parse_amass_output(output: &str, target_url: &str) -> Vec<Finding> {
                 format!("Amass found {count} subdomains via passive enumeration."),
                 target_url,
             )
-            .with_evidence(format!("Subdomains:\n    {list}")),
+            .with_evidence(format!("Subdomains:\n    {list}"))
+            .with_confidence(0.8),
         );
     }
 

@@ -88,7 +88,7 @@ fn parse_zap_output(output: &str, target_url: &str) -> Vec<Finding> {
                 }
             }
 
-            findings.push(f);
+            findings.push(f.with_confidence(0.7));
         }
     }
 

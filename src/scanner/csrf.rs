@@ -76,7 +76,8 @@ impl ScanModule for CsrfModule {
                         .with_evidence(format!("Form: method=POST action=\"{action}\" | No hidden CSRF token field found"))
                         .with_remediation("Add a CSRF token to all state-changing forms. Use your framework's built-in CSRF protection.")
                         .with_owasp("A05:2021 Security Misconfiguration")
-                        .with_cwe(352),
+                        .with_cwe(352)
+                        .with_confidence(0.7),
                 );
             }
         }

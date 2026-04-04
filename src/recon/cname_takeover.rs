@@ -103,7 +103,8 @@ async fn check_takeover_fingerprints(
                      Verify all CNAME targets are active and owned.",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(923),
+                .with_cwe(923)
+                .with_confidence(0.7),
             );
             return Ok(());
         }
@@ -157,7 +158,8 @@ async fn query_crt_sh(
                  for decommissioned services. Test each for CNAME takeover risk.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(200),
+            .with_cwe(200)
+            .with_confidence(0.7),
         );
     }
 

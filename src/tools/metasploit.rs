@@ -75,7 +75,8 @@ fn parse_msf_output(output: &str, target_url: &str) -> Vec<Finding> {
 
             findings.push(
                 Finding::new("metasploit", severity, format!("MSF: {msg}"), msg, target_url)
-                    .with_evidence(trimmed.to_string()),
+                    .with_evidence(trimmed.to_string())
+                    .with_confidence(0.9),
             );
         } else if trimmed.starts_with("[*]") && trimmed.len() > 10 {
             let msg = trimmed.trim_start_matches("[*]").trim();
@@ -95,7 +96,8 @@ fn parse_msf_output(output: &str, target_url: &str) -> Vec<Finding> {
                         msg,
                         target_url,
                     )
-                    .with_evidence(trimmed.to_string()),
+                    .with_evidence(trimmed.to_string())
+                    .with_confidence(0.9),
                 );
             }
         }

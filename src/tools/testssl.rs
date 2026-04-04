@@ -77,7 +77,8 @@ fn parse_testssl_output(output: &str, target_url: &str) -> Vec<Finding> {
         findings.push(
             Finding::new("testssl", severity, format!("testssl: {id}"), finding_text, target_url)
                 .with_evidence(format!("{id}: {finding_text}"))
-                .with_owasp("A02:2021 Cryptographic Failures"),
+                .with_owasp("A02:2021 Cryptographic Failures")
+                .with_confidence(0.9),
         );
     }
 

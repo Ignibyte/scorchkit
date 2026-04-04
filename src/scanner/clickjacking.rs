@@ -114,7 +114,8 @@ fn check_frame_protection(headers: &HeaderMap, url: &str, findings: &mut Vec<Fin
              for modern browser support. Both headers should be set for defense in depth.",
         )
         .with_owasp("A05:2021 Security Misconfiguration")
-        .with_cwe(1021),
+        .with_cwe(1021)
+        .with_confidence(0.9),
     );
 }
 

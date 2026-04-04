@@ -78,7 +78,8 @@ fn parse_enum4linux_output(stdout: &str, target_url: &str) -> Vec<Finding> {
             .with_evidence(format!("{} shares found", shares.len()))
             .with_remediation("Restrict anonymous access to SMB shares. Disable null sessions.")
             .with_owasp("A01:2021 Broken Access Control")
-            .with_cwe(200),
+            .with_cwe(200)
+            .with_confidence(0.7),
         );
     }
 
@@ -100,7 +101,8 @@ fn parse_enum4linux_output(stdout: &str, target_url: &str) -> Vec<Finding> {
             .with_evidence(format!("{} users enumerated", users.len()))
             .with_remediation("Disable anonymous RID cycling. Restrict SMB access.")
             .with_owasp("A01:2021 Broken Access Control")
-            .with_cwe(200),
+            .with_cwe(200)
+            .with_confidence(0.7),
         );
     }
 
@@ -120,7 +122,8 @@ fn parse_enum4linux_output(stdout: &str, target_url: &str) -> Vec<Finding> {
                  account lockout after 5 attempts.",
             )
             .with_owasp("A07:2021 Identification and Authentication Failures")
-            .with_cwe(521),
+            .with_cwe(521)
+            .with_confidence(0.7),
         );
     }
 

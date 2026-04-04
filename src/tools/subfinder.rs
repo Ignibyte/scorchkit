@@ -84,7 +84,8 @@ fn parse_subfinder_output(output: &str, target_url: &str) -> Vec<Finding> {
                 format!("Subfinder found {count} subdomains."),
                 target_url,
             )
-            .with_evidence(format!("Subdomains:\n    {list}")),
+            .with_evidence(format!("Subdomains:\n    {list}"))
+            .with_confidence(0.8),
         );
     }
 

@@ -93,7 +93,8 @@ fn parse_harvester_output(output: &str, target_url: &str) -> Vec<Finding> {
                 "theHarvester found publicly exposed email addresses.",
                 target_url,
             )
-            .with_evidence(format!("Emails:\n    {}", emails.join("\n    "))),
+            .with_evidence(format!("Emails:\n    {}", emails.join("\n    ")))
+            .with_confidence(0.6),
         );
     }
     if !hosts.is_empty() {
@@ -105,7 +106,8 @@ fn parse_harvester_output(output: &str, target_url: &str) -> Vec<Finding> {
                 "theHarvester found associated hosts.",
                 target_url,
             )
-            .with_evidence(format!("Hosts:\n    {}", hosts.join("\n    "))),
+            .with_evidence(format!("Hosts:\n    {}", hosts.join("\n    ")))
+            .with_confidence(0.6),
         );
     }
 

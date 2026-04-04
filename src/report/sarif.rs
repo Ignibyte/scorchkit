@@ -78,6 +78,12 @@ fn build_sarif(result: &ScanResult) -> serde_json::Value {
                 }],
             });
 
+            // SARIF rank: confidence mapped to 0–100 integer scale
+            // JUSTIFICATION: confidence is 0.0–1.0, result fits in u8
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let rank = (f.confidence * 100.0) as u8;
+            r["rank"] = serde_json::json!(rank);
+
             if let Some(ref evidence) = f.evidence {
                 r["fingerprints"] = serde_json::json!({
                     "evidence": evidence

@@ -355,7 +355,8 @@ async fn test_header_ssti(
                      Use sandboxed template engines. Separate template logic from user data.",
                 )
                 .with_owasp("A03:2021 Injection")
-                .with_cwe(1336),
+                .with_cwe(1336)
+                .with_confidence(0.8),
             );
         }
     }
@@ -397,6 +398,7 @@ fn build_ssti_finding(
     )
     .with_owasp("A03:2021 Injection")
     .with_cwe(1336)
+    .with_confidence(0.8)
 }
 
 /// Build a finding for SSTI error detection (engine error triggered but no computed output).
@@ -429,6 +431,7 @@ fn build_ssti_error_finding(
     )
     .with_owasp("A03:2021 Injection")
     .with_cwe(1336)
+    .with_confidence(0.8)
 }
 
 /// Extract links with query parameters from HTML.

@@ -153,7 +153,8 @@ fn analyze_js_content(
                      and server-side configuration. Rotate any exposed credentials.",
                 )
                 .with_owasp("A01:2021 Broken Access Control")
-                .with_cwe(540),
+                .with_cwe(540)
+                .with_confidence(0.6),
             );
         }
     }
@@ -177,7 +178,8 @@ fn analyze_js_content(
             .with_evidence(format!("Endpoints: {}", found_endpoints.join(", ")))
             .with_remediation("Ensure all discovered API endpoints require proper authentication.")
             .with_owasp("A01:2021 Broken Access Control")
-            .with_cwe(615),
+            .with_cwe(615)
+            .with_confidence(0.6),
         );
     }
 }
@@ -199,7 +201,8 @@ fn check_source_map(content: &str, js_url: &str, findings: &mut Vec<Finding>) {
             .with_evidence(format!("sourceMappingURL found in {js_url}"))
             .with_remediation("Remove source map references from production JavaScript.")
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(540),
+            .with_cwe(540)
+            .with_confidence(0.6),
         );
     }
 }

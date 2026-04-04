@@ -167,7 +167,8 @@ fn analyze_nosql_response(
                  in user input. Validate input types strictly.",
             )
             .with_owasp("A03:2021 Injection")
-            .with_cwe(943),
+            .with_cwe(943)
+            .with_confidence(0.7),
         );
     }
 
@@ -190,7 +191,8 @@ fn analyze_nosql_response(
                 "Investigate the parameter for NoSQL injection. Use parameterized queries.",
             )
             .with_owasp("A03:2021 Injection")
-            .with_cwe(943),
+            .with_cwe(943)
+            .with_confidence(0.7),
         );
     }
 
@@ -222,7 +224,8 @@ fn analyze_nosql_response(
             ))
             .with_remediation("Investigate with NoSQL-specific tools. Sanitize all query inputs.")
             .with_owasp("A03:2021 Injection")
-            .with_cwe(943),
+            .with_cwe(943)
+            .with_confidence(0.7),
         );
     }
 
@@ -343,7 +346,8 @@ async fn test_json_body_nosql(
                      in request bodies. Use schema validation on API inputs.",
                 )
                 .with_owasp("A03:2021 Injection")
-                .with_cwe(943),
+                .with_cwe(943)
+                .with_confidence(0.7),
             );
             return Ok(());
         }
@@ -415,7 +419,8 @@ async fn test_form_nosql(
                         "Sanitize user input before NoSQL queries. Reject JSON operators.",
                     )
                     .with_owasp("A03:2021 Injection")
-                    .with_cwe(943),
+                    .with_cwe(943)
+                    .with_confidence(0.7),
                 );
                 return Ok(());
             }

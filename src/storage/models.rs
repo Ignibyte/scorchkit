@@ -105,6 +105,8 @@ pub struct TrackedFinding {
     pub cwe_id: Option<i32>,
     /// Full original finding as JSON for lossless round-tripping.
     pub raw_finding: serde_json::Value,
+    /// Confidence score (0.0–1.0) indicating false-positive likelihood.
+    pub confidence: f64,
     /// When this finding was first detected.
     pub first_seen: DateTime<Utc>,
     /// When this finding was most recently detected.

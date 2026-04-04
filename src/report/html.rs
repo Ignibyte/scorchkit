@@ -32,6 +32,9 @@ fn render_findings_html(result: &ScanResult) -> String {
         let remediation = f.remediation.as_deref().unwrap_or("");
         let owasp = f.owasp_category.as_deref().unwrap_or("");
         let cwe = f.cwe_id.map_or(String::new(), |c| format!("CWE-{c}"));
+        // JUSTIFICATION: confidence is 0.0–1.0, well within u8 range
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let confidence_pct = (f.confidence * 100.0) as u8;
 
         let _ = write!(
             findings_html,
@@ -39,6 +42,7 @@ fn render_findings_html(result: &ScanResult) -> String {
   <div class="finding-header">
     <span class="finding-num">#{num}</span>
     <span class="severity-badge {sev_class}">{severity}</span>
+    <span class="confidence-badge">{confidence}%</span>
     <span class="finding-title">{title}</span>
   </div>
   <p class="finding-desc">{desc}</p>
@@ -52,6 +56,7 @@ fn render_findings_html(result: &ScanResult) -> String {
 "#,
             num = i + 1,
             severity = f.severity.to_string().to_uppercase(),
+            confidence = confidence_pct,
             title = html_escape(&f.title),
             desc = html_escape(&f.description),
             target = html_escape(&f.affected_target),
@@ -116,6 +121,7 @@ fn render_html(result: &ScanResult) -> String {
   .severity-badge.medium {{ background: #d29922; color: #000; }}
   .severity-badge.low {{ background: #3fb950; color: #000; }}
   .severity-badge.info {{ background: #58a6ff; color: #000; }}
+  .confidence-badge {{ padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; background: #30363d; color: #8b949e; }}
   .finding-title {{ font-weight: 600; }}
   .finding-desc {{ color: #8b949e; margin-bottom: 0.5rem; }}
   .finding-meta {{ font-size: 0.9rem; }}

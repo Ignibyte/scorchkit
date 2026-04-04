@@ -150,7 +150,8 @@ fn check_smuggling_headers(headers: &HeaderMap, url: &str, findings: &mut Vec<Fi
                          Transfer-Encoding handling. Consider upgrading to HTTP/2 end-to-end.",
                     )
                     .with_owasp("A05:2021 Security Misconfiguration")
-                    .with_cwe(444),
+                    .with_cwe(444)
+                    .with_confidence(0.5),
                 );
             }
         }
@@ -186,8 +187,7 @@ async fn test_te_obfuscation(
     // Analyze: different status codes for different TE variants = inconsistent handling
     if response_statuses.len() >= 2 {
         let first_status = response_statuses[0].0;
-        let has_inconsistency =
-            response_statuses.iter().any(|(status, _)| *status != first_status);
+        let has_inconsistency = response_statuses.iter().any(|(status, _)| *status != first_status);
 
         if has_inconsistency {
             let evidence_lines: Vec<String> = response_statuses
@@ -217,7 +217,8 @@ async fn test_te_obfuscation(
                      to HTTP/2 end-to-end to eliminate request smuggling risk.",
                 )
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(444),
+                .with_cwe(444)
+                .with_confidence(0.5),
             );
         }
     }
@@ -280,7 +281,8 @@ async fn test_cl_handling(
                  to reject requests with mismatched Content-Length and body size.",
             )
             .with_owasp("A05:2021 Security Misconfiguration")
-            .with_cwe(444),
+            .with_cwe(444)
+            .with_confidence(0.5),
         );
     }
 

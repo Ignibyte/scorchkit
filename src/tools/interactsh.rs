@@ -232,7 +232,8 @@ fn build_findings(
                 ))
                 .with_remediation(remediation_for(payload.category))
                 .with_owasp(owasp)
-                .with_cwe(cwe),
+                .with_cwe(cwe)
+                .with_confidence(0.7),
             )
         })
         .collect()

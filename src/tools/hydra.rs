@@ -63,7 +63,8 @@ fn parse_hydra_output(output: &str, target_url: &str) -> Vec<Finding> {
                 .with_evidence(line.trim().to_string())
                 .with_remediation("Change default credentials immediately")
                 .with_owasp("A07:2021 Identification and Authentication Failures")
-                .with_cwe(798),
+                .with_cwe(798)
+                .with_confidence(0.9),
             );
         }
     }

@@ -44,7 +44,8 @@ impl ScanModule for SslModule {
             )
             .with_remediation("Enable HTTPS with a valid TLS certificate")
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(319)]);
+            .with_cwe(319)
+            .with_confidence(0.9)]);
         }
 
         let domain = ctx.target.domain.as_deref().ok_or_else(|| ScorchError::InvalidTarget {
@@ -71,7 +72,8 @@ impl ScanModule for SslModule {
                         format!("Could not establish a TLS connection: {e}"),
                         url,
                     )
-                    .with_owasp("A02:2021 Cryptographic Failures"),
+                    .with_owasp("A02:2021 Cryptographic Failures")
+                    .with_confidence(0.9),
                 );
             }
         }
@@ -230,7 +232,8 @@ fn check_expiration(cert: &CertInfo, url: &str, findings: &mut Vec<Finding>) {
             ))
             .with_remediation("Renew the TLS certificate immediately")
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(295),
+            .with_cwe(295)
+            .with_confidence(0.9),
         );
     } else if cert.days_until_expiry < 30 {
         findings.push(
@@ -249,7 +252,8 @@ fn check_expiration(cert: &CertInfo, url: &str, findings: &mut Vec<Finding>) {
                 cert.subject_cn, cert.not_after, cert.days_until_expiry
             ))
             .with_remediation("Renew the TLS certificate before it expires")
-            .with_owasp("A02:2021 Cryptographic Failures"),
+            .with_owasp("A02:2021 Cryptographic Failures")
+            .with_confidence(0.9),
         );
     }
 }
@@ -273,7 +277,8 @@ fn check_self_signed(cert: &CertInfo, url: &str, findings: &mut Vec<Finding>) {
                 "Use a certificate from a trusted Certificate Authority (e.g., Let's Encrypt)",
             )
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(295),
+            .with_cwe(295)
+            .with_confidence(0.9),
         );
     }
 }
@@ -295,7 +300,8 @@ fn check_weak_signature(cert: &CertInfo, url: &str, findings: &mut Vec<Finding>)
             .with_evidence(format!("Signature Algorithm: {}", cert.signature_algorithm))
             .with_remediation("Reissue the certificate with SHA-256 or stronger")
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(328),
+            .with_cwe(328)
+            .with_confidence(0.9),
         );
     }
 }
@@ -334,7 +340,8 @@ fn check_subject_mismatch(cert: &CertInfo, domain: &str, url: &str, findings: &m
             ))
             .with_remediation("Obtain a certificate that includes this domain name")
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(295),
+            .with_cwe(295)
+            .with_confidence(0.9),
         );
     }
 }

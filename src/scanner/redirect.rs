@@ -104,7 +104,8 @@ async fn test_url_params_redirect(
                                 .with_evidence(format!("Parameter: {param_name} | Payload: {evil_url} | Location: {loc}"))
                                 .with_remediation("Validate redirect destinations against an allowlist of trusted domains")
                                 .with_owasp("A01:2021 Broken Access Control")
-                                .with_cwe(601),
+                                .with_cwe(601)
+                                .with_confidence(0.8),
                         );
                         return Ok(());
                     }

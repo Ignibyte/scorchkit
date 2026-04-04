@@ -113,7 +113,8 @@ fn parse_trufflehog_output(stdout: &str, target_url: &str) -> Vec<Finding> {
                  and use environment variables or a secrets manager instead.",
             )
             .with_owasp("A07:2021 Identification and Authentication Failures")
-            .with_cwe(798),
+            .with_cwe(798)
+            .with_confidence(0.8),
         );
     }
 

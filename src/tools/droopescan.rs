@@ -58,7 +58,8 @@ fn parse_droopescan_output(output: &str, target_url: &str) -> Vec<Finding> {
                     format!("Droopescan identified CMS version: {version}"),
                     target_url,
                 )
-                .with_evidence(format!("Version: {version}")),
+                .with_evidence(format!("Version: {version}"))
+                .with_confidence(0.7),
             );
         }
 
@@ -75,7 +76,8 @@ fn parse_droopescan_output(output: &str, target_url: &str) -> Vec<Finding> {
                         format!("CMS plugin detected: {name} version {version}"),
                         target_url,
                     )
-                    .with_evidence(format!("{name} {version}")),
+                    .with_evidence(format!("{name} {version}"))
+                    .with_confidence(0.7),
                 );
             }
         }
@@ -94,7 +96,8 @@ fn parse_droopescan_output(output: &str, target_url: &str) -> Vec<Finding> {
                             desc,
                             url,
                         )
-                        .with_owasp("A05:2021 Security Misconfiguration"),
+                        .with_owasp("A05:2021 Security Misconfiguration")
+                        .with_confidence(0.7),
                     );
                 }
             }

@@ -166,7 +166,8 @@ fn analyze_injection_response(
                  Never concatenate user input into SQL queries.",
             )
             .with_owasp("A03:2021 Injection")
-            .with_cwe(89),
+            .with_cwe(89)
+            .with_confidence(0.8),
         );
     }
 
@@ -193,7 +194,8 @@ fn analyze_injection_response(
             .with_evidence(format!("Payload: {payload} | {status_diff}"))
             .with_remediation("Use parameterized queries / prepared statements.")
             .with_owasp("A03:2021 Injection")
-            .with_cwe(89),
+            .with_cwe(89)
+            .with_confidence(0.8),
         );
     }
 
@@ -230,7 +232,8 @@ fn analyze_injection_response(
                  Use parameterized queries.",
             )
             .with_owasp("A03:2021 Injection")
-            .with_cwe(89),
+            .with_cwe(89)
+            .with_confidence(0.8),
         );
     }
 
@@ -292,7 +295,8 @@ async fn test_form(ctx: &ScanContext, form: &FormInfo, findings: &mut Vec<Findin
                     ))
                     .with_remediation("Use parameterized queries / prepared statements.")
                     .with_owasp("A03:2021 Injection")
-                    .with_cwe(89),
+                    .with_cwe(89)
+                    .with_confidence(0.8),
                 );
                 return Ok(()); // One finding per form is enough
             }

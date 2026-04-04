@@ -79,7 +79,8 @@ fn check_secrets(body: &str, url: &str, findings: &mut Vec<Finding>) {
                         .with_evidence(format!("...{snippet}..."))
                         .with_remediation(format!("Remove {name} from client-facing responses. Use environment variables server-side."))
                         .with_owasp("A02:2021 Cryptographic Failures")
-                        .with_cwe(200),
+                        .with_cwe(200)
+                        .with_confidence(0.7),
                 );
             }
         }
@@ -124,7 +125,8 @@ fn check_secrets(body: &str, url: &str, findings: &mut Vec<Finding>) {
                                 .with_evidence(format!("{p}{}", &value_chars[..value_chars.len().min(20)]))
                                 .with_remediation("Remove credentials from client-facing responses.")
                                 .with_owasp("A02:2021 Cryptographic Failures")
-                                .with_cwe(200),
+                                .with_cwe(200)
+                                .with_confidence(0.7),
                         );
                         break; // One per indicator type
                     }
@@ -146,7 +148,8 @@ async fn check_source_maps(
             Finding::new("sensitive", Severity::Low, "Source Map Reference Found", "The response contains a sourceMappingURL reference. Source maps expose original source code.", url)
                 .with_remediation("Remove source maps from production builds")
                 .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(540),
+                .with_cwe(540)
+                .with_confidence(0.7),
         );
     }
 
@@ -163,7 +166,8 @@ async fn check_source_maps(
                             .with_evidence(format!("HTTP 200 at {map_url}"))
                             .with_remediation("Remove .map files from production or restrict access")
                             .with_owasp("A05:2021 Security Misconfiguration")
-                            .with_cwe(540),
+                            .with_cwe(540)
+                            .with_confidence(0.7),
                     );
                     break;
                 }

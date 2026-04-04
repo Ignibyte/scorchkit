@@ -56,10 +56,14 @@ pub fn print_report(result: &ScanResult) {
 
         for (i, finding) in result.findings.iter().enumerate() {
             println!();
+            // JUSTIFICATION: confidence is 0.0–1.0, well within f64→u8 range
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let conf_pct = (finding.confidence * 100.0) as u8;
             println!(
-                "  {}  [{}] {}",
+                "  {}  [{}] [{}%] {}",
                 format!("#{}", i + 1).dimmed(),
                 finding.severity.colored_str(),
+                conf_pct.to_string().dimmed(),
                 finding.title.bold()
             );
             println!("  {}", finding.description.dimmed());

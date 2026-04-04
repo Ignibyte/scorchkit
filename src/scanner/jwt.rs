@@ -164,7 +164,8 @@ fn analyze_jwt(token: &str, source: &str, url: &str, findings: &mut Vec<Finding>
             .with_evidence(format!("Source: {source} | Algorithm: {alg}"))
             .with_remediation("Never allow the 'none' algorithm. Enforce HS256, RS256, or ES256.")
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(327),
+            .with_cwe(327)
+            .with_confidence(0.8),
         );
     }
 
@@ -182,7 +183,8 @@ fn analyze_jwt(token: &str, source: &str, url: &str, findings: &mut Vec<Finding>
                 url,
             )
             .with_evidence(format!("Source: {source} | Algorithm: {alg}"))
-            .with_owasp("A02:2021 Cryptographic Failures"),
+            .with_owasp("A02:2021 Cryptographic Failures")
+            .with_confidence(0.8),
         );
     }
 
@@ -213,7 +215,8 @@ fn analyze_jwt(token: &str, source: &str, url: &str, findings: &mut Vec<Finding>
             .with_evidence(format!("Source: {source} | Signature segment is empty"))
             .with_remediation("Ensure all JWTs are properly signed")
             .with_owasp("A02:2021 Cryptographic Failures")
-            .with_cwe(345),
+            .with_cwe(345)
+            .with_confidence(0.8),
         );
     }
 }
@@ -254,7 +257,8 @@ fn check_sensitive_claims(
                     .with_evidence(format!("Source: {source} | Claim: {key}"))
                     .with_remediation("Never store sensitive data in JWT payloads. Use encrypted tokens (JWE) or store in server-side sessions.")
                     .with_owasp("A02:2021 Cryptographic Failures")
-                    .with_cwe(312),
+                    .with_cwe(312)
+                    .with_confidence(0.8),
                 );
                 break;
             }
@@ -286,7 +290,8 @@ fn check_jwt_expiry(
                 "Always include an 'exp' claim in JWTs with a reasonable expiration time",
             )
             .with_owasp("A07:2021 Identification and Authentication Failures")
-            .with_cwe(613),
+            .with_cwe(613)
+            .with_confidence(0.8),
         );
     } else if let Some(exp) = payload["exp"].as_i64() {
         let now = chrono::Utc::now().timestamp();
@@ -309,7 +314,8 @@ fn check_jwt_expiry(
                 .with_remediation(
                     "Use short-lived tokens (15 minutes to 1 hour) with refresh tokens",
                 )
-                .with_owasp("A07:2021 Identification and Authentication Failures"),
+                .with_owasp("A07:2021 Identification and Authentication Failures")
+                .with_confidence(0.8),
             );
         }
     }

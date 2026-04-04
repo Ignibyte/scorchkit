@@ -102,7 +102,8 @@ async fn test_url_params_idor(
                             .with_evidence(format!("Parameter: {param_name} | Original: {param_value} | Test: {test_val} | Similarity: {:.0}%", similarity * 100.0))
                             .with_remediation("Implement proper authorization checks. Verify the requesting user owns the requested resource.")
                             .with_owasp("A01:2021 Broken Access Control")
-                            .with_cwe(639),
+                            .with_cwe(639)
+                            .with_confidence(0.5),
                     );
                     return Ok(());
                 }
@@ -162,7 +163,8 @@ async fn test_path_segments_idor(
                             .with_evidence(format!("Original: {url_str} | Test: {} | Similarity: {:.0}%", test_url, similarity * 100.0))
                             .with_remediation("Implement authorization checks on path-based resource access.")
                             .with_owasp("A01:2021 Broken Access Control")
-                            .with_cwe(639),
+                            .with_cwe(639)
+                            .with_confidence(0.5),
                     );
                     return Ok(());
                 }

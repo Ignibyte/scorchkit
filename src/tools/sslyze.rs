@@ -134,7 +134,8 @@ fn parse_sslyze_output(output: &str, target_url: &str) -> Vec<Finding> {
                             "Update OpenSSL immediately and revoke/reissue certificates",
                         )
                         .with_owasp("A02:2021 Cryptographic Failures")
-                        .with_cwe(119),
+                        .with_cwe(119)
+                        .with_confidence(0.9),
                     );
                 }
             }
@@ -152,7 +153,8 @@ fn parse_sslyze_output(output: &str, target_url: &str) -> Vec<Finding> {
                             target_url,
                         )
                         .with_remediation("Disable RSA key exchange cipher suites")
-                        .with_owasp("A02:2021 Cryptographic Failures"),
+                        .with_owasp("A02:2021 Cryptographic Failures")
+                        .with_confidence(0.9),
                     );
                 }
             }
@@ -198,7 +200,8 @@ fn check_protocol(
                         ))
                         .with_remediation(format!("Disable {protocol_name} on the server"))
                         .with_owasp("A02:2021 Cryptographic Failures")
-                        .with_cwe(326),
+                        .with_cwe(326)
+                        .with_confidence(0.9),
                     );
                 }
             }
@@ -231,7 +234,8 @@ fn check_certificate(
                             )
                             .with_remediation("Use a certificate from a trusted Certificate Authority")
                             .with_owasp("A02:2021 Cryptographic Failures")
-                            .with_cwe(295),
+                            .with_cwe(295)
+                            .with_confidence(0.9),
                         );
                     }
                 }
@@ -266,7 +270,8 @@ fn parse_sslyze_text(output: &str, target_url: &str) -> Vec<Finding> {
                     target_url,
                 )
                 .with_owasp("A02:2021 Cryptographic Failures")
-                .with_cwe(119),
+                .with_cwe(119)
+                .with_confidence(0.9),
             );
         }
 
@@ -280,7 +285,8 @@ fn parse_sslyze_text(output: &str, target_url: &str) -> Vec<Finding> {
                     target_url,
                 )
                 .with_owasp("A02:2021 Cryptographic Failures")
-                .with_cwe(326),
+                .with_cwe(326)
+                .with_confidence(0.9),
             );
         }
 
@@ -294,7 +300,8 @@ fn parse_sslyze_text(output: &str, target_url: &str) -> Vec<Finding> {
                     target_url,
                 )
                 .with_owasp("A02:2021 Cryptographic Failures")
-                .with_cwe(326),
+                .with_cwe(326)
+                .with_confidence(0.9),
             );
         }
 
@@ -308,7 +315,8 @@ fn parse_sslyze_text(output: &str, target_url: &str) -> Vec<Finding> {
                     target_url,
                 )
                 .with_owasp("A02:2021 Cryptographic Failures")
-                .with_cwe(326),
+                .with_cwe(326)
+                .with_confidence(0.9),
             );
         }
     }

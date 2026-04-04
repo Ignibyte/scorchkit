@@ -96,7 +96,8 @@ fn detect_waf_headers(
                         format!("Web Application Firewall detected: {waf}"),
                         url,
                     )
-                    .with_evidence(format!("{header}: {val}")),
+                    .with_evidence(format!("{header}: {val}"))
+                    .with_confidence(0.7),
                 );
                 return; // One WAF detection is enough
             }
@@ -166,7 +167,8 @@ fn detect_waf_body(
                     )
                     .with_evidence(format!(
                         "HTTP {status} on attack probe | Body contains '{pattern}'"
-                    )),
+                    ))
+                    .with_confidence(0.7),
                 );
             }
             return;
@@ -183,7 +185,8 @@ fn detect_waf_body(
                 format!("HTTP {status} returned on attack probe, suggesting WAF or rate limiting"),
                 url,
             )
-            .with_evidence(format!("HTTP {status} on malicious input")),
+            .with_evidence(format!("HTTP {status} on malicious input"))
+            .with_confidence(0.7),
         );
     }
 }

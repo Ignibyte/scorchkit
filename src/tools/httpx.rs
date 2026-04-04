@@ -94,7 +94,8 @@ fn parse_httpx_output(output: &str, target_url: &str) -> Vec<Finding> {
                         format!("HTTP probe results for {url}"),
                         url,
                     )
-                    .with_evidence(evidence_parts.join(" | ")),
+                    .with_evidence(evidence_parts.join(" | "))
+                    .with_confidence(0.8),
                 );
             }
         }

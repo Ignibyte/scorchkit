@@ -67,7 +67,8 @@ fn parse_wpscan_output(output: &str, target_url: &str) -> Vec<Finding> {
                 format!("WordPress version {wp_ver} is installed."),
                 target_url,
             )
-            .with_evidence(format!("WordPress version: {wp_ver}")),
+            .with_evidence(format!("WordPress version: {wp_ver}"))
+            .with_confidence(0.8),
         );
 
         if let Some(vulns) = version.get("vulnerabilities").and_then(|v| v.as_array()) {
@@ -90,7 +91,7 @@ fn parse_wpscan_output(output: &str, target_url: &str) -> Vec<Finding> {
                 if !vuln_type.is_empty() {
                     f = f.with_evidence(format!("Type: {vuln_type}"));
                 }
-                findings.push(f);
+                findings.push(f.with_confidence(0.8));
             }
         }
     }
@@ -114,7 +115,7 @@ fn parse_wpscan_output(output: &str, target_url: &str) -> Vec<Finding> {
                     if let Some(fix) = fixed_in {
                         f = f.with_remediation(format!("Update {name} to {fix} or later"));
                     }
-                    findings.push(f);
+                    findings.push(f.with_confidence(0.8));
                 }
             }
         }

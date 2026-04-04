@@ -100,7 +100,8 @@ fn parse_nikto_item(item: &serde_json::Value, target_url: &str, findings: &mut V
     findings.push(
         Finding::new("nikto", severity, format!("Nikto: {msg}"), msg, url)
             .with_evidence(format!("Nikto ID: {id} | Method: {method} | URL: {url}"))
-            .with_owasp("A05:2021 Security Misconfiguration"),
+            .with_owasp("A05:2021 Security Misconfiguration")
+            .with_confidence(0.6),
     );
 }
 

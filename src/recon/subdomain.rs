@@ -71,7 +71,8 @@ impl ScanModule for SubdomainModule {
                     ),
                     url,
                 )
-                .with_evidence(format!("Discovered subdomains:\n    {list}")),
+                .with_evidence(format!("Discovered subdomains:\n    {list}"))
+                .with_confidence(0.8),
             );
 
             // Check for potentially interesting subdomains
@@ -92,7 +93,8 @@ impl ScanModule for SubdomainModule {
                                 format!("{desc}: {sub}"),
                                 url,
                             )
-                            .with_evidence(sub.clone()),
+                            .with_evidence(sub.clone())
+                            .with_confidence(0.8),
                         );
                         break;
                     }

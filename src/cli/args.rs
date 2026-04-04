@@ -58,6 +58,10 @@ pub enum Commands {
         #[arg(long)]
         proxy: Option<String>,
 
+        /// Minimum confidence threshold (0.0–1.0) — hide findings below this level
+        #[arg(long)]
+        min_confidence: Option<f64>,
+
         /// Restrict scope to URLs matching pattern (e.g., "*.example.com")
         #[arg(long)]
         scope: Option<String>,

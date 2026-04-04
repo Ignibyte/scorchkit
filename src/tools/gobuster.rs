@@ -116,7 +116,8 @@ fn parse_gobuster_output(stdout: &str, target_url: &str) -> Vec<Finding> {
                 target_url,
             )
             .with_evidence(entry.to_string())
-            .with_owasp("A01:2021 Broken Access Control"),
+            .with_owasp("A01:2021 Broken Access Control")
+            .with_confidence(0.6),
         );
     }
 

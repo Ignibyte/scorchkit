@@ -84,12 +84,14 @@ impl ScanModule for RateLimitModule {
                         .with_evidence(format!("Sent {request_count} POST requests with wrong credentials - all returned HTTP {}", initial_status.as_u16()))
                         .with_remediation("Implement rate limiting, account lockout, or CAPTCHA after 3-5 failed attempts")
                         .with_owasp("A07:2021 Identification and Authentication Failures")
-                        .with_cwe(307),
+                        .with_cwe(307)
+                        .with_confidence(0.6),
                 );
             } else if blocked {
                 findings.push(
                     Finding::new("ratelimit", Severity::Info, format!("Rate Limiting Active on {path}"), format!("The login endpoint at {path} has brute-force protection (blocked after {request_count} attempts)."), &url)
-                        .with_evidence(format!("Blocked after {request_count} failed login attempts")),
+                        .with_evidence(format!("Blocked after {request_count} failed login attempts"))
+                        .with_confidence(0.6),
                 );
             }
 

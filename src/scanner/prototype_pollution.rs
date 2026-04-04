@@ -125,7 +125,8 @@ async fn test_json_body_pollution(
                      schema validation on all JSON input.",
                 )
                 .with_owasp("A08:2021 Software and Data Integrity")
-                .with_cwe(1321),
+                .with_cwe(1321)
+                .with_confidence(0.5),
             );
             return Ok(());
         }
@@ -149,7 +150,8 @@ async fn test_json_body_pollution(
                     "Reject __proto__ and constructor keys in JSON input. Use schema validation.",
                 )
                 .with_owasp("A08:2021 Software and Data Integrity")
-                .with_cwe(1321),
+                .with_cwe(1321)
+                .with_confidence(0.5),
             );
         }
     }
@@ -192,7 +194,8 @@ async fn test_query_param_pollution(
                      allowPrototypes: false). Validate and sanitize all query parameters.",
                 )
                 .with_owasp("A08:2021 Software and Data Integrity")
-                .with_cwe(1321),
+                .with_cwe(1321)
+                .with_confidence(0.5),
             );
             return Ok(());
         }

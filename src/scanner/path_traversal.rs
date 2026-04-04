@@ -261,7 +261,8 @@ async fn test_url_params_traversal(
                          operations. Use chroot jails or containerized file access.",
                     )
                     .with_owasp("A01:2021 Broken Access Control")
-                    .with_cwe(22),
+                    .with_cwe(22)
+                    .with_confidence(0.8),
                 );
                 // One finding per parameter is sufficient
                 break;
@@ -340,7 +341,8 @@ async fn test_form_traversal(
                          files. Never use user input in file system paths.",
                     )
                     .with_owasp("A01:2021 Broken Access Control")
-                    .with_cwe(22),
+                    .with_cwe(22)
+                    .with_confidence(0.8),
                 );
                 return Ok(());
             }

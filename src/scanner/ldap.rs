@@ -200,7 +200,8 @@ async fn test_url_params_ldap(
                          search filters. Never concatenate user input into LDAP filters.",
                     )
                     .with_owasp("A03:2021 Injection")
-                    .with_cwe(90),
+                    .with_cwe(90)
+                    .with_confidence(0.7),
                 );
                 break;
             }
@@ -225,7 +226,8 @@ async fn test_url_params_ldap(
                         "Investigate the parameter for LDAP injection. Escape LDAP special characters.",
                     )
                     .with_owasp("A03:2021 Injection")
-                    .with_cwe(90),
+                    .with_cwe(90)
+                    .with_confidence(0.7),
                 );
                 break;
             }
@@ -298,7 +300,8 @@ async fn test_form_ldap(
                         "Escape LDAP special characters in user input. Use parameterized LDAP queries.",
                     )
                     .with_owasp("A03:2021 Injection")
-                    .with_cwe(90),
+                    .with_cwe(90)
+                    .with_confidence(0.7),
                 );
                 return Ok(());
             }

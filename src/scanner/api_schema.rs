@@ -42,7 +42,8 @@ impl ScanModule for ApiSchemaModule {
                                 .with_evidence(format!("HTTP 200 at {url} | {endpoint_count} API endpoints"))
                                 .with_remediation("Restrict access to API documentation in production")
                                 .with_owasp("A05:2021 Security Misconfiguration")
-                                .with_cwe(200),
+                                .with_cwe(200)
+                                .with_confidence(0.7),
                         );
                         break;
                     }
@@ -67,7 +68,8 @@ impl ScanModule for ApiSchemaModule {
                             .with_evidence(format!("POST {graphql_url} with introspection query returned schema"))
                             .with_remediation("Disable GraphQL introspection in production: set introspection to false")
                             .with_owasp("A05:2021 Security Misconfiguration")
-                            .with_cwe(200),
+                            .with_cwe(200)
+                            .with_confidence(0.7),
                     );
                 }
             }
