@@ -12,6 +12,9 @@ All notable changes to ScorchKit will be documented in this file.
 
 - **SAST integration** — Static Application Security Testing as a parallel system to DAST. New `CodeModule` trait, `CodeContext`, `CodeCategory` enum (Sast, Sca, Secrets, Iac, Container), and `CodeOrchestrator` for concurrent code analysis. CLI `code <path>` subcommand with `--language`, `--modules`, `--skip`, `--profile` flags. Three tool wrappers: Semgrep (multi-language SAST), OSV-Scanner (dependency SCA), Gitleaks (secret detection with redacted evidence). `Target::from_path()` enables all existing reporting/storage/AI to work with code findings. `run_tool_lenient()` for tools that exit non-zero when findings exist. 28 new tests. (#85)
 
+- **Hook system v1** — Script-based lifecycle hooks for scan extensibility. Configure `[hooks]` in config.toml with `pre_scan`, `post_module`, `post_scan` script arrays. JSON stdin/stdout protocol. Configurable timeout (default 30s), fail-open by default. Works with both DAST and SAST orchestrators. Enables CI/CD integration, SIEM export, Slack/Jira notifications, and finding enrichment without modifying ScorchKit. (#86)
+- **`/code` Claude Code command** — SAST code scanning via slash command with formatting guidelines. (#90)
+
 ### Changed
 - **coder.md module counts** — Updated from 41 to 77 modules (10 recon + 35 scanner + 32 tools). Fixed "waf" module classification (scanner, not recon). (#84)
 

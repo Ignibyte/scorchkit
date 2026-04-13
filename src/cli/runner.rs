@@ -395,6 +395,8 @@ async fn run_scan_with_resume(
 
     let mut orchestrator = Orchestrator::new(ctx);
     orchestrator.register_default_modules();
+    let hook_runner = crate::engine::hook_runner::HookRunner::new(&config.hooks);
+    orchestrator.set_hook_runner(hook_runner);
     orchestrator.apply_profile(&checkpoint.profile);
 
     if let Some(ref include) = module_filter {
@@ -559,6 +561,10 @@ async fn run_scan(
 
     let mut orchestrator = Orchestrator::new(ctx);
     orchestrator.register_default_modules();
+
+    // Set up lifecycle hooks
+    let hook_runner = crate::engine::hook_runner::HookRunner::new(&config.hooks);
+    orchestrator.set_hook_runner(hook_runner);
 
     // Apply AI plan or fall back to profile
     if let Some(ref scan_plan) = ai_plan {
@@ -924,6 +930,8 @@ async fn run_code_scan(
 
     let mut orchestrator = CodeOrchestrator::new(ctx);
     orchestrator.register_default_modules();
+    let hook_runner = crate::engine::hook_runner::HookRunner::new(&config.hooks);
+    orchestrator.set_hook_runner(hook_runner);
     orchestrator.apply_profile(profile);
 
     if let Some(ref mods) = modules {

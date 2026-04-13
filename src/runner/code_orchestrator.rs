@@ -33,13 +33,20 @@ pub struct CodeOrchestrator {
     ctx: CodeContext,
     /// Registered code modules.
     modules: Vec<Box<dyn CodeModule>>,
+    /// Optional lifecycle hook runner.
+    hook_runner: Option<crate::engine::hook_runner::HookRunner>,
 }
 
 impl CodeOrchestrator {
     /// Create a new code orchestrator.
     #[must_use]
     pub fn new(ctx: CodeContext) -> Self {
-        Self { ctx, modules: Vec::new() }
+        Self { ctx, modules: Vec::new(), hook_runner: None }
+    }
+
+    /// Set the hook runner for lifecycle hooks.
+    pub fn set_hook_runner(&mut self, runner: crate::engine::hook_runner::HookRunner) {
+        self.hook_runner = Some(runner);
     }
 
     /// Register all available code analysis modules.
