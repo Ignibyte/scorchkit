@@ -41,6 +41,15 @@ Summarize:
 - **Stable** — similar finding counts, no significant change
 - **Mixed** — some areas better, some worse
 
+## Formatting Guidelines
+
+When presenting diff results:
+- Use a **summary table** showing: new findings, resolved findings, persistent findings
+- Use direction indicators: "Improving" / "Degrading" / "Stable"
+- Present new findings (regressions) as **blockquotes** with urgency
+- Present resolved findings as a checklist of wins
+- Use **bold** for the posture direction assessment
+
 ## Step 5: Suggest Next Steps
 
 - **New critical/high findings** → suggest `/analyze` with remediate focus

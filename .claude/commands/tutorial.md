@@ -170,9 +170,10 @@ To set up:
 ## Step 11: Summary
 
 > **What you've learned:**
-> - `/scan` — run security scans against targets
+> - `/scan` — run DAST security scans against web targets
+> - `/code` — run SAST scans on source code (secrets, deps, code patterns)
 > - `/analyze` — get AI-powered analysis of results
-> - `/doctor` — check tool installation
+> - `/doctor` — check tool installation (DAST + SAST)
 > - `/modules` — explore available scan modules
 > - `/report` — generate formatted reports (JSON, HTML, SARIF, PDF)
 > - `/diff` — compare two scans to track progress

@@ -28,7 +28,8 @@ ScorchKit includes Claude Code slash commands for conversational security testin
 
 | Command | Purpose |
 |---------|---------|
-| `/scan` | Run security scans — profile selection, auth, proxy, module filtering |
+| `/scan` | Run DAST security scans — profile selection, auth, proxy, module filtering |
+| `/code` | Run SAST code analysis — secrets, dependencies, code patterns |
 | `/analyze` | AI-powered analysis — summary, prioritize, remediate, filter |
 | `/diff` | Compare two scans — track security posture changes |
 | `/report` | Generate reports — JSON, HTML, SARIF, PDF |

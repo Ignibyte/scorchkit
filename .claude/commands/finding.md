@@ -102,6 +102,23 @@ When helping the user triage, consider:
 5. Group related findings (e.g., all missing headers)
 6. Prioritize by exploitability and business impact
 
+## Formatting Guidelines
+
+When presenting findings:
+- Use **blockquotes** for individual finding details
+- Use **tables** for finding lists (ID, severity, status, title)
+- Show the **lifecycle diagram** when explaining status transitions
+- Use `backtick code` for finding IDs, statuses, and file paths
+- Use **bold** for severity: **Critical**, **High**, **Medium**, **Low**
+- Color-code with words when relevant: "Critical (fix immediately)", "Low (address when convenient)"
+
+Example finding detail:
+> **GHSA-xxxx-xxxx** — `High` — Prototype Pollution in lodash \
+> Status: `new` | Module: `osv-scanner` | Confidence: 90% \
+> Package: `lodash@4.17.20` \
+> *Upgrade to lodash 4.17.21 to resolve* \
+> **Action:** `/finding status <id> acknowledged`
+
 ## Step 5: Suggest Next Steps
 
 - **After triaging** → suggest `/scan` to re-test after fixes

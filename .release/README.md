@@ -133,7 +133,8 @@ ScorchKit ships with slash commands that turn Claude Code into a conversational 
 
 | Command | What it does |
 |---------|-------------|
-| `/scan` | Run security scans — guided profile selection, auth, proxy |
+| `/scan` | Run DAST web scans — guided profile selection, auth, proxy |
+| `/code` | Run SAST code analysis — secrets, dependencies, code patterns |
 | `/analyze` | AI analysis — summary, prioritize, remediate, filter |
 | `/diff` | Compare scans — track posture changes |
 | `/doctor` | Health check — tool installation guidance |

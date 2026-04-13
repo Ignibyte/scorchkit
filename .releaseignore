@@ -33,8 +33,9 @@ docs/planning/
 # Release overlay source (overlaid separately, not copied directly)
 .release/
 
-# Private memory and project config
+# Private memory, project config, and worktrees
 .claude/projects/
+.claude/worktrees/
 
 # Build artifacts
 target/

@@ -35,8 +35,13 @@ cargo run -- modules --check-tools
 **Scanner (35 modules)** — Built-in vulnerability scanners written in Rust. No external tools needed.
 - ssl, misconfig, csrf, injection, cmdi, xss, ssrf, xxe, idor, jwt, redirect, sensitive, api_schema, ratelimit, cors, csp, auth, upload, websocket, graphql, subtakeover, acl, api, path_traversal, ssti, nosql, ldap, crlf, host_header, smuggling, prototype_pollution, mass_assignment, clickjacking, dom_xss, waf
 
-**Tools (32 modules)** — Wrappers around external security tools. Each requires the tool to be installed.
+**DAST Tools (32 modules)** — Wrappers around external security tools. Each requires the tool to be installed.
 - nmap, nuclei, nikto, sqlmap, feroxbuster, sslyze, zap, ffuf, metasploit, wafw00f, testssl, wpscan, amass, subfinder, dalfox, hydra, httpx, theharvester, arjun, cewl, droopescan, katana, gau, paramspider, trufflehog, prowler, trivy, dnsx, gobuster, dnsrecon, enum4linux, interactsh
+
+**SAST (3 modules)** — Static code analysis tools. Run via `scorchkit code <path>`.
+- **semgrep** (SAST) — multi-language static analysis with curated security rules
+- **osv-scanner** (SCA) — dependency vulnerability scanning via Google OSV database
+- **gitleaks** (Secrets) — hardcoded secret detection with redacted evidence
 
 ### Scan Profiles
 
