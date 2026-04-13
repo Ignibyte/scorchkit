@@ -39,10 +39,10 @@ When the user asks you to build something:
 - Proxy support via `ctx.config.scan.proxy`
 - Cookie jar enabled on HTTP client
 
-## Current Module Count: 41
+## Current Module Count: 77
 
-**Built-in Recon (6):** headers, tech, discovery, subdomain, crawler, waf
-**Built-in Scanner (15):** ssl, misconfig, csrf, injection, cmdi, xss, ssrf, xxe, idor, jwt, redirect, sensitive, api-schema, ratelimit
-**External Tools (21):** nmap, nuclei, nikto, sqlmap, feroxbuster, sslyze, zap, ffuf, metasploit, wafw00f, testssl, wpscan, amass, subfinder, dalfox, hydra, httpx, theharvester, arjun, cewl, droopescan
+**Built-in Recon (10):** headers, tech, discovery, subdomain, crawler, dns, js_analysis, cname_takeover, vhost, cloud
+**Built-in Scanner (35):** ssl, misconfig, csrf, injection, cmdi, xss, ssrf, xxe, idor, jwt, redirect, sensitive, api_schema, ratelimit, cors, csp, auth, upload, websocket, graphql, subtakeover, acl, api, path_traversal, ssti, nosql, ldap, crlf, host_header, smuggling, prototype_pollution, mass_assignment, clickjacking, dom_xss, waf
+**External Tools (32):** nmap, nuclei, nikto, sqlmap, feroxbuster, sslyze, zap, ffuf, metasploit, wafw00f, testssl, wpscan, amass, subfinder, dalfox, hydra, httpx, theharvester, arjun, cewl, droopescan, katana, gau, paramspider, trufflehog, prowler, trivy, dnsx, gobuster, dnsrecon, enum4linux, interactsh
 
 ## User Intent: $ARGUMENTS

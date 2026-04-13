@@ -2,6 +2,19 @@
 
 All notable changes to ScorchKit will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Claude Code command suite** — 11 slash commands for conversational security testing inside Claude Code: `/scan`, `/analyze`, `/diff`, `/doctor`, `/modules`, `/report`, `/tutorial`, `/project`, `/finding`, `/schedule`, `/coder`. Each command guides users through ScorchKit capabilities with interactive prompts, CLI execution, and result interpretation. (#84)
+- **Release infrastructure** — `/release` command publishes to `git@github.com:Ignibyte/scorchkit.git` with quality gates, version bumping, `.releaseignore` exclusion filtering, `.release/` overlay for open-source config, and mandatory leak checks for private content. (#84)
+- **MCP server config template** — `.claude/mcp.json` for Claude Code MCP integration. (#84)
+- **Open-source CLAUDE.md** — Clean project documentation without internal development references. (#84)
+
+- **SAST integration** — Static Application Security Testing as a parallel system to DAST. New `CodeModule` trait, `CodeContext`, `CodeCategory` enum (Sast, Sca, Secrets, Iac, Container), and `CodeOrchestrator` for concurrent code analysis. CLI `code <path>` subcommand with `--language`, `--modules`, `--skip`, `--profile` flags. Three tool wrappers: Semgrep (multi-language SAST), OSV-Scanner (dependency SCA), Gitleaks (secret detection with redacted evidence). `Target::from_path()` enables all existing reporting/storage/AI to work with code findings. `run_tool_lenient()` for tools that exit non-zero when findings exist. 28 new tests. (#85)
+
+### Changed
+- **coder.md module counts** — Updated from 41 to 77 modules (10 recon + 35 scanner + 32 tools). Fixed "waf" module classification (scanner, not recon). (#84)
+
 ## [1.0.0] - 2026-04-04
 
 ### Added

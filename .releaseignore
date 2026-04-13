@@ -1,0 +1,46 @@
+# =============================================================================
+# .releaseignore — Paths excluded from public releases
+# =============================================================================
+# Used by /release command to filter private development infrastructure
+# from the public open-source repo at github.com/Ignibyte/scorchkit
+#
+# Format: one path per line, # comments, directory paths end with /
+# These paths are passed to rsync --exclude-from
+
+# Pipeline system (private development workflow)
+CONSTITUTION.md
+.claude/hooks/
+.claude/commands/work.md
+.claude/commands/design.md
+.claude/commands/implement.md
+.claude/commands/validate.md
+.claude/commands/verify.md
+.claude/commands/complete.md
+.claude/commands/commit.md
+.claude/commands/seek.md
+.claude/commands/contribute.md
+.claude/commands/sync.md
+.claude/commands/forge-connect.md
+.claude/commands/release.md
+.claude/commands/brainstorm.md
+
+# Hook enforcement (private)
+.claude/settings.json
+
+# Pipeline documents and templates
+docs/planning/
+
+# Release overlay source (overlaid separately, not copied directly)
+.release/
+
+# Private memory and project config
+.claude/projects/
+
+# Build artifacts
+target/
+
+# Scan output data
+reports/
+
+# Releaseignore itself (meta)
+.releaseignore

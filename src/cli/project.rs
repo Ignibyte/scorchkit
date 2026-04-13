@@ -486,15 +486,17 @@ pub async fn list_scans(pool: &PgPool, project_ref: &str) -> Result<()> {
     );
 
     for scan in &scan_list {
-        let duration = scan
-            .completed_at.map_or_else(|| "running".to_string(), |end| {
+        let duration = scan.completed_at.map_or_else(
+            || "running".to_string(),
+            |end| {
                 let secs = (end - scan.started_at).num_seconds();
                 if secs < 60 {
                     format!("{secs}s")
                 } else {
                     format!("{}m {}s", secs / 60, secs % 60)
                 }
-            });
+            },
+        );
 
         let summary: serde_json::Value = scan.summary.clone();
         let total = summary.get("total_findings").and_then(serde_json::Value::as_u64).unwrap_or(0);

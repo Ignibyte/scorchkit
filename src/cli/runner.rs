@@ -234,6 +234,17 @@ pub async fn execute(cli: Cli) -> Result<()> {
             .await
         }
 
+        Commands::Code {
+            path,
+            language,
+            modules,
+            skip,
+            profile,
+            analyze,
+            project: _project,
+            database_url: _database_url,
+        } => run_code_scan(&path, language, modules, skip, &profile, analyze, &config).await,
+
         Commands::Completions { shell } => {
             args::print_completions(shell);
             Ok(())
@@ -859,6 +870,88 @@ async fn build_analyze_project_context(
         ));
     }
     Ok(None)
+}
+
+/// Execute a code scan using the code orchestrator.
+// JUSTIFICATION: Code scan maps directly to CLI flag combinations — same pattern as run_scan
+#[allow(clippy::too_many_arguments)]
+async fn run_code_scan(
+    path: &std::path::Path,
+    language: Option<String>,
+    modules: Option<String>,
+    skip: Option<String>,
+    profile: &str,
+    analyze: bool,
+    config: &Arc<AppConfig>,
+) -> Result<()> {
+    use crate::engine::code_context::CodeContext;
+    use crate::runner::code_orchestrator::CodeOrchestrator;
+
+    let abs_path = std::fs::canonicalize(path).map_err(|e| ScorchError::InvalidTarget {
+        target: path.display().to_string(),
+        reason: e.to_string(),
+    })?;
+
+    println!();
+    println!(
+        "{}  {}",
+        "ScorchKit".red().bold(),
+        format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
+    );
+    println!("{}", "━".repeat(50).dimmed());
+    println!("    Mode: {}", "Code Analysis (SAST)".cyan());
+    println!("    Path: {}", abs_path.display().to_string().cyan());
+
+    let ctx = CodeContext::new(abs_path, language.clone(), Arc::clone(config));
+
+    if let Some(ref lang) = ctx.language {
+        println!("Language: {}", lang.cyan());
+    }
+    if !ctx.manifests.is_empty() {
+        println!(
+            "Manifests: {}",
+            ctx.manifests
+                .iter()
+                .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+                .collect::<Vec<_>>()
+                .join(", ")
+                .cyan()
+        );
+    }
+    println!(" Profile: {}", profile.cyan());
+    println!("{}", "━".repeat(50).dimmed());
+    println!();
+
+    let mut orchestrator = CodeOrchestrator::new(ctx);
+    orchestrator.register_default_modules();
+    orchestrator.apply_profile(profile);
+
+    if let Some(ref mods) = modules {
+        let ids: Vec<String> = mods.split(',').map(|s| s.trim().to_string()).collect();
+        orchestrator.filter_by_ids(&ids);
+    }
+    if let Some(ref skip_ids) = skip {
+        let ids: Vec<String> = skip_ids.split(',').map(|s| s.trim().to_string()).collect();
+        orchestrator.exclude_by_ids(&ids);
+    }
+
+    let result = orchestrator.run().await?;
+
+    // Display results using existing terminal reporter
+    report::terminal::print_report(&result);
+
+    // Save JSON report
+    let report_path = report::json::save_report(&result, &config.report)?;
+    println!("\n{} {}", "Report saved:".green().bold(), report_path.display());
+
+    // AI analysis
+    let should_analyze = analyze || config.ai.auto_analyze;
+    if should_analyze && config.ai.enabled {
+        use crate::ai::prompts::AnalysisFocus;
+        run_ai_analysis(config, &result, AnalysisFocus::Summary, false, None).await?;
+    }
+
+    Ok(())
 }
 
 fn list_modules(check_tools: bool) {
