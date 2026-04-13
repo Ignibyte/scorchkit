@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "scorchkit": {
+      "command": "cargo",
+      "args": ["run", "--features", "mcp", "--", "serve"],
+      "env": {
+        "DATABASE_URL": "postgres://user:pass@localhost/scorchkit"
+      }
+    }
+  }
+}

@@ -1,0 +1,206 @@
+# =============================================================================
+# .semgrep.yml -- Rust-specific security rules for ScorchKit
+# =============================================================================
+#
+# Custom Semgrep rules that enforce security patterns specific to this project.
+# Run manually: semgrep --config .semgrep.yml .
+# Run via hook: enforce-sast.sh (automatic on agent Stop)
+#
+# Rule severity mapping:
+#   ERROR   -> Critical/High (blocks agent in enforce-sast.sh)
+#   WARNING -> Medium (warns but does not block)
+#   INFO    -> Low (informational only)
+#
+# Constitution References:
+#   Section 12 -- Production Safety
+#   Section 14 -- Code Quality Standards
+#   Section 15 -- SAST Requirements
+#
+# Install: pip install semgrep  OR  brew install semgrep
+# =============================================================================
+
+rules:
+  # ---------------------------------------------------------------------------
+  # RULE: unsafe-without-safety-comment
+  # ---------------------------------------------------------------------------
+  - id: unsafe-without-safety-comment
+    patterns:
+      - pattern: |
+          unsafe { ... }
+      - pattern-not-inside: |
+          // SAFETY: ...
+          unsafe { ... }
+      - pattern-not-inside: |
+          // SAFETY: ...
+          //...
+          unsafe { ... }
+    message: >
+      Unsafe block without a // SAFETY: comment. Constitution Section 12 requires
+      every unsafe block to have a SAFETY comment explaining the invariants.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: security
+      constitution: "Section 12"
+
+  # ---------------------------------------------------------------------------
+  # RULE: unwrap-in-library-code
+  # ---------------------------------------------------------------------------
+  - id: unwrap-in-library-code
+    patterns:
+      - pattern: $X.unwrap()
+      - pattern-not-inside: |
+          #[cfg(test)]
+          ...
+    paths:
+      include:
+        - src/
+      exclude:
+        - /src/**/tests.rs
+        - /src/**/test_*.rs
+        - "**/tests/**"
+        - "**/benches/**"
+        - "**/examples/**"
+    message: >
+      .unwrap() used in library code. Constitution Section 14 forbids unwrap()
+      in library code. Use the ? operator with Result<T, E> instead.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: correctness
+      constitution: "Section 14"
+
+  # ---------------------------------------------------------------------------
+  # RULE: expect-in-library-code
+  # ---------------------------------------------------------------------------
+  - id: expect-in-library-code
+    patterns:
+      - pattern: $X.expect(...)
+      - pattern-not-inside: |
+          #[cfg(test)]
+          ...
+    paths:
+      include:
+        - src/
+      exclude:
+        - /src/**/tests.rs
+        - /src/**/test_*.rs
+        - "**/tests/**"
+        - "**/benches/**"
+        - "**/examples/**"
+    message: >
+      .expect() used in library code. Constitution Section 14 forbids expect()
+      in library code. Use the ? operator with Result<T, E> instead.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: correctness
+      constitution: "Section 14"
+
+  # ---------------------------------------------------------------------------
+  # RULE: process-exit-in-library
+  # ---------------------------------------------------------------------------
+  - id: process-exit-in-library
+    patterns:
+      - pattern-either:
+          - pattern: std::process::exit(...)
+          - pattern: process::exit(...)
+    paths:
+      include:
+        - src/
+      exclude:
+        - /src/main.rs
+        - /src/bin/
+    message: >
+      std::process::exit() used in library code. Constitution Section 12 states
+      that libraries return errors; binaries decide whether to exit.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: correctness
+      constitution: "Section 12"
+
+  # ---------------------------------------------------------------------------
+  # RULE: command-injection-risk
+  # ---------------------------------------------------------------------------
+  - id: command-injection-risk
+    patterns:
+      - pattern: |
+          std::process::Command::new($ARG)
+      - metavariable-pattern:
+          metavariable: $ARG
+          patterns:
+            - pattern-not: "..."
+    message: >
+      std::process::Command constructed with a dynamic argument. Verify that the
+      command argument is not derived from user input. If it is, sanitize or
+      validate the input to prevent command injection. ScorchKit wraps external
+      tools — ensure all subprocess arguments are validated.
+    languages: [rust]
+    severity: WARNING
+    metadata:
+      category: security
+
+  # ---------------------------------------------------------------------------
+  # RULE: hardcoded-secret
+  # ---------------------------------------------------------------------------
+  - id: hardcoded-secret
+    patterns:
+      - pattern-either:
+          - pattern: |
+              let $VAR = "...";
+          - pattern: |
+              const $VAR: &str = "...";
+          - pattern: |
+              static $VAR: &str = "...";
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(password|secret|api_key|apikey|token|auth|credential|private_key)
+    paths:
+      exclude:
+        - "**/tests/**"
+        - /src/**/tests.rs
+        - "**/examples/**"
+    message: >
+      Potential hardcoded secret detected in variable '$VAR'. Secrets should be
+      loaded from environment variables or configuration, not hardcoded.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: security
+
+  # ---------------------------------------------------------------------------
+  # RULE: todo-in-code
+  # ---------------------------------------------------------------------------
+  - id: todo-in-code
+    pattern-regex: "//.*\\b(TODO|FIXME|HACK|XXX)\\b"
+    paths:
+      exclude:
+        - "**/tests/**"
+        - /src/**/tests.rs
+    message: >
+      TODO/FIXME/HACK/XXX comment found. These indicate incomplete work.
+      Either complete the work or create a ticket to track it.
+    languages: [rust]
+    severity: WARNING
+    metadata:
+      category: maintainability
+      constitution: "Section 0"
+
+  # ---------------------------------------------------------------------------
+  # RULE: dbg-macro-usage
+  # ---------------------------------------------------------------------------
+  - id: dbg-macro-usage
+    pattern: dbg!(...)
+    paths:
+      exclude:
+        - "**/tests/**"
+        - /src/**/tests.rs
+        - "**/examples/**"
+    message: >
+      dbg!() macro found in production code. Remove debug macros before
+      committing. Use tracing::debug!() for production logging instead.
+    languages: [rust]
+    severity: WARNING
+    metadata:
+      category: maintainability
