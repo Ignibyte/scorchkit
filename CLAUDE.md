@@ -1,6 +1,6 @@
 # ScorchKit
 
-Rust web application security testing toolkit and orchestrator. 77 modules (45 built-in + 32 external tool wrappers), Claude AI integration, 4 output formats, proxy support, authenticated scanning, scan profiles, scan diffing.
+Rust security testing toolkit and orchestrator. 80 modules — 45 DAST (web scanning) + 3 SAST (code analysis) + 32 external tool wrappers. Claude AI integration, 4 output formats, proxy support, authenticated scanning, scan profiles, scan diffing.
 
 ## Quick Reference
 
@@ -14,7 +14,9 @@ cargo run -- run <url> --proxy http://127.0.0.1:8080  # Through Burp
 cargo run -- analyze <report.json> -f remediate   # AI remediation guide
 cargo run -- diff baseline.json current.json      # Compare two scans
 cargo run -- doctor                               # Check tool installation
-cargo run -- modules --check-tools                # List all 77 modules
+cargo run -- modules --check-tools                # List all 80 modules
+cargo run -- code ./src                           # SAST scan on source code
+cargo run -- code ./src --profile quick           # Secrets + deps only
 cargo run -- completions bash                     # Shell completions
 ```
 

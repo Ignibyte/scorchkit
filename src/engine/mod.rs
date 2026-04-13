@@ -1,3 +1,5 @@
+pub mod code_context;
+pub mod code_module;
 pub mod compliance;
 pub mod error;
 pub mod evidence;

@@ -58,6 +58,22 @@ impl Target {
         Ok(Self { raw, url, domain, port, is_https })
     }
 
+    /// Create a target from a filesystem path (for SAST code scanning).
+    ///
+    /// Uses the `file://` URL scheme. Domain is `None`, port is 0.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the path cannot be converted to a `file://` URL.
+    pub fn from_path(path: &std::path::Path) -> Result<Self> {
+        let url = url::Url::from_file_path(path).map_err(|()| ScorchError::InvalidTarget {
+            target: path.display().to_string(),
+            reason: "cannot convert path to file:// URL".to_string(),
+        })?;
+        let raw = path.display().to_string();
+        Ok(Self { raw, url, domain: None, port: 0, is_https: false })
+    }
+
     /// Return the base URL (scheme + host + port if non-default).
     #[must_use]
     pub fn base_url(&self) -> String {
@@ -177,6 +193,18 @@ mod tests {
         std::fs::write(&path, "# only comments\n\n").expect("write test file");
         let result = parse_targets_file(&path);
         assert!(result.is_err());
+    }
+
+    /// Verify `Target::from_path` constructs a valid `file://` URL target.
+    #[test]
+    fn test_target_from_path() -> Result<()> {
+        let target = Target::from_path(std::path::Path::new("/tmp/test-project"))?;
+        assert_eq!(target.raw, "/tmp/test-project");
+        assert!(target.url.scheme() == "file");
+        assert!(target.domain.is_none());
+        assert_eq!(target.port, 0);
+        assert!(!target.is_https);
+        Ok(())
     }
 
     /// Verify missing targets file returns an error.

@@ -446,6 +446,30 @@ fn tool_specs() -> Vec<ToolSpec> {
             min_version: None,
             remediation: "Install: apt install enum4linux",
         },
+        ToolSpec {
+            binary: "semgrep",
+            name: "Semgrep",
+            category: "SAST",
+            version_flag: Some("--version"),
+            min_version: Some("1.0.0"),
+            remediation: "Install: pip install semgrep",
+        },
+        ToolSpec {
+            binary: "osv-scanner",
+            name: "OSV-Scanner",
+            category: "SCA",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: go install github.com/google/osv-scanner/cmd/osv-scanner@latest",
+        },
+        ToolSpec {
+            binary: "gitleaks",
+            name: "Gitleaks",
+            category: "Secrets",
+            version_flag: Some("version"),
+            min_version: Some("8.0.0"),
+            remediation: "Install: go install github.com/gitleaks/gitleaks/v8@latest",
+        },
     ]
 }
 

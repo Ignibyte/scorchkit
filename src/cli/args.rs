@@ -191,6 +191,40 @@ pub enum Commands {
         database_url: Option<String>,
     },
 
+    /// Run static analysis on source code
+    Code {
+        /// Path to source code directory or file
+        path: std::path::PathBuf,
+
+        /// Primary language (auto-detected if not specified)
+        #[arg(long)]
+        language: Option<String>,
+
+        /// Specific modules to run (comma-separated)
+        #[arg(short, long)]
+        modules: Option<String>,
+
+        /// Modules to skip (comma-separated)
+        #[arg(long)]
+        skip: Option<String>,
+
+        /// Code scan profile: quick, standard, thorough
+        #[arg(long, default_value = "standard")]
+        profile: String,
+
+        /// Run AI analysis after scan completes
+        #[arg(long)]
+        analyze: bool,
+
+        /// Associate with a project (requires storage feature)
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Database URL override
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
