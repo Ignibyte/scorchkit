@@ -17,6 +17,7 @@ use crate::engine::error::Result;
 
 use crate::infra::cve_mock::MockCveLookup;
 use crate::infra::cve_nvd::NvdCveLookup;
+use crate::infra::cve_osv::OsvCveLookup;
 
 /// Build the configured CVE lookup, or `None` when CVE correlation is
 /// disabled.
@@ -37,6 +38,10 @@ pub fn build_cve_lookup(config: &AppConfig) -> Result<Option<Box<dyn CveLookup>>
         CveBackendKind::Mock => Ok(Some(Box::new(MockCveLookup::new()))),
         CveBackendKind::Nvd => {
             let lookup = NvdCveLookup::from_config(&config.cve.nvd)?;
+            Ok(Some(Box::new(lookup)))
+        }
+        CveBackendKind::Osv => {
+            let lookup = OsvCveLookup::from_config(&config.cve.osv)?;
             Ok(Some(Box::new(lookup)))
         }
     }
@@ -86,5 +91,15 @@ mod tests {
         cfg.cve.backend = CveBackendKind::Nvd;
         let result = build_cve_lookup(&cfg).expect("ok");
         assert!(result.is_some(), "Nvd backend should yield Some(Box<dyn CveLookup>)");
+    }
+
+    /// `Osv` backend yields a real `OsvCveLookup`. Construction is
+    /// non-network — exercises the dispatch arm without hitting OSV.
+    #[test]
+    fn build_cve_lookup_osv_returns_osv() {
+        let mut cfg = AppConfig::default();
+        cfg.cve.backend = CveBackendKind::Osv;
+        let result = build_cve_lookup(&cfg).expect("ok");
+        assert!(result.is_some(), "Osv backend should yield Some(Box<dyn CveLookup>)");
     }
 }

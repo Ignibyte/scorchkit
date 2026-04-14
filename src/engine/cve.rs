@@ -62,6 +62,162 @@ pub fn severity_from_cvss(score: f64) -> Severity {
     }
 }
 
+/// Parsed CVSS v3 base metrics — every field needed to compute the
+/// base score, with `pr` left as the raw string until the scope is
+/// known (the privileges-required weight depends on it).
+struct CvssMetrics<'a> {
+    av: Option<f64>,
+    ac: Option<f64>,
+    pr_raw: Option<&'a str>,
+    ui: Option<f64>,
+    scope_changed: Option<bool>,
+    c: Option<f64>,
+    i: Option<f64>,
+    a: Option<f64>,
+}
+
+/// Map one CVSS v3 metric `key:value` pair onto [`CvssMetrics`]. Returns
+/// `Err(())` for an out-of-spec metric value (e.g. `AV:Q`) so the
+/// caller can short-circuit to `None`. Uses `core::result::Result`
+/// explicitly because the module-level `Result` alias is fixed to
+/// [`ScorchError`].
+fn apply_metric<'a>(
+    metrics: &mut CvssMetrics<'a>,
+    key: &str,
+    val: &'a str,
+) -> core::result::Result<(), ()> {
+    match key {
+        "AV" => {
+            metrics.av = Some(match val {
+                "N" => 0.85,
+                "A" => 0.62,
+                "L" => 0.55,
+                "P" => 0.2,
+                _ => return Err(()),
+            });
+        }
+        "AC" => {
+            metrics.ac = Some(match val {
+                "L" => 0.77,
+                "H" => 0.44,
+                _ => return Err(()),
+            });
+        }
+        "PR" => metrics.pr_raw = Some(val),
+        "UI" => {
+            metrics.ui = Some(match val {
+                "N" => 0.85,
+                "R" => 0.62,
+                _ => return Err(()),
+            });
+        }
+        "S" => {
+            metrics.scope_changed = Some(match val {
+                "U" => false,
+                "C" => true,
+                _ => return Err(()),
+            });
+        }
+        "C" | "I" | "A" => {
+            let weight = match val {
+                "N" => 0.0,
+                "L" => 0.22,
+                "H" => 0.56,
+                _ => return Err(()),
+            };
+            match key {
+                "C" => metrics.c = Some(weight),
+                "I" => metrics.i = Some(weight),
+                _ => metrics.a = Some(weight),
+            }
+        }
+        // Ignore temporal/environmental and unknown metrics — base
+        // score uses only the eight base metrics above.
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Compute a CVSS v3.x base score from a vector string.
+///
+/// Accepts a vector of the form
+/// `CVSS:3.x/AV:_/AC:_/PR:_/UI:_/S:_/C:_/I:_/A:_` and returns the
+/// computed base score per the [CVSS v3.1 specification][spec]. Returns
+/// `None` for malformed vectors, missing required metrics, or any
+/// metric value outside the v3 spec.
+///
+/// Useful for backends like OSV that surface the vector string rather
+/// than the numeric base score. Pair with [`severity_from_cvss`] to map
+/// the result onto a [`Severity`].
+///
+/// [spec]: https://www.first.org/cvss/v3.1/specification-document
+#[must_use]
+pub fn cvss_v3_base_score(vector: &str) -> Option<f64> {
+    if !(vector.starts_with("CVSS:3.0/") || vector.starts_with("CVSS:3.1/")) {
+        return None;
+    }
+    let mut metrics = CvssMetrics {
+        av: None,
+        ac: None,
+        pr_raw: None,
+        ui: None,
+        scope_changed: None,
+        c: None,
+        i: None,
+        a: None,
+    };
+    for part in vector.split('/').skip(1) {
+        let (key, val) = part.split_once(':')?;
+        apply_metric(&mut metrics, key, val).ok()?;
+    }
+
+    let av = metrics.av?;
+    let ac = metrics.ac?;
+    let ui = metrics.ui?;
+    let scope_changed = metrics.scope_changed?;
+    let c = metrics.c?;
+    let i = metrics.i?;
+    let a = metrics.a?;
+    let pr = match (metrics.pr_raw?, scope_changed) {
+        ("N", _) => 0.85,
+        ("L", false) => 0.62,
+        ("L", true) => 0.68,
+        ("H", false) => 0.27,
+        ("H", true) => 0.5,
+        _ => return None,
+    };
+
+    // `mul_add` is the spec's recommended fused-multiply-add for
+    // numerical stability and matches FIRST's reference impls.
+    let iss = 1.0 - f64::mul_add(1.0 - c, (1.0 - i) * (1.0 - a), 0.0);
+    let impact = if scope_changed {
+        // f64::mul_add keeps the spec's exact arithmetic to one fused
+        // op per term, which clippy prefers and matches the reference
+        // implementations published by FIRST.
+        f64::mul_add(7.52, iss - 0.029, -3.25 * (iss - 0.02).powi(15))
+    } else {
+        6.42 * iss
+    };
+    if impact <= 0.0 {
+        return Some(0.0);
+    }
+    let exploitability = 8.22 * av * ac * pr * ui;
+    let raw =
+        if scope_changed { (impact + exploitability) * 1.08 } else { impact + exploitability };
+    Some(round_up_tenth(raw.min(10.0)))
+}
+
+/// Round a CVSS sub-score up to the nearest tenth, per spec
+/// [Appendix A.2](https://www.first.org/cvss/v3.1/specification-document):
+/// "Round-up returns the smallest number, specified to 1 decimal place,
+/// that is equal to or higher than its input." For inputs in
+/// `0.0..=10.0` (the entire CVSS base-score domain), `ceil(x * 10)/10`
+/// matches the spec's rigorous integer formulation within float
+/// precision and avoids signed-integer casts.
+fn round_up_tenth(value: f64) -> f64 {
+    (value * 10.0).ceil() / 10.0
+}
+
 /// Async trait for CVE lookup backends.
 ///
 /// Implementations query some external or bundled source of CVE records
@@ -128,6 +284,73 @@ mod tests {
     fn test_severity_from_cvss_over_10_is_critical() {
         // Clamp-by-band: anything >= 9.0 maps to Critical including out-of-range.
         assert_eq!(severity_from_cvss(11.0), Severity::Critical);
+    }
+
+    /// Helper: assert two CVSS scores are within one tenth (spec
+    /// rounding precision) of each other.
+    fn approx_eq_tenth(a: f64, b: f64) {
+        assert!((a - b).abs() < 0.05, "expected {b} ± 0.05, got {a}");
+    }
+
+    /// CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H — Log4Shell shape.
+    /// Pinning the canonical 9.8 lets us catch any regression in the
+    /// rounding helper or metric tables.
+    #[test]
+    fn cvss_v3_base_score_critical() {
+        let s =
+            cvss_v3_base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H").expect("computes");
+        approx_eq_tenth(s, 9.8);
+    }
+
+    /// Scope-changed (S:C) takes a different impact and final-multiplier
+    /// path. CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H = 10.0.
+    #[test]
+    fn cvss_v3_base_score_scope_changed_max() {
+        let s =
+            cvss_v3_base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H").expect("computes");
+        approx_eq_tenth(s, 10.0);
+    }
+
+    /// CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:L/A:N → 5.4 (medium band).
+    #[test]
+    fn cvss_v3_base_score_medium() {
+        let s =
+            cvss_v3_base_score("CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:L/A:N").expect("computes");
+        approx_eq_tenth(s, 5.4);
+    }
+
+    /// CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N → 1.8 (low band).
+    #[test]
+    fn cvss_v3_base_score_low() {
+        let s =
+            cvss_v3_base_score("CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N").expect("computes");
+        approx_eq_tenth(s, 1.8);
+    }
+
+    /// Missing the `A:` (Availability) metric makes the vector
+    /// incomplete; computer returns `None` rather than guessing a
+    /// default.
+    #[test]
+    fn cvss_v3_base_score_missing_metric_returns_none() {
+        let s = cvss_v3_base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H");
+        assert!(s.is_none());
+    }
+
+    /// Vector that doesn't start with the `CVSS:3.x/` prefix is not a
+    /// valid v3 vector; computer returns `None`.
+    #[test]
+    fn cvss_v3_base_score_malformed_returns_none() {
+        assert!(cvss_v3_base_score("not a vector").is_none());
+        assert!(cvss_v3_base_score("CVSS:2.0/AV:N/AC:L/Au:N/C:P/I:P/A:P").is_none());
+    }
+
+    /// CVSS 3.0 vectors share the v3.1 algorithm; the only change in
+    /// 3.1 was clarification of the rounding rule (already implemented).
+    #[test]
+    fn cvss_v3_base_score_accepts_v3_0_prefix() {
+        let s =
+            cvss_v3_base_score("CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H").expect("computes");
+        approx_eq_tenth(s, 9.8);
     }
 
     #[test]
