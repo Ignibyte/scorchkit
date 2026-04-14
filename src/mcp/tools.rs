@@ -324,7 +324,7 @@ impl ScorchKitServer {
                 )
             })?;
 
-        let updated = findings::update_finding_status(&self.pool, id, status)
+        let updated = findings::update_finding_status(&self.pool, id, status, None)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -817,6 +817,70 @@ impl ScorchKitServer {
 
         serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
     }
+
+    /// List all available SAST code scanning modules as JSON.
+    #[must_use]
+    pub fn do_list_code_modules(&self) -> String {
+        let modules = crate::runner::code_orchestrator::all_code_modules();
+        let info: Vec<serde_json::Value> = modules
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "id": m.id(),
+                    "name": m.name(),
+                    "category": m.category().to_string(),
+                    "description": m.description(),
+                    "languages": m.languages(),
+                    "requires_external_tool": m.requires_external_tool(),
+                    "required_tool": m.required_tool(),
+                })
+            })
+            .collect();
+        serde_json::to_string_pretty(&info).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Run a SAST code scan on a filesystem path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the path is invalid or the scan fails.
+    pub async fn do_scan_code(
+        &self,
+        params: super::types::CodeScanParams,
+    ) -> Result<String, String> {
+        let path = std::path::PathBuf::from(&params.path);
+        if !path.exists() {
+            return Err(format!("path '{}' does not exist", params.path));
+        }
+
+        let ctx = crate::engine::code_context::CodeContext::new(
+            path,
+            params.language.clone(),
+            Arc::clone(&self.config),
+        );
+
+        let mut orchestrator = crate::runner::code_orchestrator::CodeOrchestrator::new(ctx);
+        orchestrator.register_default_modules();
+
+        // Apply language filter if specified
+        if let Some(ref lang) = params.language {
+            orchestrator.filter_by_language(lang);
+        }
+
+        // Apply module include/exclude filters
+        if let Some(ref modules) = params.modules {
+            let ids: Vec<String> = modules.split(',').map(|s| s.trim().to_string()).collect();
+            orchestrator.filter_by_ids(&ids);
+        }
+        if let Some(ref skip) = params.skip {
+            let ids: Vec<String> = skip.split(',').map(|s| s.trim().to_string()).collect();
+            orchestrator.exclude_by_ids(&ids);
+        }
+
+        let result = orchestrator.run().await.map_err(|e| e.to_string())?;
+
+        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+    }
 }
 
 /// `#[tool_router]` — thin wrappers that delegate to `do_*` public methods.
@@ -1073,6 +1137,31 @@ impl ScorchKitServer {
         params: Parameters<CorrelateFindingsParams>,
     ) -> Result<String, String> {
         self.do_correlate_findings(params.0).await
+    }
+
+    #[tool(
+        description = "List all available SAST (Static Application Security Testing) code scanning \
+        modules with their categories, language support, and external tool requirements. Use this \
+        to understand what code scanning capabilities are available before calling scan_code. \
+        Returns JSON array with module id, name, category (sast/sca/secrets/iac/container), \
+        supported languages, and tool requirements."
+    )]
+    async fn list_code_modules(&self) -> String {
+        self.do_list_code_modules()
+    }
+
+    #[tool(description = "Run SAST (Static Application Security Testing) on source code at the \
+        given filesystem path. Auto-detects project language from manifest files (Cargo.toml, \
+        package.json, go.mod, etc.). Runs built-in analyzers (dependency auditor) and external \
+        tool wrappers (Semgrep, OSV-Scanner, Gitleaks, Bandit, Gosec, Checkov, Grype, etc.) \
+        based on detected language. Use 'language' to override auto-detection. Use 'modules' \
+        to run only specific module IDs, or 'skip' to exclude specific ones. Returns JSON with \
+        findings array and scan metadata, same format as the scan tool.")]
+    async fn scan_code(
+        &self,
+        params: Parameters<super::types::CodeScanParams>,
+    ) -> Result<String, String> {
+        self.do_scan_code(params.0).await
     }
 }
 
