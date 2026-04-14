@@ -26,6 +26,9 @@ pub use crate::engine::events::{
     subscribe_filtered, subscribe_handler, EventBus, EventHandler, ScanEvent,
 };
 
+// Audit log
+pub use crate::engine::audit_log::AuditLogHandler;
+
 // Configuration
 pub use crate::config::AppConfig;
 

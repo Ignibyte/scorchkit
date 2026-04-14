@@ -23,6 +23,24 @@ pub struct AppConfig {
     /// Webhook endpoints for scan lifecycle notifications.
     #[serde(default)]
     pub webhooks: Vec<crate::runner::hooks::WebhookConfig>,
+    /// JSONL audit-log sink for scan-lifecycle events.
+    #[serde(default)]
+    pub audit_log: AuditLogConfig,
+}
+
+/// Configuration for the built-in JSONL audit-log event subscriber.
+///
+/// Disabled by default. When `enabled` is true and `path` is `Some`, the
+/// orchestrator wires an [`crate::engine::audit_log::AuditLogHandler`] that
+/// appends every published [`crate::engine::events::ScanEvent`] to the file
+/// as one JSON record per line.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AuditLogConfig {
+    /// Turn the audit-log sink on. Defaults to `false`.
+    pub enabled: bool,
+    /// Destination file. Opened in append+create mode. Parent directory must exist.
+    pub path: Option<PathBuf>,
 }
 
 /// Database connection configuration for persistent storage.

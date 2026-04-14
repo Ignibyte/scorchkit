@@ -6,6 +6,7 @@ use colored::Colorize;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
+use crate::engine::audit_log::subscribe_audit_log_if_enabled;
 use crate::engine::error::Result;
 use crate::engine::events::ScanEvent;
 use crate::engine::finding::Finding;
@@ -226,6 +227,11 @@ impl Orchestrator {
         let scan_started = Instant::now();
         let scan_id = Uuid::new_v4().to_string();
         let max_concurrent = self.ctx.config.scan.max_concurrent_modules;
+
+        // Wire the built-in audit-log handler before the first publish so no
+        // lifecycle events are lost. The JoinHandle is dropped (tokio detaches).
+        let _audit_log_handle =
+            subscribe_audit_log_if_enabled(&self.ctx.config.audit_log, &self.ctx.events);
 
         self.ctx.events.publish(ScanEvent::ScanStarted {
             scan_id: scan_id.clone(),
@@ -473,6 +479,9 @@ impl Orchestrator {
             resume_from.map_or_else(|| Uuid::new_v4().to_string(), |cp| cp.scan_id.clone());
         let max_concurrent = self.ctx.config.scan.max_concurrent_modules;
 
+        let _audit_log_handle =
+            subscribe_audit_log_if_enabled(&self.ctx.config.audit_log, &self.ctx.events);
+
         self.ctx.events.publish(ScanEvent::ScanStarted {
             scan_id: scan_id.clone(),
             target: self.ctx.target.url.as_str().to_string(),
@@ -656,6 +665,9 @@ impl Orchestrator {
         let scan_started = Instant::now();
         let scan_id = Uuid::new_v4().to_string();
         let max_concurrent = self.ctx.config.scan.max_concurrent_modules;
+
+        let _audit_log_handle =
+            subscribe_audit_log_if_enabled(&self.ctx.config.audit_log, &self.ctx.events);
 
         self.ctx.events.publish(ScanEvent::ScanStarted {
             scan_id: scan_id.clone(),
