@@ -282,11 +282,15 @@ impl EventHandler for HookEventHandler {
                 });
                 let _ = self.runner.execute(HookPoint::PostScan, &data).await;
             }
-            // ModuleStarted / ModuleSkipped / ModuleError are observability-only
-            // for the current hook model.
+            // ModuleStarted / ModuleSkipped / ModuleError / Custom are
+            // observability-only for the current hook model. Custom events
+            // have no standard mapping to the three hook points — users
+            // wanting script dispatch for custom events should implement
+            // their own EventHandler rather than routing through hooks.
             ScanEvent::ModuleStarted { .. }
             | ScanEvent::ModuleSkipped { .. }
-            | ScanEvent::ModuleError { .. } => {}
+            | ScanEvent::ModuleError { .. }
+            | ScanEvent::Custom { .. } => {}
         }
         Ok(())
     }
@@ -380,5 +384,41 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(20)).await;
         drop(bus);
         join.await.expect("handler join");
+    }
+
+    /// Regression (WORK-098): `HookEventHandler` accepts `ScanEvent::Custom`
+    /// events without panicking and returns `Ok(())` from the handler — the
+    /// match arm for `Custom` is a deliberate no-op. Exercises both the
+    /// direct-call path and the bus-driven path.
+    #[tokio::test]
+    async fn test_hook_event_handler_ignores_custom() {
+        // Direct-call path — handle() must not error on Custom.
+        let hook_handler = HookEventHandler::new(&HookConfig::default());
+        hook_handler
+            .handle(ScanEvent::Custom {
+                kind: "crawler.depth-reached".to_string(),
+                data: serde_json::json!({ "depth": 2 }),
+            })
+            .await
+            .expect("custom handle direct");
+
+        // Buffer remains empty — Custom must not accumulate into the
+        // per-module finding buffer.
+        let buf = hook_handler.findings_buffer.lock().await;
+        assert!(buf.is_empty(), "Custom must not touch the findings buffer");
+        drop(buf);
+
+        // Bus-driven path — subscribe the handler and publish a Custom event.
+        // Completes without panic, lag, or hang.
+        let bus = EventBus::new(16);
+        let bus_handler = HookEventHandler::new(&HookConfig::default()).into_handler();
+        let join = subscribe_handler(&bus, bus_handler);
+        bus.publish(ScanEvent::Custom {
+            kind: "waf.detected".to_string(),
+            data: serde_json::json!({ "vendor": "Cloudflare" }),
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(bus);
+        join.await.expect("bus handler join");
     }
 }

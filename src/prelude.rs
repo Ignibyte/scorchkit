@@ -22,7 +22,9 @@ pub use crate::engine::code_context::CodeContext;
 pub use crate::engine::scan_context::ScanContext;
 
 // Event bus
-pub use crate::engine::events::{subscribe_handler, EventBus, EventHandler, ScanEvent};
+pub use crate::engine::events::{
+    subscribe_filtered, subscribe_handler, EventBus, EventHandler, ScanEvent,
+};
 
 // Configuration
 pub use crate::config::AppConfig;

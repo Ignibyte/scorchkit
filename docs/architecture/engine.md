@@ -33,6 +33,14 @@ In-process pub/sub for scan lifecycle events, wrapping `tokio::sync::broadcast`:
 
 `EventBus` is a field on both `ScanContext.events` and `CodeContext.events` so modules may publish custom events. The orchestrators (`Orchestrator::run()`, `run_with_checkpoint()`, `run_phased()`, `run_module_batch()`; `CodeOrchestrator::run()`) publish lifecycle events at every relevant point.
 
+### Custom module events (v2b.1)
+
+`ScanEvent::Custom { kind: String, data: serde_json::Value }` lets modules emit domain-specific events without expanding the core lifecycle variant set. Kinds follow a dotted-namespace convention (e.g. `"crawler.depth-reached"`, `"waf.detected"`) — documented but not enforced. Typed payloads round-trip via `serde_json::to_value` / `serde_json::from_value`.
+
+`subscribe_filtered(bus, handler, predicate)` wraps `subscribe_handler` with a predicate check before handler dispatch. The filter runs on the subscriber's task (broadcast still delivers every event to every subscriber; the filter just chooses to ignore non-matches). Generic over `F: Fn(&ScanEvent) -> bool + Send + Sync + 'static` for ergonomic closure use with zero explicit boxing.
+
+`HookEventHandler` ignores `ScanEvent::Custom` — there's no standard mapping from an arbitrary kind string to the three hook points. Users who want script dispatch for custom events can write a native `EventHandler` directly.
+
 ## Hook adapter — `HookEventHandler` (`hook_runner.rs`)
 
 `HookEventHandler` bridges the event bus to the existing script-based hook system. It subscribes to the event stream and maps events to the three `HookPoint` script invocations:
