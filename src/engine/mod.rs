@@ -23,3 +23,4 @@ pub mod service_fingerprint;
 pub mod severity;
 pub mod shared_data;
 pub mod target;
+pub mod tls_probe;
