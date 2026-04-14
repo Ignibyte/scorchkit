@@ -93,6 +93,20 @@ impl ScanResult {
         self.findings.retain(|f| f.confidence >= min_confidence);
         self.summary = ScanSummary::from_findings(&self.findings);
     }
+
+    /// Merge another scan result into this one.
+    ///
+    /// Combines findings, modules run, and modules skipped from `other`
+    /// into `self`. The target, scan ID, and timing from `self` are preserved.
+    /// The summary is recomputed from the merged findings.
+    ///
+    /// This is used to combine DAST and SAST results into a single report.
+    pub fn merge(&mut self, other: Self) {
+        self.findings.extend(other.findings);
+        self.modules_run.extend(other.modules_run);
+        self.modules_skipped.extend(other.modules_skipped);
+        self.summary = ScanSummary::from_findings(&self.findings);
+    }
 }
 
 #[cfg(test)]
@@ -164,5 +178,54 @@ mod tests {
         ]);
         result.filter_by_confidence(0.7);
         assert_eq!(result.findings.len(), 2);
+    }
+
+    /// Verify that merging two scan results combines findings, modules,
+    /// and recomputes the summary correctly.
+    #[test]
+    fn test_merge_results() {
+        let mut dast =
+            test_result_with_confidences(&[(Severity::High, 0.9), (Severity::Medium, 0.7)]);
+        dast.modules_run = vec!["headers".to_string(), "ssl".to_string()];
+
+        let sast = {
+            let mut r =
+                test_result_with_confidences(&[(Severity::Critical, 0.85), (Severity::Low, 0.6)]);
+            r.modules_run = vec!["semgrep".to_string(), "dep-audit".to_string()];
+            r.modules_skipped = vec![("bandit".to_string(), "not installed".to_string())];
+            r
+        };
+
+        dast.merge(sast);
+
+        assert_eq!(dast.findings.len(), 4);
+        assert_eq!(dast.modules_run.len(), 4);
+        assert_eq!(dast.modules_skipped.len(), 1);
+        assert_eq!(dast.summary.total_findings, 4);
+        assert_eq!(dast.summary.critical, 1);
+        assert_eq!(dast.summary.high, 1);
+        assert_eq!(dast.summary.medium, 1);
+        assert_eq!(dast.summary.low, 1);
+    }
+
+    /// Verify that merging an empty result is a no-op.
+    #[test]
+    fn test_merge_empty() {
+        let mut result = test_result_with_confidences(&[(Severity::High, 0.9)]);
+        let original_count = result.findings.len();
+        let original_modules = result.modules_run.len();
+
+        let empty = ScanResult::new(
+            "empty".to_string(),
+            Target::parse("https://example.com").expect("valid target"),
+            chrono::Utc::now(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        result.merge(empty);
+        assert_eq!(result.findings.len(), original_count);
+        assert_eq!(result.modules_run.len(), original_modules);
     }
 }

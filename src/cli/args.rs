@@ -90,6 +90,10 @@ pub enum Commands {
         #[arg(long)]
         exclude: Option<String>,
 
+        /// Also run SAST code scanning on the given path (DAST+SAST combined)
+        #[arg(long)]
+        code: Option<std::path::PathBuf>,
+
         /// Associate scan with a project and persist results to the database
         #[arg(long)]
         project: Option<String>,
