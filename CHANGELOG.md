@@ -25,6 +25,8 @@ All notable changes to ScorchKit will be documented in this file.
 
 - **Combined DAST+SAST scanning** — New `--code <path>` flag on the `run` command runs DAST and SAST concurrently, merging findings into a single report: `scorchkit run https://example.com --code ./src`. SAST failure is non-fatal (DAST results always returned). New `ScanResult::merge()` method for combining results. New `Engine::full_scan(url, code_path)` in the library facade. 2 new tests. (#91)
 
+- **MCP code scanning tools** — Two new MCP tools exposing SAST via the MCP server: `scan_code` (run SAST on a filesystem path with optional language/module filtering) and `list_code_modules` (list all 11 SAST modules with categories, language support, and tool requirements). Also fixes pre-existing `update_finding_status` missing argument bug in MCP tools and test files. (#92)
+
 ### Changed
 - **coder.md module counts** — Updated from 41 to 77 modules (10 recon + 35 scanner + 32 tools). Fixed "waf" module classification (scanner, not recon). (#84)
 

@@ -232,3 +232,22 @@ pub struct CorrelateFindingsParams {
     /// multiple findings combine into compound vulnerabilities.
     pub project: String,
 }
+
+/// Parameters for the `scan_code` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CodeScanParams {
+    /// Filesystem path to the source code directory to scan. Must be an absolute
+    /// path or relative to the server's working directory. The scanner auto-detects
+    /// the project language from manifest files (Cargo.toml, package.json, go.mod, etc.).
+    pub path: String,
+    /// Filter to a specific language. Only modules supporting this language will run.
+    /// Language-agnostic modules (dependency auditor, Checkov) always run regardless.
+    /// Valid values: "rust", "python", "javascript", "go", "php", "java", "ruby".
+    /// If omitted, auto-detected from manifest files.
+    pub language: Option<String>,
+    /// Comma-separated list of specific code module IDs to run, ignoring defaults.
+    /// Get valid IDs from `list_code_modules`. Example: "semgrep,dep-audit".
+    pub modules: Option<String>,
+    /// Comma-separated list of code module IDs to skip.
+    pub skip: Option<String>,
+}
