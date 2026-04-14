@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::config::AppConfig;
 
+use super::events::EventBus;
 use super::shared_data::SharedData;
 
 /// Known manifest filenames and their associated languages.
@@ -40,6 +41,8 @@ pub struct CodeContext {
     pub config: Arc<AppConfig>,
     /// Shared data store for inter-module communication.
     pub shared_data: Arc<SharedData>,
+    /// In-process event bus for scan lifecycle events.
+    pub events: EventBus,
 }
 
 impl CodeContext {
@@ -54,6 +57,7 @@ impl CodeContext {
             manifests,
             config,
             shared_data: Arc::new(SharedData::new()),
+            events: EventBus::default(),
         }
     }
 }

@@ -4,6 +4,7 @@
 //! with `CodeContext` instead of `ScanModule` with `ScanContext`.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use chrono::Utc;
 use colored::Colorize;
@@ -13,6 +14,7 @@ use uuid::Uuid;
 use crate::engine::code_context::CodeContext;
 use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
+use crate::engine::events::ScanEvent;
 use crate::engine::finding::Finding;
 use crate::engine::scan_result::{ScanResult, ScanSummary};
 use crate::engine::target::Target;
@@ -97,11 +99,21 @@ impl CodeOrchestrator {
     /// # Errors
     ///
     /// Returns an error if the target path cannot be converted to a Target.
+    // JUSTIFICATION: Event emission at scan start, module start, module complete,
+    // module error, and scan complete adds necessary lifecycle instrumentation
+    // that is cohesive within the run loop and not worth splitting.
+    #[allow(clippy::too_many_lines)]
     pub async fn run(&self) -> Result<ScanResult> {
         let started_at = Utc::now();
+        let scan_started = Instant::now();
         let scan_id = Uuid::new_v4().to_string();
         let max_concurrent = self.ctx.config.scan.max_concurrent_modules;
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
+
+        self.ctx.events.publish(ScanEvent::ScanStarted {
+            scan_id: scan_id.clone(),
+            target: self.ctx.path.display().to_string(),
+        });
 
         let mut all_findings: Vec<Finding> = Vec::new();
         let mut modules_run: Vec<String> = Vec::new();
@@ -119,10 +131,13 @@ impl CodeOrchestrator {
                             module.name(),
                             tool.dimmed()
                         );
-                        modules_skipped.push((
-                            module.id().to_string(),
-                            format!("external tool '{tool}' not found"),
-                        ));
+                        let reason = format!("external tool '{tool}' not found");
+                        self.ctx.events.publish(ScanEvent::ModuleSkipped {
+                            scan_id: scan_id.clone(),
+                            module_id: module.id().to_string(),
+                            reason: reason.clone(),
+                        });
+                        modules_skipped.push((module.id().to_string(), reason));
                         continue;
                     }
                 }
@@ -161,18 +176,45 @@ impl CodeOrchestrator {
 
             let spinner = progress::module_spinner(&module_name);
 
+            self.ctx.events.publish(ScanEvent::ModuleStarted {
+                scan_id: scan_id.clone(),
+                module_id: module_id.clone(),
+                module_name: module_name.clone(),
+            });
+            let module_started = Instant::now();
+
             let result = module.run(&self.ctx).await;
             drop(permit);
+            let duration_ms =
+                u64::try_from(module_started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
             match result {
                 Ok(findings) => {
                     progress::finish_success(&spinner, &module_name, findings.len());
+                    for finding in &findings {
+                        self.ctx.events.publish(ScanEvent::FindingProduced {
+                            scan_id: scan_id.clone(),
+                            module_id: module_id.clone(),
+                            finding: Box::new(finding.clone()),
+                        });
+                    }
+                    self.ctx.events.publish(ScanEvent::ModuleCompleted {
+                        scan_id: scan_id.clone(),
+                        module_id: module_id.clone(),
+                        findings_count: findings.len(),
+                        duration_ms,
+                    });
                     all_findings.extend(findings);
                     modules_run.push(module_id);
                 }
                 Err(e) => {
                     let err_str = e.to_string();
                     progress::finish_error(&spinner, &module_name, &err_str);
+                    self.ctx.events.publish(ScanEvent::ModuleError {
+                        scan_id: scan_id.clone(),
+                        module_id: module_id.clone(),
+                        error: err_str.clone(),
+                    });
                     modules_skipped.push((module_id, err_str));
                 }
             }
@@ -182,6 +224,14 @@ impl CodeOrchestrator {
 
         let target = Target::from_path(&self.ctx.path)?;
         let summary = ScanSummary::from_findings(&all_findings);
+
+        let total_duration_ms =
+            u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.ctx.events.publish(ScanEvent::ScanCompleted {
+            scan_id: scan_id.clone(),
+            total_findings: all_findings.len(),
+            duration_ms: total_duration_ms,
+        });
 
         Ok(ScanResult {
             scan_id,
