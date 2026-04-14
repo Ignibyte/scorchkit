@@ -18,7 +18,31 @@ engine/
   evidence.rs        HttpEvidence struct for request/response capture
   scope.rs           ScopeRule enum for scope management
   oob.rs             Out-of-band callback infrastructure (Interactsh)
+  events.rs          Event bus — ScanEvent enum, EventBus, EventHandler trait
+  hook_runner.rs     Script-based lifecycle hooks + HookEventHandler adapter
 ```
+
+## Event Bus v2 (`events.rs`)
+
+In-process pub/sub for scan lifecycle events, wrapping `tokio::sync::broadcast`:
+
+- **`ScanEvent`** — 7 owned (no-lifetime, `Clone`) variants: `ScanStarted`, `ModuleStarted`, `ModuleCompleted`, `ModuleSkipped`, `ModuleError`, `FindingProduced` (with `Box<Finding>`), `ScanCompleted`.
+- **`EventBus`** — cheaply-cloneable wrapper over `broadcast::Sender<ScanEvent>`. Fire-and-forget `publish()` (send errors only when there are zero subscribers; logged at `debug`). `subscribe()` hands out receivers; `subscriber_count()` for diagnostics. Default capacity 256.
+- **`EventHandler`** — async trait (`Send + Sync`) with `handle(&self, event) -> Result<(), String>`. Handler errors are logged, not propagated — observability must never abort a scan.
+- **`subscribe_handler(bus, handler)`** — spawns a tokio task that drives the handler with every event until the bus is dropped (receiver sees `RecvError::Closed`). Lagged receivers log and continue.
+
+`EventBus` is a field on both `ScanContext.events` and `CodeContext.events` so modules may publish custom events. The orchestrators (`Orchestrator::run()`, `run_with_checkpoint()`, `run_phased()`, `run_module_batch()`; `CodeOrchestrator::run()`) publish lifecycle events at every relevant point.
+
+## Hook adapter — `HookEventHandler` (`hook_runner.rs`)
+
+`HookEventHandler` bridges the event bus to the existing script-based hook system. It subscribes to the event stream and maps events to the three `HookPoint` script invocations:
+
+- `ScanEvent::ScanStarted` → `HookPoint::PreScan`
+- `ScanEvent::FindingProduced` → buffered per `(scan_id, module_id)` in an internal `Mutex<HashMap>`
+- `ScanEvent::ModuleCompleted` → `HookPoint::PostModule` (buffer drained, full findings array handed to the script)
+- `ScanEvent::ScanCompleted` → `HookPoint::PostScan`
+
+The adapter runs hooks for observable side effects (logging, notifications, exports). It does **not** feed modifications back into the scan result — publishing is fire-and-forget. Post-module finding modification remains handled by the synchronous `HookRunner::execute()` call in `Orchestrator::run()`. The two systems coexist: the orchestrator still invokes `HookRunner` directly; `HookEventHandler` is an additive opt-in for event-driven subscribers.
 
 ## ScorchError (`error.rs`)
 
