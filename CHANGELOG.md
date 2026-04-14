@@ -31,6 +31,8 @@ All notable changes to ScorchKit will be documented in this file.
 
 - **Snyk CLI integration** — Two new SAST tool wrappers: `snyk-test` (dependency SCA via `snyk test --json`, `CodeCategory::Sca`) and `snyk-code` (SAST via `snyk code test --json`, `CodeCategory::Sast`). Free tier compatible — no paid license needed. Snyk auto-detects project language. SAST system now has 13 modules total (1 built-in + 12 tool wrappers). Completes v1.2. 4 new tests. (#94)
 
+- **Plugin SDK: plugin author guide + example crates** — Third-party Rust developers can now write native `ScanModule` and `CodeModule` implementations. New `docs/plugin-sdk.md` comprehensive guide covering both trait contracts, the Finding builder, confidence values, context types, inter-module data sharing, language filtering, error handling, testing patterns, and design principles. New `examples/custom_scanner/` (DAST) and `examples/custom_code_scanner/` (SAST) working example crates with tests. First v1.3 feature. (#95)
+
 ### Changed
 - **coder.md module counts** — Updated from 41 to 77 modules (10 recon + 35 scanner + 32 tools). Fixed "waf" module classification (scanner, not recon). (#84)
 

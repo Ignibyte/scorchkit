@@ -1,0 +1,19 @@
+[package]
+name = "custom_code_scanner"
+version = "0.1.0"
+edition = "2021"
+description = "Example third-party ScorchKit SAST code module"
+publish = false
+
+[lib]
+name = "custom_code_scanner"
+path = "src/lib.rs"
+
+[dependencies]
+scorchkit = { path = "../.." }
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+tempfile = "3"
