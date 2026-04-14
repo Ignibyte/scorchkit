@@ -17,6 +17,9 @@ pub struct AppConfig {
     /// Custom wordlist paths for brute-force and enumeration modules.
     #[serde(default)]
     pub wordlists: WordlistConfig,
+    /// Lifecycle hooks for scan extensibility.
+    #[serde(default)]
+    pub hooks: HookConfig,
     /// Webhook endpoints for scan lifecycle notifications.
     #[serde(default)]
     pub webhooks: Vec<crate::runner::hooks::WebhookConfig>,
@@ -225,6 +228,40 @@ impl Default for ReportConfig {
             output_dir: PathBuf::from("./reports"),
             include_evidence: true,
             include_remediation: true,
+        }
+    }
+}
+
+/// Configuration for scan lifecycle hooks.
+///
+/// Hooks are external scripts/binaries that fire at scan lifecycle points.
+/// They receive JSON on stdin and can optionally return modified JSON on stdout.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HookConfig {
+    /// Scripts to run before scanning begins. Can modify scan configuration.
+    #[serde(default)]
+    pub pre_scan: Vec<PathBuf>,
+    /// Scripts to run after each module completes. Can filter/enrich findings.
+    #[serde(default)]
+    pub post_module: Vec<PathBuf>,
+    /// Scripts to run after all modules complete. Fire-and-forget (output ignored).
+    #[serde(default)]
+    pub post_scan: Vec<PathBuf>,
+    /// Maximum time in seconds to wait for each hook script. Default: 30.
+    pub timeout_seconds: u64,
+    /// If true, hook failures log a warning but don't block the scan. Default: true.
+    pub fail_open: bool,
+}
+
+impl Default for HookConfig {
+    fn default() -> Self {
+        Self {
+            pre_scan: Vec::new(),
+            post_module: Vec::new(),
+            post_scan: Vec::new(),
+            timeout_seconds: 30,
+            fail_open: true,
         }
     }
 }

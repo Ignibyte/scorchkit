@@ -4,3 +4,4 @@
 .env
 .mcp.json
 reports/
+.claude/worktrees/

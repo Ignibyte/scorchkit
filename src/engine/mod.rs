@@ -1,7 +1,10 @@
+pub mod code_context;
+pub mod code_module;
 pub mod compliance;
 pub mod error;
 pub mod evidence;
 pub mod finding;
+pub mod hook_runner;
 pub mod module_trait;
 pub mod oob;
 pub mod scan_context;

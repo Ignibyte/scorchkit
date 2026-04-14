@@ -8,6 +8,8 @@ pub mod mcp;
 pub mod recon;
 pub mod report;
 pub mod runner;
+pub mod sast;
+pub mod sast_tools;
 pub mod scanner;
 #[cfg(feature = "storage")]
 pub mod storage;

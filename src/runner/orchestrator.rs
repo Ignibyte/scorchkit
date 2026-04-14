@@ -26,12 +26,18 @@ pub fn all_modules() -> Vec<Box<dyn ScanModule>> {
 pub struct Orchestrator {
     ctx: ScanContext,
     modules: Vec<Box<dyn ScanModule>>,
+    hook_runner: Option<crate::engine::hook_runner::HookRunner>,
 }
 
 impl Orchestrator {
     #[must_use]
     pub fn new(ctx: ScanContext) -> Self {
-        Self { ctx, modules: Vec::new() }
+        Self { ctx, modules: Vec::new(), hook_runner: None }
+    }
+
+    /// Set the hook runner for lifecycle hooks.
+    pub fn set_hook_runner(&mut self, runner: crate::engine::hook_runner::HookRunner) {
+        self.hook_runner = Some(runner);
     }
 
     pub fn register_default_modules(&mut self) {
@@ -202,6 +208,9 @@ impl Orchestrator {
     /// # Errors
     ///
     /// Returns an error if the semaphore is closed or a fatal scan error occurs.
+    // JUSTIFICATION: Hook integration at pre-scan, post-module, and post-scan points
+    // adds necessary lifecycle instrumentation that is cohesive within the run loop
+    #[allow(clippy::too_many_lines)]
     pub async fn run(&self, quiet: bool) -> Result<ScanResult> {
         let started_at = Utc::now();
         let scan_id = Uuid::new_v4().to_string();
@@ -244,6 +253,23 @@ impl Orchestrator {
             runnable.push(module.as_ref());
         }
 
+        // Fire pre-scan hooks
+        if let Some(ref runner) = self.hook_runner {
+            if runner.has_hooks(crate::engine::hook_runner::HookPoint::PreScan) {
+                let module_ids: Vec<&str> = runnable.iter().map(|m| m.id()).collect();
+                let pre_scan_data = serde_json::json!({
+                    "target": self.ctx.target.url.as_str(),
+                    "profile": self.ctx.config.scan.profile,
+                    "modules": module_ids,
+                });
+                // Pre-scan hooks can modify data but we don't apply changes in v1
+                // (future: parse modified modules list)
+                let _ = runner
+                    .execute(crate::engine::hook_runner::HookPoint::PreScan, &pre_scan_data)
+                    .await;
+            }
+        }
+
         // Run modules concurrently with semaphore
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
         let ctx = &self.ctx;
@@ -270,6 +296,43 @@ impl Orchestrator {
                     if let Some(pb) = &spinner {
                         progress::finish_success(pb, &module_name, findings.len());
                     }
+
+                    // Fire post-module hooks
+                    let findings = if let Some(ref runner) = self.hook_runner {
+                        if runner.has_hooks(crate::engine::hook_runner::HookPoint::PostModule) {
+                            let module_data = serde_json::json!({
+                                "module_id": &module_id,
+                                "module_name": &module_name,
+                                "findings": &findings,
+                                "finding_count": findings.len(),
+                            });
+                            if let Some(modified) = runner
+                                .execute(
+                                    crate::engine::hook_runner::HookPoint::PostModule,
+                                    &module_data,
+                                )
+                                .await
+                            {
+                                // Try to extract modified findings
+                                modified["findings"]
+                                    .as_array()
+                                    .and_then(|arr| {
+                                        serde_json::from_value::<Vec<Finding>>(
+                                            serde_json::Value::Array(arr.clone()),
+                                        )
+                                        .ok()
+                                    })
+                                    .unwrap_or(findings)
+                            } else {
+                                findings
+                            }
+                        } else {
+                            findings
+                        }
+                    } else {
+                        findings
+                    };
+
                     handles.push((module_id, Ok(findings)));
                 }
                 Err(e) => {
@@ -299,6 +362,24 @@ impl Orchestrator {
         }
 
         all_findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+
+        // Fire post-scan hooks
+        if let Some(ref runner) = self.hook_runner {
+            if runner.has_hooks(crate::engine::hook_runner::HookPoint::PostScan) {
+                let post_scan_data = serde_json::json!({
+                    "scan_id": &scan_id,
+                    "target": self.ctx.target.url.as_str(),
+                    "total_findings": all_findings.len(),
+                    "summary": {
+                        "critical": all_findings.iter().filter(|f| f.severity == crate::engine::severity::Severity::Critical).count(),
+                        "high": all_findings.iter().filter(|f| f.severity == crate::engine::severity::Severity::High).count(),
+                    },
+                });
+                let _ = runner
+                    .execute(crate::engine::hook_runner::HookPoint::PostScan, &post_scan_data)
+                    .await;
+            }
+        }
 
         Ok(ScanResult::new(
             scan_id,
