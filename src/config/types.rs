@@ -26,6 +26,9 @@ pub struct AppConfig {
     /// JSONL audit-log sink for scan-lifecycle events.
     #[serde(default)]
     pub audit_log: AuditLogConfig,
+    /// CVE backend configuration (NVD or mock).
+    #[serde(default)]
+    pub cve: super::cve::CveConfig,
 }
 
 /// Configuration for the built-in JSONL audit-log event subscriber.

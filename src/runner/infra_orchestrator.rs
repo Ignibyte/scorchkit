@@ -57,6 +57,16 @@ impl InfraOrchestrator {
         self.modules = all_infra_modules();
     }
 
+    /// Append an additional [`InfraModule`] to the registered set.
+    ///
+    /// Used by [`crate::facade::Engine::infra_scan`] to layer
+    /// construction-injected modules (currently
+    /// [`crate::infra::cve_match::CveMatchModule`]) on top of the
+    /// defaults from [`Self::register_default_modules`].
+    pub fn add_module(&mut self, module: Box<dyn InfraModule>) {
+        self.modules.push(module);
+    }
+
     /// Keep only modules matching the given category.
     pub fn filter_by_category(&mut self, category: InfraCategory) {
         self.modules.retain(|m| m.category() == category);

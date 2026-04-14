@@ -200,6 +200,8 @@ impl Engine {
     pub async fn infra_scan(&self, target: &str) -> Result<ScanResult> {
         use crate::engine::infra_context::InfraContext;
         use crate::engine::infra_target::InfraTarget;
+        use crate::infra::cve_lookup::build_cve_lookup;
+        use crate::infra::cve_match::CveMatchModule;
         use crate::runner::infra_orchestrator::InfraOrchestrator;
 
         let infra_target = InfraTarget::parse(target)?;
@@ -208,6 +210,15 @@ impl Engine {
 
         let mut orchestrator = InfraOrchestrator::new(ctx);
         orchestrator.register_default_modules();
+
+        // Layer the CVE matcher on top of the defaults when [cve] is
+        // configured. `build_cve_lookup` returns Ok(None) for the
+        // default `disabled` backend, leaving the orchestrator
+        // unchanged.
+        if let Some(lookup) = build_cve_lookup(&self.config)? {
+            orchestrator.add_module(Box::new(CveMatchModule::new(lookup)));
+        }
+
         orchestrator.run(true).await
     }
 
