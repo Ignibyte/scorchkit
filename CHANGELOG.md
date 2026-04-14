@@ -19,6 +19,8 @@ All notable changes to ScorchKit will be documented in this file.
 
 - **Built-in dependency auditor** — First built-in SAST module (`src/sast/dep_audit.rs`). Parses `Cargo.lock`, `package-lock.json`, `requirements.txt`, and `go.sum` to detect dependency health issues without external tools. Checks: duplicate package versions (supply chain risk), unpinned dependencies (reproducibility risk), and known-risky/compromised packages (11 curated entries covering event-stream, ua-parser-js, colors, faker, node-ipc, and PyPI typosquats). Works out of the box — no cargo-audit, OSV-Scanner, or Grype needed. 8 new tests. (#88)
 
+- **Engine facade and prelude** — `ScorchKit` is now usable as a library crate (`cargo add scorchkit`). New `Engine` facade struct with `scan(url)`, `scan_with_profile(url, profile)`, `code_scan(path)`, and `code_scan_language(path, lang)` methods. New `prelude` module re-exports ~15 core types (`use scorchkit::prelude::*`). Crate-root `pub use` re-exports for `scorchkit::Finding`, `scorchkit::Severity`, etc. Public `build_http_client()` for custom HTTP client construction. Crate-level `//!` documentation with quick-start examples. 3 new tests. (#89)
+
 ### Changed
 - **coder.md module counts** — Updated from 41 to 77 modules (10 recon + 35 scanner + 32 tools). Fixed "waf" module classification (scanner, not recon). (#84)
 
