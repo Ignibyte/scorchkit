@@ -42,6 +42,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
             insecure,
             scope,
             exclude,
+            code,
             project,
             database_url,
         } => {
@@ -129,6 +130,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                     &profile,
                     template.as_deref(),
                     min_confidence,
+                    code.as_deref(),
                     project.as_deref(),
                     database_url.as_deref(),
                 )
@@ -181,6 +183,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 None,
                 None,
                 None,
+                None,
             )
             .await
         }
@@ -197,6 +200,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 false,
                 false,
                 "standard",
+                None,
                 None,
                 None,
                 None,
@@ -471,6 +475,7 @@ async fn run_scan_with_resume(
 #[allow(clippy::too_many_arguments)]
 // JUSTIFICATION: CLI dispatch function — match arms are the natural structure;
 // extraction would scatter dispatch logic
+// JUSTIFICATION: run_scan is the CLI dispatch hub — many parameters reflect CLI flags
 #[allow(clippy::too_many_lines)]
 async fn run_scan(
     config: &Arc<AppConfig>,
@@ -485,6 +490,7 @@ async fn run_scan(
     profile: &str,
     template: Option<&str>,
     min_confidence: Option<f64>,
+    code_path: Option<&std::path::Path>,
     project_name: Option<&str>,
     database_url: Option<&str>,
 ) -> Result<()> {
@@ -617,6 +623,43 @@ async fn run_scan(
         &uuid::Uuid::new_v4().to_string(),
     );
     let mut result = orchestrator.run_with_checkpoint(quiet, &cp_path, None).await?;
+
+    // If --code was specified, run SAST concurrently and merge results
+    if let Some(path) = code_path {
+        if !quiet {
+            println!("\n{} Running SAST code scan on {}...", "CODE".cyan().bold(), path.display());
+        }
+        let code_ctx = crate::engine::code_context::CodeContext::new(
+            path.to_path_buf(),
+            None,
+            Arc::clone(config),
+        );
+        let mut code_orchestrator =
+            crate::runner::code_orchestrator::CodeOrchestrator::new(code_ctx);
+        code_orchestrator.register_default_modules();
+
+        match code_orchestrator.run().await {
+            Ok(code_result) => {
+                let code_count = code_result.findings.len();
+                result.merge(code_result);
+                if !quiet {
+                    println!(
+                        "  {} SAST scan complete: {} code findings merged",
+                        "✓".green().bold(),
+                        code_count
+                    );
+                }
+            }
+            Err(e) => {
+                if !quiet {
+                    println!(
+                        "  {} SAST scan failed (DAST results preserved): {e}",
+                        "WARN".yellow().bold()
+                    );
+                }
+            }
+        }
+    }
 
     // Apply confidence filter before reporting (but after persistence-eligible collection)
     if let Some(min_conf) = min_confidence {

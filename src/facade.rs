@@ -129,6 +129,39 @@ impl Engine {
         orchestrator.run().await
     }
 
+    /// Run a combined DAST+SAST scan: web target and source code path.
+    ///
+    /// Runs DAST and SAST concurrently, then merges findings into a single
+    /// `ScanResult`. The DAST target is the primary — SAST findings are
+    /// appended. If SAST fails, only DAST results are returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DAST scan fails. SAST failures are non-fatal.
+    pub async fn full_scan(&self, url: &str, code_path: &Path) -> Result<ScanResult> {
+        let target = Target::parse(url)?;
+        let http_client = build_http_client(&self.config)?;
+        let dast_ctx = ScanContext::new(target, Arc::clone(&self.config), http_client);
+
+        let mut dast_orchestrator = Orchestrator::new(dast_ctx);
+        dast_orchestrator.register_default_modules();
+
+        let code_ctx = CodeContext::new(code_path.to_path_buf(), None, Arc::clone(&self.config));
+        let mut sast_orchestrator = CodeOrchestrator::new(code_ctx);
+        sast_orchestrator.register_default_modules();
+
+        let (dast_result, sast_result) =
+            tokio::join!(dast_orchestrator.run(true), sast_orchestrator.run());
+
+        let mut result = dast_result?;
+
+        if let Ok(code_result) = sast_result {
+            result.merge(code_result);
+        }
+
+        Ok(result)
+    }
+
     /// Get a reference to the engine's configuration.
     #[must_use]
     pub fn config(&self) -> &AppConfig {
