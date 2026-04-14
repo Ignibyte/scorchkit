@@ -75,6 +75,8 @@ pub struct ScanConfig {
     pub scope_exclude: Vec<String>,
     /// Directory containing plugin definition files (.toml).
     pub plugins_dir: Option<PathBuf>,
+    /// Directory containing YAML rule definition files (.yaml/.yml).
+    pub rules_dir: Option<PathBuf>,
     /// Skip TLS certificate verification (for self-signed certs in local dev).
     #[serde(default)]
     pub insecure: bool,
@@ -95,6 +97,7 @@ impl Default for ScanConfig {
             scope_include: Vec::new(),
             scope_exclude: Vec::new(),
             plugins_dir: None,
+            rules_dir: None,
             insecure: false,
         }
     }

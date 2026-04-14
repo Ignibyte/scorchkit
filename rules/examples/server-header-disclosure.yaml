@@ -1,0 +1,17 @@
+# Example rule: detect verbose Server header that reveals version
+id: server-version-disclosure
+name: Server Version Disclosure
+severity: low
+description: |
+  The Server response header exposes the specific server software and
+  version. This aids attackers in targeting known vulnerabilities for
+  that exact version.
+remediation: |
+  Configure the web server to suppress or obfuscate the Server header.
+  Nginx: server_tokens off;
+  Apache: ServerTokens Prod; ServerSignature Off;
+request:
+  path: "/"
+  method: GET
+matchers:
+  header_regex: "server: (nginx/[0-9]|apache/[0-9]|iis/[0-9]|openresty/[0-9])"

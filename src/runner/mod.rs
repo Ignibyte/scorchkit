@@ -4,4 +4,5 @@ pub mod hooks;
 pub mod orchestrator;
 pub mod plugin;
 pub mod progress;
+pub mod rule_engine;
 pub mod subprocess;
