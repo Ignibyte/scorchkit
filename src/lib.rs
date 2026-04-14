@@ -43,6 +43,8 @@ pub mod cli;
 pub mod config;
 pub mod engine;
 pub mod facade;
+#[cfg(feature = "infra")]
+pub mod infra;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 pub mod prelude;

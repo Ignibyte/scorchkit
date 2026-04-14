@@ -267,6 +267,29 @@ pub enum Commands {
     /// Start the MCP server on stdio transport
     #[cfg(feature = "mcp")]
     Serve,
+
+    /// Run an infrastructure scan (host, IP, or CIDR target)
+    #[cfg(feature = "infra")]
+    Infra {
+        /// Target: IP (`192.0.2.1`), CIDR (`10.0.0.0/24`), host (`example.com`), or endpoint (`host:port`)
+        target: String,
+
+        /// Scan profile: `quick` (port scan only) or `standard` (default: all registered modules)
+        #[arg(long, default_value = "standard")]
+        profile: String,
+
+        /// Comma-separated module IDs to run (overrides the profile).
+        #[arg(long)]
+        modules: Option<String>,
+
+        /// Comma-separated module IDs to skip.
+        #[arg(long)]
+        skip: Option<String>,
+
+        /// Suppress progress output.
+        #[arg(long)]
+        quiet: bool,
+    },
 }
 
 #[derive(Debug, Clone, ValueEnum)]

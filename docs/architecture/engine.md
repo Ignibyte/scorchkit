@@ -52,6 +52,21 @@ In-process pub/sub for scan lifecycle events, wrapping `tokio::sync::broadcast`:
 
 `ScanEvent` derives `Serialize` to support JSON emission. Variant and field names are part of the on-the-wire JSONL format: renaming either is a breaking change for downstream consumers. The default externally-tagged representation means each line is a single-key object like `{"ScanStarted": {"scan_id": "...", "target": "..."}}`.
 
+## Infra module family (v2.0 foundation)
+
+`src/engine/infra_module.rs` introduces the third module family alongside `ScanModule` (DAST) and `CodeModule` (SAST). All infra code is feature-gated behind `infra = ["dep:ipnet"]` and absent from the default build.
+
+- **`InfraModule`** — async trait with `name`/`id`/`category`/`description`/`run`/`requires_external_tool`/`required_tool`/`protocols` methods, mirroring `ScanModule`.
+- **`InfraCategory`** — five variants in v1: `PortScan`, `Fingerprint`, `CveMatch`, `TlsInfra`, `Dns`. WORK-104 will add `NetworkAuth` and `ServiceEnum`.
+- **`InfraTarget`** (`src/engine/infra_target.rs`) — sum type with `Ip(IpAddr)`, `Cidr(ipnet::IpNet)`, `Host(String)`, `Endpoint { host, port }`, and `Multi(Vec<Self>)` variants. `parse(&str)` accepts CIDR, IP, host, host:port, and bracketed IPv6 endpoint forms. `iter_ips()` flattens the target into individual addresses (CIDR via `IpNet::hosts`, host returns empty pending DNS resolution in WORK-102).
+- **`InfraContext`** (`src/engine/infra_context.rs`) — same shape as `ScanContext`/`CodeContext`: target, config, HTTP client, shared data, and the event bus. Network credentials field comes in WORK-104.
+- **`InfraOrchestrator`** (`src/runner/infra_orchestrator.rs`) — mirrors `Orchestrator`/`CodeOrchestrator` exactly: same `ScanEvent` lifecycle sequence, same `subscribe_audit_log_if_enabled` wire-up, same semaphore-bounded concurrency. Returns the existing `ScanResult` type (target reuses `Target::from_infra` to wrap the infra target string in a synthetic `infra://` URL — same trick `from_path` uses for SAST).
+- **`TcpProbeModule`** (`src/infra/tcp_probe.rs`) — the v1 demonstration module. Privilege-free TCP-connect probe against a configurable port list (default: 22, 80, 443, 3306, 5432, 6379, 8080, 8443) with bounded timeout. Emits one Info Finding per open port. Real port scanning (SYN/XMAS) lands in WORK-102's nmap migration.
+- **CLI:** `scorchkit infra <target> [--profile quick|standard] [--modules a,b,c] [--skip x,y]` (gated).
+- **Facade:** `Engine::infra_scan(target: &str)` (gated).
+
+The roadmap continues with WORK-102 (nmap migration into `InfraModule`), WORK-103 (OSV CVE matcher), WORK-104 (authenticated network scanning), WORK-105 (unified `assess` command composing DAST+SAST+Infra), WORK-106 (storage migration + MCP tools).
+
 ## Hook adapter — `HookEventHandler` (`hook_runner.rs`)
 
 `HookEventHandler` bridges the event bus to the existing script-based hook system. It subscribes to the event stream and maps events to the three `HookPoint` script invocations:

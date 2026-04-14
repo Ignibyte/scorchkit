@@ -268,7 +268,57 @@ pub async fn execute(cli: Cli) -> Result<()> {
 
         #[cfg(feature = "mcp")]
         Commands::Serve => crate::cli::serve::run_serve(&config).await,
+
+        #[cfg(feature = "infra")]
+        Commands::Infra { target, profile, modules, skip, quiet } => {
+            run_infra(&config, &target, &profile, modules.as_deref(), skip.as_deref(), quiet).await
+        }
     }
+}
+
+/// Execute an infrastructure scan against `target`.
+///
+/// Parses the target string via [`crate::engine::infra_target::InfraTarget::parse`], constructs a
+/// fresh [`crate::engine::infra_context::InfraContext`], applies the profile and module filters,
+/// runs the orchestrator, and prints the resulting
+/// [`crate::engine::scan_result::ScanResult`] via the terminal reporter.
+///
+/// # Errors
+///
+/// Returns [`crate::engine::error::ScorchError::InvalidTarget`] for
+/// unparseable target strings, and propagates any orchestrator failure.
+#[cfg(feature = "infra")]
+pub async fn run_infra(
+    config: &std::sync::Arc<crate::config::AppConfig>,
+    target: &str,
+    profile: &str,
+    modules: Option<&str>,
+    skip: Option<&str>,
+    quiet: bool,
+) -> crate::engine::error::Result<()> {
+    use crate::engine::infra_context::InfraContext;
+    use crate::engine::infra_target::InfraTarget;
+    use crate::runner::infra_orchestrator::InfraOrchestrator;
+
+    let infra_target = InfraTarget::parse(target)?;
+    let http_client = build_http_client(config)?;
+    let ctx = InfraContext::new(infra_target, std::sync::Arc::clone(config), http_client);
+    let mut orch = InfraOrchestrator::new(ctx);
+    orch.register_default_modules();
+    orch.apply_profile(profile);
+
+    if let Some(ids) = modules {
+        let list: Vec<String> = ids.split(',').map(|s| s.trim().to_string()).collect();
+        orch.filter_by_ids(&list);
+    }
+    if let Some(ids) = skip {
+        let list: Vec<String> = ids.split(',').map(|s| s.trim().to_string()).collect();
+        orch.exclude_by_ids(&list);
+    }
+
+    let result = orch.run(quiet).await?;
+    crate::report::terminal::print_report(&result);
+    Ok(())
 }
 
 /// Dispatch database subcommands.

@@ -7,6 +7,12 @@ pub mod events;
 pub mod evidence;
 pub mod finding;
 pub mod hook_runner;
+#[cfg(feature = "infra")]
+pub mod infra_context;
+#[cfg(feature = "infra")]
+pub mod infra_module;
+#[cfg(feature = "infra")]
+pub mod infra_target;
 pub mod module_trait;
 pub mod oob;
 pub mod scan_context;
