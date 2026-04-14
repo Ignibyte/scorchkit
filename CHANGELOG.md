@@ -21,6 +21,8 @@ All notable changes to ScorchKit will be documented in this file.
 
 - **Engine facade and prelude** — `ScorchKit` is now usable as a library crate (`cargo add scorchkit`). New `Engine` facade struct with `scan(url)`, `scan_with_profile(url, profile)`, `code_scan(path)`, and `code_scan_language(path, lang)` methods. New `prelude` module re-exports ~15 core types (`use scorchkit::prelude::*`). Crate-root `pub use` re-exports for `scorchkit::Finding`, `scorchkit::Severity`, etc. Public `build_http_client()` for custom HTTP client construction. Crate-level `//!` documentation with quick-start examples. 3 new tests. (#89)
 
+- **SAST wrappers batch 2: Hadolint, ESLint-security, PHPStan** — Three more SAST tool wrappers completing v1.1 expansion. Hadolint (Dockerfile linting, IaC category), ESLint with security plugin (JavaScript/TypeScript, language-filtered), PHPStan (PHP static analysis, language-filtered). SAST system now has 11 modules total (1 built-in + 10 tool wrappers). 6 new tests. (#90)
+
 ### Changed
 - **coder.md module counts** — Updated from 41 to 77 modules (10 recon + 35 scanner + 32 tools). Fixed "waf" module classification (scanner, not recon). (#84)
 

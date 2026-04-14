@@ -5,10 +5,13 @@
 
 pub mod bandit;
 pub mod checkov;
+pub mod eslint_security;
 pub mod gitleaks;
 pub mod gosec;
 pub mod grype;
+pub mod hadolint;
 pub mod osv_scanner;
+pub mod phpstan;
 pub mod semgrep;
 
 use crate::engine::code_module::CodeModule;
@@ -24,5 +27,8 @@ pub fn register_modules() -> Vec<Box<dyn CodeModule>> {
         Box::new(gosec::GosecModule),
         Box::new(checkov::CheckovModule),
         Box::new(grype::GrypeModule),
+        Box::new(hadolint::HadolintModule),
+        Box::new(eslint_security::EslintSecurityModule),
+        Box::new(phpstan::PhpstanModule),
     ]
 }
