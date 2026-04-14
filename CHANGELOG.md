@@ -15,6 +15,8 @@ All notable changes to ScorchKit will be documented in this file.
 - **Hook system v1** — Script-based lifecycle hooks for scan extensibility. Configure `[hooks]` in config.toml with `pre_scan`, `post_module`, `post_scan` script arrays. JSON stdin/stdout protocol. Configurable timeout (default 30s), fail-open by default. Works with both DAST and SAST orchestrators. Enables CI/CD integration, SIEM export, Slack/Jira notifications, and finding enrichment without modifying ScorchKit. (#86)
 - **`/code` Claude Code command** — SAST code scanning via slash command with formatting guidelines. (#90)
 
+- **SAST tool wrappers: Bandit, Gosec, Checkov, Grype** — Four new SAST tool wrappers expanding code scanning coverage. Bandit (Python SAST, language-filtered), Gosec (Go SAST, language-filtered), Checkov (IaC scanning for Terraform/CloudFormation/Kubernetes/Dockerfile), Grype (container image and dependency vulnerability scanning). All use `run_tool_lenient()` for non-zero exit handling. Bandit maps tool-native confidence to Finding confidence. Grype extracts fix versions for actionable remediation. 8 new tests. (#87)
+
 ### Changed
 - **coder.md module counts** — Updated from 41 to 77 modules (10 recon + 35 scanner + 32 tools). Fixed "waf" module classification (scanner, not recon). (#84)
 
