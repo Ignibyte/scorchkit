@@ -13,6 +13,8 @@ pub mod hadolint;
 pub mod osv_scanner;
 pub mod phpstan;
 pub mod semgrep;
+pub mod snyk_code;
+pub mod snyk_test;
 
 use crate::engine::code_module::CodeModule;
 
@@ -30,5 +32,7 @@ pub fn register_modules() -> Vec<Box<dyn CodeModule>> {
         Box::new(hadolint::HadolintModule),
         Box::new(eslint_security::EslintSecurityModule),
         Box::new(phpstan::PhpstanModule),
+        Box::new(snyk_test::SnykTestModule),
+        Box::new(snyk_code::SnykCodeModule),
     ]
 }

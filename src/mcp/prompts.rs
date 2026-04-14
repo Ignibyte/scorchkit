@@ -629,6 +629,8 @@ fn is_sast_module(module_id: &str) -> bool {
             | "eslint-security"
             | "phpstan"
             | "dep-audit"
+            | "snyk-test"
+            | "snyk-code"
     )
 }
 

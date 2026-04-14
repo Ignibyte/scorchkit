@@ -29,6 +29,8 @@ All notable changes to ScorchKit will be documented in this file.
 
 - **DAST+SAST cross-domain correlation** — 6 new attack chain correlation rules matching DAST findings with SAST findings: confirmed SQL injection (code + runtime), hardcoded secrets + runtime exposure, vulnerable dependency + exploitable endpoint, IaC misconfiguration + runtime misconfig, auth bypass (code + runtime), supply chain risk (risky package + missing CSP). Extends the existing rule-based `correlate_attack_chains()` system. New `is_sast_module()` helper for module classification. 6 new tests. (#93)
 
+- **Snyk CLI integration** — Two new SAST tool wrappers: `snyk-test` (dependency SCA via `snyk test --json`, `CodeCategory::Sca`) and `snyk-code` (SAST via `snyk code test --json`, `CodeCategory::Sast`). Free tier compatible — no paid license needed. Snyk auto-detects project language. SAST system now has 13 modules total (1 built-in + 12 tool wrappers). Completes v1.2. 4 new tests. (#94)
+
 ### Changed
 - **coder.md module counts** — Updated from 41 to 77 modules (10 recon + 35 scanner + 32 tools). Fixed "waf" module classification (scanner, not recon). (#84)
 
