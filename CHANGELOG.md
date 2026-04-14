@@ -27,6 +27,8 @@ All notable changes to ScorchKit will be documented in this file.
 
 - **MCP code scanning tools** — Two new MCP tools exposing SAST via the MCP server: `scan_code` (run SAST on a filesystem path with optional language/module filtering) and `list_code_modules` (list all 11 SAST modules with categories, language support, and tool requirements). Also fixes pre-existing `update_finding_status` missing argument bug in MCP tools and test files. (#92)
 
+- **DAST+SAST cross-domain correlation** — 6 new attack chain correlation rules matching DAST findings with SAST findings: confirmed SQL injection (code + runtime), hardcoded secrets + runtime exposure, vulnerable dependency + exploitable endpoint, IaC misconfiguration + runtime misconfig, auth bypass (code + runtime), supply chain risk (risky package + missing CSP). Extends the existing rule-based `correlate_attack_chains()` system. New `is_sast_module()` helper for module classification. 6 new tests. (#93)
+
 ### Changed
 - **coder.md module counts** — Updated from 41 to 77 modules (10 recon + 35 scanner + 32 tools). Fixed "waf" module classification (scanner, not recon). (#84)
 
