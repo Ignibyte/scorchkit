@@ -2,6 +2,7 @@ pub mod audit_log;
 pub mod code_context;
 pub mod code_module;
 pub mod compliance;
+pub mod cve;
 pub mod error;
 pub mod events;
 pub mod evidence;

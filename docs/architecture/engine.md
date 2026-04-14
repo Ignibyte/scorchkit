@@ -67,6 +67,14 @@ In-process pub/sub for scan lifecycle events, wrapping `tokio::sync::broadcast`:
 
 The roadmap continues with WORK-103 (OSV CVE matcher), WORK-104 (authenticated network scanning), WORK-105 (unified `assess` command composing DAST+SAST+Infra), WORK-106 (storage migration + MCP tools).
 
+### CVE correlation (`cve.rs` + `infra/cve_match.rs`)
+
+`CveRecord { id, cvss_score, severity, description, references, cpe }` is the unified shape for CVE data across the codebase (findings, storage, reporting). `CveLookup` is an async trait (`Send + Sync`) with a single `query(cpe) -> Result<Vec<CveRecord>>` method — backends are free to hit NVD, OSV, a local database, or return test fixtures. `severity_from_cvss` maps a CVSS v3.x base score onto `Severity` using standard bands.
+
+`infra::CveMatchModule` is the consumer side of the WORK-102 fingerprint pipeline. It reads fingerprints via `read_fingerprints`, iterates those with a `cpe` set, queries the injected lookup sequentially, and emits one `Finding` per matched CVE with the CVE ID + CVSS score in the title and evidence. Per-fingerprint query errors are logged at `warn` and skipped so a single backend hiccup doesn't abort the scan.
+
+`CveMatchModule::new(lookup: Box<dyn CveLookup>)` takes its backend by injection — it's intentionally absent from `infra::register_modules()`. The fixture-backed `infra::MockCveLookup` exercises the module in tests and serves as documentation for how real backends (WORK-103b) will plug in.
+
 ### Service fingerprints (`service_fingerprint.rs`)
 
 `ServiceFingerprint { port, protocol, service_name, product, version, cpe }` is the shared data type for service detection. `parse_nmap_xml_fingerprints(xml)` is the pure parser both the DAST `tools::NmapModule` and the infra `infra::NmapModule` call; the DAST wrapper layers severity classification and outdated-version checks on top, while the infra wrapper emits Info findings and publishes `Vec<ServiceFingerprint>` to `shared_data` under the `SHARED_KEY_FINGERPRINTS` constant for downstream CVE correlation. `build_cpe(vendor, product, version)` produces CPE 2.3 URIs. `publish_fingerprints` / `read_fingerprints` helpers encapsulate the JSON encoding required to round-trip structured data through `SharedData`'s `Vec<String>` store.

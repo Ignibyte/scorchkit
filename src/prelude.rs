@@ -32,6 +32,15 @@ pub use crate::engine::audit_log::AuditLogHandler;
 // Service fingerprints (not feature-gated — useful wherever service data flows)
 pub use crate::engine::service_fingerprint::ServiceFingerprint;
 
+// CVE types (not feature-gated — useful across reporting and storage)
+pub use crate::engine::cve::{CveLookup, CveRecord};
+
+// CVE match module (feature-gated)
+#[cfg(feature = "infra")]
+pub use crate::infra::cve_match::CveMatchModule;
+#[cfg(feature = "infra")]
+pub use crate::infra::cve_mock::MockCveLookup;
+
 // Infra (feature-gated)
 #[cfg(feature = "infra")]
 pub use crate::engine::infra_context::InfraContext;
