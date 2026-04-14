@@ -78,6 +78,7 @@ serde_yaml = "0.9.34"
 default = []
 storage = ["dep:sqlx", "dep:sha2", "dep:croner"]
 mcp = ["storage", "dep:rmcp", "dep:schemars"]
+infra = ["dep:ipnet"]
 
 [dependencies.sqlx]
 version = "0.8"
@@ -99,6 +100,10 @@ optional = true
 
 [dependencies.schemars]
 version = "1.0"
+optional = true
+
+[dependencies.ipnet]
+version = "2"
 optional = true
 
 [dev-dependencies]

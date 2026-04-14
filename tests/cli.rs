@@ -231,3 +231,16 @@ fn test_cli_schedule_run_due_in_help() {
         .success()
         .stdout(predicate::str::contains("due"));
 }
+
+/// Verify `infra --help` works when the `infra` feature is compiled and
+/// surfaces the expected `target` argument.
+#[cfg(feature = "infra")]
+#[test]
+fn test_cli_infra_help() {
+    Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["infra", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("target").or(predicate::str::contains("TARGET")));
+}

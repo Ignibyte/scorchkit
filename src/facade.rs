@@ -167,6 +167,49 @@ impl Engine {
     pub fn config(&self) -> &AppConfig {
         &self.config
     }
+
+    /// Run an infrastructure scan against a host, IP, or CIDR range.
+    ///
+    /// Parses `target` as an [`crate::engine::infra_target::InfraTarget`]
+    /// (IP, CIDR, host, or `host:port`), builds a fresh
+    /// [`crate::engine::infra_context::InfraContext`], registers every
+    /// built-in [`crate::engine::infra_module::InfraModule`], and runs the
+    /// orchestrator. Returns the resulting [`ScanResult`] with findings.
+    ///
+    /// For fine-grained control, use
+    /// [`crate::runner::infra_orchestrator::InfraOrchestrator`] directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target cannot be parsed, the HTTP client
+    /// cannot be built, or the scan encounters a fatal failure.
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use scorchkit::config::AppConfig;
+    /// use scorchkit::facade::Engine;
+    ///
+    /// # async fn example() -> scorchkit::engine::error::Result<()> {
+    /// let engine = Engine::new(Arc::new(AppConfig::default()));
+    /// let result = engine.infra_scan("127.0.0.1").await?;
+    /// println!("infra findings: {}", result.findings.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "infra")]
+    pub async fn infra_scan(&self, target: &str) -> Result<ScanResult> {
+        use crate::engine::infra_context::InfraContext;
+        use crate::engine::infra_target::InfraTarget;
+        use crate::runner::infra_orchestrator::InfraOrchestrator;
+
+        let infra_target = InfraTarget::parse(target)?;
+        let http_client = build_http_client(&self.config)?;
+        let ctx = InfraContext::new(infra_target, Arc::clone(&self.config), http_client);
+
+        let mut orchestrator = InfraOrchestrator::new(ctx);
+        orchestrator.register_default_modules();
+        orchestrator.run(true).await
+    }
 }
 
 /// Build an HTTP client from application configuration.

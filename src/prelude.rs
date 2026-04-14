@@ -29,6 +29,14 @@ pub use crate::engine::events::{
 // Audit log
 pub use crate::engine::audit_log::AuditLogHandler;
 
+// Infra (feature-gated)
+#[cfg(feature = "infra")]
+pub use crate::engine::infra_context::InfraContext;
+#[cfg(feature = "infra")]
+pub use crate::engine::infra_module::{InfraCategory, InfraModule};
+#[cfg(feature = "infra")]
+pub use crate::engine::infra_target::InfraTarget;
+
 // Configuration
 pub use crate::config::AppConfig;
 
