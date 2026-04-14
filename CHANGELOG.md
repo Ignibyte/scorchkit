@@ -4,6 +4,9 @@ All notable changes to ScorchKit will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **`cargo deny check` passes cleanly** — `deny.toml` updated to allow `MPL-2.0` (required by `colored` and the `scraper` family, standard industry practice for MIT-licensed Rust projects) and to ignore four pre-existing advisories with inline `reason` + `# JUSTIFICATION` rationale: `RUSTSEC-2023-0071` (rsa via unused sqlx-mysql), `RUSTSEC-2025-0057` (fxhash unmaintained, no safe upgrade), `RUSTSEC-2025-0119` (number_prefix unmaintained, no safe upgrade), `RUSTSEC-2026-0097` (rand 0.9 unsoundness only triggered by custom logger, unreachable in ScorchKit). Zero Rust code changes; zero Cargo.lock changes; 479-test baseline preserved. Architecture decision `security.license-policy` recorded. (#99)
+
 ### Added
 - **Event bus v2b.1 — custom module events + event filtering** — Extends the event bus shipped in #97 with `ScanEvent::Custom { kind, data }` (modules publish domain-specific events with an owned `serde_json::Value` payload; dotted-namespace kind convention) and `subscribe_filtered(bus, handler, predicate)` (filters events on the subscriber's task before dispatch — zero cost for other subscribers). `HookEventHandler` now explicitly ignores `Custom` events (no standard mapping to hook points; write a native `EventHandler` for custom dispatch). Module doc gains a `# Custom events` example. Prelude re-exports `subscribe_filtered`. 7 new tests (472 → 479). (#98)
 
