@@ -17,6 +17,8 @@ All notable changes to ScorchKit will be documented in this file.
 
 - **SAST tool wrappers: Bandit, Gosec, Checkov, Grype** — Four new SAST tool wrappers expanding code scanning coverage. Bandit (Python SAST, language-filtered), Gosec (Go SAST, language-filtered), Checkov (IaC scanning for Terraform/CloudFormation/Kubernetes/Dockerfile), Grype (container image and dependency vulnerability scanning). All use `run_tool_lenient()` for non-zero exit handling. Bandit maps tool-native confidence to Finding confidence. Grype extracts fix versions for actionable remediation. 8 new tests. (#87)
 
+- **Built-in dependency auditor** — First built-in SAST module (`src/sast/dep_audit.rs`). Parses `Cargo.lock`, `package-lock.json`, `requirements.txt`, and `go.sum` to detect dependency health issues without external tools. Checks: duplicate package versions (supply chain risk), unpinned dependencies (reproducibility risk), and known-risky/compromised packages (11 curated entries covering event-stream, ua-parser-js, colors, faker, node-ipc, and PyPI typosquats). Works out of the box — no cargo-audit, OSV-Scanner, or Grype needed. 8 new tests. (#88)
+
 ### Changed
 - **coder.md module counts** — Updated from 41 to 77 modules (10 recon + 35 scanner + 32 tools). Fixed "waf" module classification (scanner, not recon). (#84)
 
