@@ -900,6 +900,7 @@ mod tests {
             ScanEvent::ModuleError { .. } => "ModuleError",
             ScanEvent::FindingProduced { .. } => "FindingProduced",
             ScanEvent::ScanCompleted { .. } => "ScanCompleted",
+            ScanEvent::Custom { .. } => "Custom",
         }
     }
 

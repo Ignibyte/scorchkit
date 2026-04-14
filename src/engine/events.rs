@@ -25,6 +25,21 @@
 //! }
 //! # }
 //! ```
+//!
+//! # Custom events
+//!
+//! Modules can publish arbitrary typed events via `ScanEvent::Custom`:
+//!
+//! ```no_run
+//! use scorchkit::engine::events::{EventBus, ScanEvent};
+//! use serde_json::json;
+//!
+//! # let bus = EventBus::default();
+//! bus.publish(ScanEvent::Custom {
+//!     kind: "crawler.depth-reached".to_string(),
+//!     data: json!({ "depth": 3, "url": "https://example.com/admin" }),
+//! });
+//! ```
 
 use std::sync::Arc;
 
@@ -113,6 +128,19 @@ pub enum ScanEvent {
         total_findings: usize,
         /// Total scan duration in milliseconds.
         duration_ms: u64,
+    },
+    /// A module-emitted custom event.
+    ///
+    /// Use for domain-specific telemetry that doesn't fit a core lifecycle
+    /// variant. Kinds follow a dotted-namespace convention
+    /// (e.g. `"crawler.depth-reached"`, `"waf.detected"`); the convention is
+    /// documented, not enforced.
+    Custom {
+        /// Namespaced event kind identifier.
+        kind: String,
+        /// Arbitrary typed payload. Use `serde_json::to_value(my_struct)`
+        /// to encode typed data and `serde_json::from_value(data)` to decode.
+        data: serde_json::Value,
     },
 }
 
@@ -206,6 +234,59 @@ pub fn subscribe_handler(bus: &EventBus, handler: Arc<dyn EventHandler>) -> Join
         loop {
             match rx.recv().await {
                 Ok(event) => {
+                    if let Err(e) = handler.handle(event).await {
+                        warn!("event handler error: {e}");
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("event handler lagged — dropped {n} events");
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    })
+}
+
+/// Spawn a background task like [`subscribe_handler`], but only drive the
+/// handler for events where `predicate(&event)` returns `true`.
+///
+/// The predicate is evaluated on the subscriber's receive task — filtering
+/// is free for the publisher and for other subscribers. Lagged and closed
+/// semantics are identical to [`subscribe_handler`].
+///
+/// ```no_run
+/// # use std::sync::Arc;
+/// # use scorchkit::engine::events::{EventBus, EventHandler, ScanEvent, subscribe_filtered};
+/// # use scorchkit::engine::severity::Severity;
+/// # async fn example(bus: &EventBus, handler: Arc<dyn EventHandler>) {
+/// // Only deliver High/Critical FindingProduced events:
+/// let join = subscribe_filtered(bus, handler, |event| {
+///     matches!(
+///         event,
+///         ScanEvent::FindingProduced { finding, .. }
+///             if matches!(finding.severity, Severity::High | Severity::Critical)
+///     )
+/// });
+/// # drop(join);
+/// # }
+/// ```
+#[must_use]
+pub fn subscribe_filtered<F>(
+    bus: &EventBus,
+    handler: Arc<dyn EventHandler>,
+    predicate: F,
+) -> JoinHandle<()>
+where
+    F: Fn(&ScanEvent) -> bool + Send + Sync + 'static,
+{
+    let mut rx = bus.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    if !predicate(&event) {
+                        continue;
+                    }
                     if let Err(e) = handler.handle(event).await {
                         warn!("event handler error: {e}");
                     }
@@ -388,6 +469,218 @@ mod tests {
                 assert_eq!(f2.title, "missing HSTS");
             }
             other => panic!("unexpected events: {other:?}"),
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // WORK-098 (v2b.1) — Custom events + subscribe_filtered
+    // ---------------------------------------------------------------------
+
+    /// Regression: `ScanEvent::Custom` publishes and is received with kind +
+    /// data intact.
+    #[tokio::test]
+    async fn test_custom_event_round_trip() {
+        let bus = EventBus::new(16);
+        let mut rx = bus.subscribe();
+        bus.publish(ScanEvent::Custom {
+            kind: "crawler.depth-reached".to_string(),
+            data: serde_json::json!({ "depth": 3, "url": "https://example.com/admin" }),
+        });
+        match rx.recv().await.expect("receive") {
+            ScanEvent::Custom { kind, data } => {
+                assert_eq!(kind, "crawler.depth-reached");
+                assert_eq!(data["depth"], 3);
+                assert_eq!(data["url"], "https://example.com/admin");
+            }
+            other => panic!("expected Custom, got {other:?}"),
+        }
+    }
+
+    /// Regression: `subscribe_filtered` invokes the handler when the
+    /// predicate returns true.
+    #[tokio::test]
+    async fn test_subscribe_filtered_delivers_matching() {
+        let bus = EventBus::new(16);
+        let received: Arc<Mutex<Vec<ScanEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let handler = Arc::new(CollectingHandler { received: received.clone() });
+
+        // Always-true predicate — every event should be delivered.
+        let join = subscribe_filtered(&bus, handler, |_| true);
+
+        bus.publish(sample_event());
+        bus.publish(ScanEvent::ScanCompleted {
+            scan_id: "scan-1".to_string(),
+            total_findings: 0,
+            duration_ms: 1,
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(bus);
+        join.await.expect("join");
+
+        assert_eq!(received.lock().expect("lock").len(), 2);
+    }
+
+    /// Regression: `subscribe_filtered` drops events the predicate rejects.
+    #[tokio::test]
+    async fn test_subscribe_filtered_drops_non_matching() {
+        let bus = EventBus::new(16);
+        let received: Arc<Mutex<Vec<ScanEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let handler = Arc::new(CollectingHandler { received: received.clone() });
+
+        // Only ScanCompleted — ScanStarted should be dropped.
+        let join =
+            subscribe_filtered(&bus, handler, |e| matches!(e, ScanEvent::ScanCompleted { .. }));
+
+        bus.publish(sample_event()); // ScanStarted — dropped
+        bus.publish(ScanEvent::ScanCompleted {
+            scan_id: "scan-1".to_string(),
+            total_findings: 0,
+            duration_ms: 1,
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(bus);
+        join.await.expect("join");
+
+        let got = received.lock().expect("lock");
+        assert_eq!(got.len(), 1);
+        assert!(matches!(got[0], ScanEvent::ScanCompleted { .. }));
+    }
+
+    /// Two filtered handlers with disjoint predicates each only see their
+    /// own matches — no crosstalk between filters.
+    #[tokio::test]
+    async fn test_subscribe_filtered_multi_predicate_isolation() {
+        let bus = EventBus::new(16);
+
+        let started: Arc<Mutex<Vec<ScanEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let completed: Arc<Mutex<Vec<ScanEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let h_started = Arc::new(CollectingHandler { received: started.clone() });
+        let h_completed = Arc::new(CollectingHandler { received: completed.clone() });
+
+        let j1 =
+            subscribe_filtered(&bus, h_started, |e| matches!(e, ScanEvent::ScanStarted { .. }));
+        let j2 =
+            subscribe_filtered(&bus, h_completed, |e| matches!(e, ScanEvent::ScanCompleted { .. }));
+
+        bus.publish(sample_event()); // ScanStarted
+        bus.publish(ScanEvent::ScanCompleted {
+            scan_id: "scan-1".to_string(),
+            total_findings: 0,
+            duration_ms: 1,
+        });
+        bus.publish(sample_event()); // ScanStarted again
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(bus);
+        j1.await.expect("j1");
+        j2.await.expect("j2");
+
+        assert_eq!(started.lock().expect("lock").len(), 2);
+        assert_eq!(completed.lock().expect("lock").len(), 1);
+    }
+
+    /// `subscribe_handler` and `subscribe_filtered` on the same bus coexist:
+    /// the unfiltered handler sees every event, the filtered one only its
+    /// matches.
+    #[tokio::test]
+    async fn test_subscribe_filtered_coexists_with_unfiltered() {
+        let bus = EventBus::new(16);
+
+        let all: Arc<Mutex<Vec<ScanEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let completed_only: Arc<Mutex<Vec<ScanEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let h_all = Arc::new(CollectingHandler { received: all.clone() });
+        let h_completed = Arc::new(CollectingHandler { received: completed_only.clone() });
+
+        let j1 = subscribe_handler(&bus, h_all);
+        let j2 =
+            subscribe_filtered(&bus, h_completed, |e| matches!(e, ScanEvent::ScanCompleted { .. }));
+
+        bus.publish(sample_event());
+        bus.publish(ScanEvent::ScanCompleted {
+            scan_id: "scan-1".to_string(),
+            total_findings: 0,
+            duration_ms: 1,
+        });
+        bus.publish(ScanEvent::ModuleSkipped {
+            scan_id: "scan-1".to_string(),
+            module_id: "ssl".to_string(),
+            reason: "missing tool".to_string(),
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(bus);
+        j1.await.expect("j1");
+        j2.await.expect("j2");
+
+        assert_eq!(all.lock().expect("lock").len(), 3);
+        assert_eq!(completed_only.lock().expect("lock").len(), 1);
+    }
+
+    /// Realistic pattern: filter for `FindingProduced` events where severity
+    /// is High or Critical.
+    #[tokio::test]
+    async fn test_subscribe_filtered_severity_predicate() {
+        let bus = EventBus::new(16);
+        let received: Arc<Mutex<Vec<ScanEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let handler = Arc::new(CollectingHandler { received: received.clone() });
+
+        let join = subscribe_filtered(&bus, handler, |e| {
+            matches!(
+                e,
+                ScanEvent::FindingProduced { finding, .. }
+                    if matches!(finding.severity, Severity::High | Severity::Critical)
+            )
+        });
+
+        let low =
+            Finding::new("headers", Severity::Low, "cookie hint", "weak", "https://example.com");
+        let high = Finding::new(
+            "injection",
+            Severity::High,
+            "SQLi confirmed",
+            "error-based",
+            "https://example.com/search?q=1",
+        );
+        let critical = Finding::new(
+            "rce",
+            Severity::Critical,
+            "remote code exec",
+            "shell pop",
+            "https://example.com/upload",
+        );
+
+        bus.publish(ScanEvent::FindingProduced {
+            scan_id: "s".to_string(),
+            module_id: "headers".to_string(),
+            finding: Box::new(low),
+        });
+        bus.publish(ScanEvent::FindingProduced {
+            scan_id: "s".to_string(),
+            module_id: "injection".to_string(),
+            finding: Box::new(high),
+        });
+        bus.publish(ScanEvent::FindingProduced {
+            scan_id: "s".to_string(),
+            module_id: "rce".to_string(),
+            finding: Box::new(critical),
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(bus);
+        join.await.expect("join");
+
+        // Only the High and Critical findings should have been delivered.
+        let got = received.lock().expect("lock");
+        assert_eq!(got.len(), 2);
+        for event in got.iter() {
+            match event {
+                ScanEvent::FindingProduced { finding, .. } => {
+                    assert!(matches!(finding.severity, Severity::High | Severity::Critical));
+                }
+                other => panic!("unexpected event: {other:?}"),
+            }
         }
     }
 }
