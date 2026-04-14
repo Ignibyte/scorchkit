@@ -13,6 +13,7 @@ pub mod cve_nvd;
 pub mod cve_osv;
 pub mod nmap;
 pub mod tcp_probe;
+pub mod tls_probe;
 
 use crate::engine::infra_module::InfraModule;
 
@@ -28,5 +29,9 @@ use crate::engine::infra_module::InfraModule;
 /// and call [`crate::runner::infra_orchestrator::InfraOrchestrator::add_module`].
 #[must_use]
 pub fn register_modules() -> Vec<Box<dyn InfraModule>> {
-    vec![Box::new(tcp_probe::TcpProbeModule::default()), Box::new(nmap::NmapModule)]
+    vec![
+        Box::new(tcp_probe::TcpProbeModule::default()),
+        Box::new(nmap::NmapModule),
+        Box::new(tls_probe::TlsInfraModule::default()),
+    ]
 }
