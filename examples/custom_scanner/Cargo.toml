@@ -1,0 +1,24 @@
+[package]
+name = "custom_scanner"
+version = "0.1.0"
+edition = "2021"
+description = "Example third-party ScorchKit DAST scan module"
+publish = false
+
+[lib]
+name = "custom_scanner"
+path = "src/lib.rs"
+
+[dependencies]
+# Depend on scorchkit for its public API and traits.
+# In a real third-party plugin, use `scorchkit = "1.0"` from crates.io.
+scorchkit = { path = "../.." }
+
+# Required for async trait implementations.
+async-trait = "0.1"
+
+# Required for async runtime in tests.
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
