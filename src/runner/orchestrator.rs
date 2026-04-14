@@ -48,6 +48,14 @@ impl Orchestrator {
             let plugins = super::plugin::load_plugins(plugins_dir);
             self.modules.extend(plugins);
         }
+
+        // Load YAML rule engine if rules directory is configured
+        if let Some(ref rules_dir) = self.ctx.config.scan.rules_dir {
+            let rules = super::rule_engine::load_rules(rules_dir);
+            if !rules.is_empty() {
+                self.modules.push(Box::new(super::rule_engine::RuleEngineModule::new(rules)));
+            }
+        }
     }
 
     pub fn filter_by_category(&mut self, category: ModuleCategory) {

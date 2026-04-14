@@ -33,6 +33,8 @@ All notable changes to ScorchKit will be documented in this file.
 
 - **Plugin SDK: plugin author guide + example crates** — Third-party Rust developers can now write native `ScanModule` and `CodeModule` implementations. New `docs/plugin-sdk.md` comprehensive guide covering both trait contracts, the Finding builder, confidence values, context types, inter-module data sharing, language filtering, error handling, testing patterns, and design principles. New `examples/custom_scanner/` (DAST) and `examples/custom_code_scanner/` (SAST) working example crates with tests. First v1.3 feature. (#95)
 
+- **Custom rule templates: YAML response pattern rules** — New `rule-engine` built-in scanner module loads YAML rules from a configured `rules_dir` and runs them against targets. Each rule specifies request config (method/path/headers/body) and response matchers (status, body regex, header regex). Matchers use AND semantics. New `regex` and `serde_yaml` dependencies. 3 example rules in `rules/examples/` + plugin guide in `rules/README.md`. Complements the existing TOML command plugin system. 10 new tests. (#96)
+
 ### Changed
 - **coder.md module counts** — Updated from 41 to 77 modules (10 recon + 35 scanner + 32 tools). Fixed "waf" module classification (scanner, not recon). (#84)
 

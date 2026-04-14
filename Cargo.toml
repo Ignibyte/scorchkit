@@ -71,6 +71,8 @@ governor = "0.8"
 
 # Base64 for JWT
 base64 = "0.22"
+regex = { version = "1.12.3", default-features = false, features = ["std", "perf"] }
+serde_yaml = "0.9.34"
 
 [features]
 default = []

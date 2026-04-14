@@ -1,0 +1,17 @@
+# Example rule: detect exposed debugging endpoints
+id: debug-endpoint
+name: Debug Endpoint Exposed
+severity: medium
+description: |
+  A debugging endpoint is accessible in production. Debug endpoints often
+  leak sensitive information such as environment variables, request
+  headers, or stack traces.
+remediation: |
+  Disable debugging features before deployment. Audit routes for /debug,
+  /phpinfo, /env, /_debug, and similar endpoints.
+request:
+  path: "/debug"
+  method: GET
+matchers:
+  status: 200
+  body_regex: "(?i)(debug|stack trace|environment|phpinfo)"
