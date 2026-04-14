@@ -78,7 +78,8 @@ serde_yaml = "0.9.34"
 default = []
 storage = ["dep:sqlx", "dep:sha2", "dep:croner"]
 mcp = ["storage", "dep:rmcp", "dep:schemars"]
-infra = ["dep:ipnet"]
+infra = ["dep:ipnet", "dep:sha2"]
+# Note: sha2 under `infra` powers content-addressed CVE cache filenames.
 
 [dependencies.sqlx]
 version = "0.8"
@@ -115,3 +116,4 @@ sha2 = "0.10"
 rmcp = { version = "1.3", features = ["server", "transport-io", "macros"] }
 schemars = "1.0"
 croner = "3"
+httpmock = "0.8"

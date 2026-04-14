@@ -35,11 +35,18 @@ pub use crate::engine::service_fingerprint::ServiceFingerprint;
 // CVE types (not feature-gated — useful across reporting and storage)
 pub use crate::engine::cve::{CveLookup, CveRecord};
 
-// CVE match module (feature-gated)
+// CVE match module + backends (feature-gated)
+#[cfg(feature = "infra")]
+pub use crate::infra::cve_lookup::build_cve_lookup;
 #[cfg(feature = "infra")]
 pub use crate::infra::cve_match::CveMatchModule;
 #[cfg(feature = "infra")]
 pub use crate::infra::cve_mock::MockCveLookup;
+#[cfg(feature = "infra")]
+pub use crate::infra::cve_nvd::NvdCveLookup;
+
+// CVE configuration (always available — `CveConfig` is on `AppConfig`).
+pub use crate::config::{CveBackendKind, CveConfig, NvdConfig};
 
 // Infra (feature-gated)
 #[cfg(feature = "infra")]
