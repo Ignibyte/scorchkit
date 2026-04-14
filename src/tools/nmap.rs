@@ -6,6 +6,7 @@ use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
+use crate::engine::service_fingerprint::parse_nmap_xml_fingerprints;
 use crate::engine::severity::Severity;
 use crate::runner::subprocess;
 
@@ -54,57 +55,45 @@ impl ScanModule for NmapModule {
 }
 
 /// Parse nmap XML output into findings.
+///
+/// Uses the shared [`parse_nmap_xml_fingerprints`] parser for structural
+/// extraction, then layers DAST-specific severity classification and
+/// outdated-version checks on top.
 fn parse_nmap_xml(xml: &str, target_url: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
 
-    // Parse <port> elements from the XML
-    // Format: <port protocol="tcp" portid="80"><state state="open"/><service name="http" product="nginx" version="1.18.0"/></port>
-    for port_block in xml.split("<port ") {
-        if !port_block.contains("state=\"open\"") {
-            continue;
-        }
-
-        let port_id = extract_xml_attr(port_block, "portid").unwrap_or_default();
-        let protocol =
-            extract_xml_attr(port_block, "protocol").unwrap_or_else(|| "tcp".to_string());
-        let service_name =
-            extract_xml_attr(port_block, "name").unwrap_or_else(|| "unknown".to_string());
-        let product = extract_xml_attr(port_block, "product").unwrap_or_default();
-        let version = extract_xml_attr(port_block, "version").unwrap_or_default();
-
-        if port_id.is_empty() {
-            continue;
-        }
-
+    for fp in parse_nmap_xml_fingerprints(xml) {
+        let port_id = fp.port.to_string();
+        let product = fp.product.as_deref().unwrap_or("");
+        let version = fp.version.as_deref().unwrap_or("");
         let service_info = if !product.is_empty() && !version.is_empty() {
             format!("{product} {version}")
         } else if !product.is_empty() {
-            product.clone()
+            product.to_string()
         } else {
-            service_name.clone()
+            fp.service_name.clone()
         };
 
-        // Determine severity based on port/service
-        let severity = classify_port_severity(&port_id, &service_name);
+        let severity = classify_port_severity(&port_id, &fp.service_name);
 
         findings.push(
             Finding::new(
                 "nmap",
                 severity,
-                format!("Open Port: {port_id}/{protocol} ({service_name})"),
-                format!("Port {port_id}/{protocol} is open running {service_info}.",),
+                format!("Open Port: {port_id}/{} ({})", fp.protocol, fp.service_name),
+                format!("Port {port_id}/{} is open running {service_info}.", fp.protocol),
                 target_url,
             )
             .with_evidence(format!(
-                "Port: {port_id}/{protocol} | Service: {service_name} | Version: {service_info}"
+                "Port: {port_id}/{} | Service: {} | Version: {service_info}",
+                fp.protocol, fp.service_name
             ))
             .with_owasp("A05:2021 Security Misconfiguration")
             .with_confidence(0.9),
         );
 
-        // Flag known outdated service versions
         if !version.is_empty() {
-            if let Some(warning) = check_outdated_version(&service_name, &version) {
+            if let Some(warning) = check_outdated_version(&fp.service_name, version) {
                 findings.push(
                     Finding::new(
                         "nmap",
@@ -182,14 +171,6 @@ fn check_outdated_version(service: &str, version: &str) -> Option<String> {
     }
 
     None
-}
-
-/// Extract an XML attribute value (simplified parser).
-fn extract_xml_attr(xml: &str, attr_name: &str) -> Option<String> {
-    let pattern = format!("{attr_name}=\"");
-    let start = xml.find(&pattern)? + pattern.len();
-    let end = xml[start..].find('"')? + start;
-    Some(xml[start..end].to_string())
 }
 
 #[cfg(test)]
