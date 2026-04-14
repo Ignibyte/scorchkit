@@ -210,6 +210,119 @@ impl Engine {
         orchestrator.register_default_modules();
         orchestrator.run(true).await
     }
+
+    /// Run a unified DAST + SAST + Infra assessment.
+    ///
+    /// At least one of `url`, `code_path`, or `infra_target` must be
+    /// `Some`. The three orchestrators run concurrently via
+    /// `tokio::join!`; failures in any domain are logged and skipped so
+    /// partial results still come back. Results merge via
+    /// [`ScanResult::merge`], with DAST → SAST → Infra priority for the
+    /// receiving base (mirroring [`Engine::full_scan`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::engine::error::ScorchError::Config`] when every
+    /// input is `None`. Returns the first available error only when every
+    /// provided domain failed.
+    ///
+    /// ```no_run
+    /// use std::path::Path;
+    /// use std::sync::Arc;
+    /// use scorchkit::config::AppConfig;
+    /// use scorchkit::facade::Engine;
+    ///
+    /// # async fn example() -> scorchkit::engine::error::Result<()> {
+    /// let engine = Engine::new(Arc::new(AppConfig::default()));
+    /// let result = engine
+    ///     .full_assessment(
+    ///         Some("https://example.com"),
+    ///         Some(Path::new("./src")),
+    ///         Some("127.0.0.1"),
+    ///     )
+    ///     .await?;
+    /// println!("unified findings: {}", result.findings.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "infra")]
+    pub async fn full_assessment(
+        &self,
+        url: Option<&str>,
+        code_path: Option<&Path>,
+        infra_target: Option<&str>,
+    ) -> Result<ScanResult> {
+        use crate::engine::error::ScorchError;
+
+        if url.is_none() && code_path.is_none() && infra_target.is_none() {
+            return Err(ScorchError::Config(
+                "full_assessment requires at least one of url, code_path, or infra_target".into(),
+            ));
+        }
+
+        let dast_future = async {
+            match url {
+                Some(u) => Some(self.scan(u).await),
+                None => None,
+            }
+        };
+        let sast_future = async {
+            match code_path {
+                Some(p) => Some(self.code_scan(p).await),
+                None => None,
+            }
+        };
+        let infra_future = async {
+            match infra_target {
+                Some(t) => Some(self.infra_scan(t).await),
+                None => None,
+            }
+        };
+
+        let (dast, sast, infra) = tokio::join!(dast_future, sast_future, infra_future);
+
+        // Pick the first available Ok as the base, merge the others into it.
+        // Priority: DAST > SAST > Infra (matches full_scan precedent).
+        let mut base: Option<ScanResult> = None;
+        let mut first_err: Option<ScorchError> = None;
+
+        absorb_outcome(dast, &mut base, &mut first_err);
+        absorb_outcome(sast, &mut base, &mut first_err);
+        absorb_outcome(infra, &mut base, &mut first_err);
+
+        base.ok_or_else(|| {
+            first_err.unwrap_or_else(|| ScorchError::Config("assess: no results".into()))
+        })
+    }
+}
+
+/// Fold one orchestrator outcome into the assembling base result.
+///
+/// `None` means the domain wasn't requested and is a no-op. An `Ok`
+/// result either becomes the base (if none yet) or is merged into the
+/// existing base. An `Err` is logged at `warn` and retained as
+/// `first_err` for the fallback error path.
+#[cfg(feature = "infra")]
+fn absorb_outcome(
+    outcome: Option<Result<ScanResult>>,
+    base: &mut Option<ScanResult>,
+    first_err: &mut Option<crate::engine::error::ScorchError>,
+) {
+    let Some(result) = outcome else {
+        return;
+    };
+    match result {
+        Ok(r) => match base.as_mut() {
+            Some(b) => b.merge(r),
+            None => *base = Some(r),
+        },
+        Err(e) => {
+            tracing::warn!("assess: domain failed: {e}");
+            if first_err.is_none() {
+                *first_err = Some(e);
+            }
+        }
+    }
 }
 
 /// Build an HTTP client from application configuration.

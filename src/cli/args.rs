@@ -268,6 +268,34 @@ pub enum Commands {
     #[cfg(feature = "mcp")]
     Serve,
 
+    /// Run a unified assessment: DAST + SAST + Infra combined.
+    ///
+    /// At least one of `--url`, `--code`, or `--infra` is required.
+    /// The orchestrators run concurrently and results are merged into a
+    /// single report.
+    #[cfg(feature = "infra")]
+    Assess {
+        /// DAST target URL (optional).
+        #[arg(long)]
+        url: Option<String>,
+
+        /// SAST code path (optional).
+        #[arg(long)]
+        code: Option<std::path::PathBuf>,
+
+        /// Infrastructure target — IP, CIDR, host, or `host:port` (optional).
+        #[arg(long)]
+        infra: Option<String>,
+
+        /// Scan profile applied to each applicable orchestrator.
+        #[arg(long, default_value = "standard")]
+        profile: String,
+
+        /// Suppress progress output.
+        #[arg(long)]
+        quiet: bool,
+    },
+
     /// Run an infrastructure scan (host, IP, or CIDR target)
     #[cfg(feature = "infra")]
     Infra {
