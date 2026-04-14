@@ -4,11 +4,13 @@
 //! DAST and [`crate::sast`] / [`crate::sast_tools`] for SAST. Every module
 //! here implements [`crate::engine::infra_module::InfraModule`].
 
+pub mod cpe_purl;
 pub mod cve_cache;
 pub mod cve_lookup;
 pub mod cve_match;
 pub mod cve_mock;
 pub mod cve_nvd;
+pub mod cve_osv;
 pub mod nmap;
 pub mod tcp_probe;
 
