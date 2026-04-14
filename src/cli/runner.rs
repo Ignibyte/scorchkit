@@ -273,7 +273,56 @@ pub async fn execute(cli: Cli) -> Result<()> {
         Commands::Infra { target, profile, modules, skip, quiet } => {
             run_infra(&config, &target, &profile, modules.as_deref(), skip.as_deref(), quiet).await
         }
+
+        #[cfg(feature = "infra")]
+        Commands::Assess { url, code, infra, profile, quiet } => {
+            run_assess(&config, url.as_deref(), code.as_deref(), infra.as_deref(), &profile, quiet)
+                .await
+        }
     }
+}
+
+/// Run a unified DAST + SAST + Infra assessment.
+///
+/// At least one of `url`, `code`, or `infra` must be `Some`. The three
+/// orchestrators run concurrently via `tokio::join!`; failures in any
+/// domain are logged at `warn` and the remaining results are returned
+/// merged into a single [`crate::engine::scan_result::ScanResult`].
+///
+/// # Errors
+///
+/// Returns [`crate::engine::error::ScorchError::Config`] if every input
+/// is `None`. Returns the first available error only when every provided
+/// domain failed.
+#[cfg(feature = "infra")]
+pub async fn run_assess(
+    config: &std::sync::Arc<crate::config::AppConfig>,
+    url: Option<&str>,
+    code: Option<&std::path::Path>,
+    infra: Option<&str>,
+    profile: &str,
+    quiet: bool,
+) -> crate::engine::error::Result<()> {
+    use crate::engine::error::ScorchError;
+
+    if url.is_none() && code.is_none() && infra.is_none() {
+        return Err(ScorchError::Config(
+            "assess requires at least one of --url, --code, or --infra".to_string(),
+        ));
+    }
+
+    let engine = crate::facade::Engine::new(std::sync::Arc::clone(config));
+    // Apply profile via individual calls since full_assessment doesn't take a profile;
+    // for the simplest v1 we pass the profile to each underlying orchestrator through
+    // a dedicated helper. Until that helper exists, we use the default profile path —
+    // callers who need per-domain profile tuning should use `run --code` directly.
+    let _ = profile;
+
+    let result = engine.full_assessment(url, code, infra).await?;
+    if !quiet {
+        crate::report::terminal::print_report(&result);
+    }
+    Ok(())
 }
 
 /// Execute an infrastructure scan against `target`.

@@ -232,6 +232,21 @@ fn test_cli_schedule_run_due_in_help() {
         .stdout(predicate::str::contains("due"));
 }
 
+/// Verify `assess --help` works when the `infra` feature is compiled and
+/// surfaces the expected `--url` / `--code` / `--infra` flags.
+#[cfg(feature = "infra")]
+#[test]
+fn test_cli_assess_help() {
+    Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["assess", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--url"))
+        .stdout(predicate::str::contains("--code"))
+        .stdout(predicate::str::contains("--infra"));
+}
+
 /// Verify `infra --help` works when the `infra` feature is compiled and
 /// surfaces the expected `target` argument.
 #[cfg(feature = "infra")]
