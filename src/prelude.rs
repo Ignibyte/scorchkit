@@ -29,6 +29,9 @@ pub use crate::engine::events::{
 // Audit log
 pub use crate::engine::audit_log::AuditLogHandler;
 
+// Service fingerprints (not feature-gated — useful wherever service data flows)
+pub use crate::engine::service_fingerprint::ServiceFingerprint;
+
 // Infra (feature-gated)
 #[cfg(feature = "infra")]
 pub use crate::engine::infra_context::InfraContext;

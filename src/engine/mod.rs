@@ -18,6 +18,7 @@ pub mod oob;
 pub mod scan_context;
 pub mod scan_result;
 pub mod scope;
+pub mod service_fingerprint;
 pub mod severity;
 pub mod shared_data;
 pub mod target;

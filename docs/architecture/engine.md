@@ -65,7 +65,11 @@ In-process pub/sub for scan lifecycle events, wrapping `tokio::sync::broadcast`:
 - **CLI:** `scorchkit infra <target> [--profile quick|standard] [--modules a,b,c] [--skip x,y]` (gated).
 - **Facade:** `Engine::infra_scan(target: &str)` (gated).
 
-The roadmap continues with WORK-102 (nmap migration into `InfraModule`), WORK-103 (OSV CVE matcher), WORK-104 (authenticated network scanning), WORK-105 (unified `assess` command composing DAST+SAST+Infra), WORK-106 (storage migration + MCP tools).
+The roadmap continues with WORK-103 (OSV CVE matcher), WORK-104 (authenticated network scanning), WORK-105 (unified `assess` command composing DAST+SAST+Infra), WORK-106 (storage migration + MCP tools).
+
+### Service fingerprints (`service_fingerprint.rs`)
+
+`ServiceFingerprint { port, protocol, service_name, product, version, cpe }` is the shared data type for service detection. `parse_nmap_xml_fingerprints(xml)` is the pure parser both the DAST `tools::NmapModule` and the infra `infra::NmapModule` call; the DAST wrapper layers severity classification and outdated-version checks on top, while the infra wrapper emits Info findings and publishes `Vec<ServiceFingerprint>` to `shared_data` under the `SHARED_KEY_FINGERPRINTS` constant for downstream CVE correlation. `build_cpe(vendor, product, version)` produces CPE 2.3 URIs. `publish_fingerprints` / `read_fingerprints` helpers encapsulate the JSON encoding required to round-trip structured data through `SharedData`'s `Vec<String>` store.
 
 ## Hook adapter — `HookEventHandler` (`hook_runner.rs`)
 
