@@ -11,6 +11,7 @@ use colored::Colorize;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
+use crate::engine::audit_log::subscribe_audit_log_if_enabled;
 use crate::engine::code_context::CodeContext;
 use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
@@ -109,6 +110,9 @@ impl CodeOrchestrator {
         let scan_id = Uuid::new_v4().to_string();
         let max_concurrent = self.ctx.config.scan.max_concurrent_modules;
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
+
+        let _audit_log_handle =
+            subscribe_audit_log_if_enabled(&self.ctx.config.audit_log, &self.ctx.events);
 
         self.ctx.events.publish(ScanEvent::ScanStarted {
             scan_id: scan_id.clone(),

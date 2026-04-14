@@ -41,6 +41,17 @@ In-process pub/sub for scan lifecycle events, wrapping `tokio::sync::broadcast`:
 
 `HookEventHandler` ignores `ScanEvent::Custom` — there's no standard mapping from an arbitrary kind string to the three hook points. Users who want script dispatch for custom events can write a native `EventHandler` directly.
 
+### Built-in audit log (`AuditLogHandler`)
+
+`src/engine/audit_log.rs` provides the first production subscriber of the event bus — a file-based JSONL sink enabled via `[audit_log]` in `scorchkit.toml`.
+
+- `AuditLogHandler::new(&path)` opens the file in append+create mode (returns `ScorchError::Io` on failure).
+- `impl EventHandler` serializes each `ScanEvent` with `serde_json::to_string` and appends `{line}\n`; flushes after every write.
+- I/O errors are logged at `warn` and swallowed — audit logging is best-effort observability and must never abort a scan.
+- `subscribe_audit_log_if_enabled(&config.audit_log, &ctx.events)` is the helper both orchestrators call at the top of `run()` (before the first publish) to wire the handler when config enables it.
+
+`ScanEvent` derives `Serialize` to support JSON emission. Variant and field names are part of the on-the-wire JSONL format: renaming either is a breaking change for downstream consumers. The default externally-tagged representation means each line is a single-key object like `{"ScanStarted": {"scan_id": "...", "target": "..."}}`.
+
 ## Hook adapter — `HookEventHandler` (`hook_runner.rs`)
 
 `HookEventHandler` bridges the event bus to the existing script-based hook system. It subscribes to the event stream and maps events to the three `HookPoint` script invocations:

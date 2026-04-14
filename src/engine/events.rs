@@ -60,7 +60,12 @@ pub const DEFAULT_CAPACITY: usize = 256;
 ///
 /// All variants carry owned data so the event can be cloned and delivered to
 /// multiple subscribers through a `tokio::broadcast` channel.
-#[derive(Debug, Clone)]
+///
+/// `Serialize` is derived so built-in handlers (e.g.
+/// [`crate::engine::audit_log::AuditLogHandler`]) can emit events as JSON.
+/// Variant and field names are part of the on-the-wire format — renaming
+/// is a breaking change for any consumer parsing the serialized output.
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum ScanEvent {
     /// A scan has begun. Emitted once per orchestrator run before any modules.
     ScanStarted {

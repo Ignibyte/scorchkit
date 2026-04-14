@@ -4,6 +4,9 @@ All notable changes to ScorchKit will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Built-in audit log handler** — First production consumer of the event bus. New `AuditLogHandler` in `src/engine/audit_log.rs` implements `EventHandler` and appends every published `ScanEvent` to a configurable file as JSON Lines (one event per line, flushed after every write). Opt-in via `[audit_log]` in `scorchkit.toml` (`enabled: bool`, `path: Option<PathBuf>`). Orchestrator and CodeOrchestrator wire the handler via `subscribe_handler` before the first lifecycle event fires, so no events are lost. `ScanEvent` now derives `Serialize` (variant and field names are part of the JSONL wire format; renaming is a breaking change for consumers). File-open failures are logged at `warn` and do not abort the scan — audit logging is best-effort observability. 6 new tests (479 → 485), +1 doctest. Architecture decision `engine.audit-log` recorded. (#100)
+
 ### Changed
 - **`cargo deny check` passes cleanly** — `deny.toml` updated to allow `MPL-2.0` (required by `colored` and the `scraper` family, standard industry practice for MIT-licensed Rust projects) and to ignore four pre-existing advisories with inline `reason` + `# JUSTIFICATION` rationale: `RUSTSEC-2023-0071` (rsa via unused sqlx-mysql), `RUSTSEC-2025-0057` (fxhash unmaintained, no safe upgrade), `RUSTSEC-2025-0119` (number_prefix unmaintained, no safe upgrade), `RUSTSEC-2026-0097` (rand 0.9 unsoundness only triggered by custom logger, unreachable in ScorchKit). Zero Rust code changes; zero Cargo.lock changes; 479-test baseline preserved. Architecture decision `security.license-policy` recorded. (#99)
 

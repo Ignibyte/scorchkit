@@ -1,3 +1,4 @@
+pub mod audit_log;
 pub mod code_context;
 pub mod code_module;
 pub mod compliance;
