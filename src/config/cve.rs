@@ -110,11 +110,23 @@ pub struct NvdConfig {
     /// Cache TTL in seconds. Default: 86400 (24h). Negative caching uses
     /// the same TTL — empty result sets are persisted.
     pub cache_ttl_secs: u64,
+    /// Enable delta-sync mode. When `true` and a cache entry exists
+    /// for a CPE, subsequent queries fetch only records modified since
+    /// the cache was written (`lastModStartDate = fetched_at − 1h`) and
+    /// merge them with the cached set. Reduces NVD load + scan latency
+    /// for operators running frequent scans. Default: `false`.
+    pub delta_sync: bool,
 }
 
 impl Default for NvdConfig {
     fn default() -> Self {
-        Self { api_key: None, base_url: None, cache_dir: None, cache_ttl_secs: 86_400 }
+        Self {
+            api_key: None,
+            base_url: None,
+            cache_dir: None,
+            cache_ttl_secs: 86_400,
+            delta_sync: false,
+        }
     }
 }
 
@@ -174,6 +186,22 @@ mod tests {
         assert!(cfg.nvd.base_url.is_none());
         assert!(cfg.nvd.cache_dir.is_none());
         assert_eq!(cfg.nvd.cache_ttl_secs, 86_400);
+        assert!(!cfg.nvd.delta_sync, "delta_sync defaults to false (safe-by-default)");
+    }
+
+    /// `delta_sync` round-trips through `[cve.nvd]` TOML.
+    #[test]
+    fn nvd_config_delta_sync_toml_round_trip() {
+        let toml_str = r#"
+backend = "nvd"
+
+[nvd]
+delta_sync = true
+cache_ttl_secs = 3600
+"#;
+        let cfg: CveConfig = toml::from_str(toml_str).expect("parse TOML");
+        assert!(cfg.nvd.delta_sync);
+        assert_eq!(cfg.nvd.cache_ttl_secs, 3600);
     }
 
     /// A `[cve]` + `[cve.nvd]` TOML block round-trips through serde. This
