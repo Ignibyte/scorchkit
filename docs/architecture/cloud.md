@@ -171,11 +171,24 @@ The `cloud_target: Option<&str>` parameter is always present in the signature �
 
 Prowler, Scoutsuite, Kubescape, and Dockle already ship as `CodeModule` wrappers under `sast_tools/`. WORK-150 **does not** move them — it ships the seam. WORK-151 reshapes Prowler as a `CloudModule` (AWS coverage), WORK-152 does Scoutsuite (multi-cloud), WORK-153 does Kubescape (K8s). WORK-154 normalizes finding shapes across the three and adds CPE extraction + compliance tagging. The existing `sast_tools/` wrappers stay available for operators who want the raw SAST-style invocation.
 
+## Concrete modules
+
+### `prowler-cloud` (WORK-151) — AWS posture audit
+
+First concrete populator of the cloud registry. Wraps the `prowler` binary for AWS-account posture audits — CIS AWS Foundations plus 400+ checks across IAM, S3, EC2, CloudTrail, KMS, VPC. Module id `"prowler-cloud"` (distinct from the existing DAST `tools::prowler` wrapper's `"prowler"`); `CloudCategory::Compliance` × `CloudProvider::Aws`.
+
+- **Argv layout:** `aws -M json-ocsf --no-banner -q [-p <profile>] [-R <region>] [--role-arn <arn>]` — deterministic field order so golden-byte tests are stable.
+- **Subprocess strategy:** `run_tool_lenient` (Prowler 4.x with `output.exit_code_on_fail: true` returns exit 3 on FAIL findings; strict `run_tool` would abort).
+- **Target validation:** `CloudTarget::Project` / `Subscription` / `KubeContext` rejected with operator-actionable pointers to WORK-152 / WORK-153. `CloudTarget::All` requires `aws_profile` or `aws_role_arn` configured to prevent silent fallthrough to the AWS CLI default.
+- **Findings:** tagged `module_id = "prowler-cloud"`, OWASP A05, CWE-1188 (Insecure Default), confidence 0.8. Evidence carries `provider:aws | service:<name> | severity:<str> | target:<label>` for downstream filtering.
+- **OCSF parser duplication:** intentional. ~80 lines mirror `tools::prowler::parse_prowler_output` shape. Cloud findings carry the `provider:aws` evidence tag the DAST findings don't, so a shared parser would force a generic finding-builder closure parameter. Extraction deferred to WORK-154 once Scoutsuite (WORK-152) materializes as the second consumer.
+
+Operator docs: `docs/modules/cloud-prowler.md`.
+
 ## Future work
 
-- **WORK-151**: Prowler as `CloudModule` with CIS AWS Foundations
-- **WORK-152**: Scoutsuite as `CloudModule` (multi-cloud)
+- **WORK-152**: Scoutsuite as `CloudModule` (multi-cloud) — also the trigger point for extracting a shared OCSF parser
 - **WORK-153**: Kubescape as `CloudModule` (cluster posture)
-- **WORK-154**: Finding-shape normalization + cross-wrapper CPE/compliance tagging
+- **WORK-154**: Finding-shape normalization + cross-wrapper CPE/compliance tagging + per-check CWE mapping
 - **Deferred**: Generic `Orchestrator<M, C, T>` refactor — unify `Orchestrator` / `CodeOrchestrator` / `InfraOrchestrator` / `CloudOrchestrator` once the pattern has more signal
 - **v2.3+ polish**: Native Rust AWS/GCP/Azure SDK clients replacing the Prowler subprocess path for hot-path checks
