@@ -76,6 +76,16 @@ For each focus mode:
 - Recommend manual verification steps
 - Suggest adjusting `--min-confidence` for future scans
 
+## Formatting Guidelines
+
+When presenting analysis results:
+- Use **blockquotes** for each prioritized finding or remediation step
+- Use **numbered lists** for prioritized items (most important first)
+- Use **tables** for effort estimates and risk rankings
+- Use `backtick code` for file paths, CVE IDs, and technical values
+- Use **bold** for severity and action items
+- For remediation mode, present each fix as a clear, actionable step with code examples where appropriate
+
 ## Step 6: Suggest Next Steps
 
 - **More analysis modes** → offer to run a different focus

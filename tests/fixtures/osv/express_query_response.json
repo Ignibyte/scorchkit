@@ -1,0 +1,36 @@
+{
+  "vulns": [
+    {
+      "id": "GHSA-rv95-896h-c2vc",
+      "summary": "Express Open Redirect via Malformed URL",
+      "details": "In express versions prior to 4.19.2, the URL parsing in res.location() and res.redirect() can be bypassed by certain malformed input.",
+      "aliases": ["CVE-2024-29041"],
+      "modified": "2024-04-10T18:33:21Z",
+      "published": "2024-03-25T19:40:34Z",
+      "severity": [
+        {
+          "type": "CVSS_V3",
+          "score": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:L/I:L/A:N"
+        }
+      ],
+      "affected": [
+        {
+          "package": { "name": "express", "ecosystem": "npm" },
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [
+                { "introduced": "0" },
+                { "fixed": "4.19.2" }
+              ]
+            }
+          ]
+        }
+      ],
+      "references": [
+        { "type": "WEB", "url": "https://github.com/advisories/GHSA-rv95-896h-c2vc" },
+        { "type": "ADVISORY", "url": "https://nvd.nist.gov/vuln/detail/CVE-2024-29041" }
+      ]
+    }
+  ]
+}

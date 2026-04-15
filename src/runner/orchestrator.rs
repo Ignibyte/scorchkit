@@ -1,11 +1,14 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use chrono::Utc;
 use colored::Colorize;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
+use crate::engine::audit_log::subscribe_audit_log_if_enabled;
 use crate::engine::error::Result;
+use crate::engine::events::ScanEvent;
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
@@ -26,12 +29,18 @@ pub fn all_modules() -> Vec<Box<dyn ScanModule>> {
 pub struct Orchestrator {
     ctx: ScanContext,
     modules: Vec<Box<dyn ScanModule>>,
+    hook_runner: Option<crate::engine::hook_runner::HookRunner>,
 }
 
 impl Orchestrator {
     #[must_use]
     pub fn new(ctx: ScanContext) -> Self {
-        Self { ctx, modules: Vec::new() }
+        Self { ctx, modules: Vec::new(), hook_runner: None }
+    }
+
+    /// Set the hook runner for lifecycle hooks.
+    pub fn set_hook_runner(&mut self, runner: crate::engine::hook_runner::HookRunner) {
+        self.hook_runner = Some(runner);
     }
 
     pub fn register_default_modules(&mut self) {
@@ -41,6 +50,14 @@ impl Orchestrator {
         if let Some(ref plugins_dir) = self.ctx.config.scan.plugins_dir {
             let plugins = super::plugin::load_plugins(plugins_dir);
             self.modules.extend(plugins);
+        }
+
+        // Load YAML rule engine if rules directory is configured
+        if let Some(ref rules_dir) = self.ctx.config.scan.rules_dir {
+            let rules = super::rule_engine::load_rules(rules_dir);
+            if !rules.is_empty() {
+                self.modules.push(Box::new(super::rule_engine::RuleEngineModule::new(rules)));
+            }
         }
     }
 
@@ -202,10 +219,24 @@ impl Orchestrator {
     /// # Errors
     ///
     /// Returns an error if the semaphore is closed or a fatal scan error occurs.
+    // JUSTIFICATION: Hook integration at pre-scan, post-module, and post-scan points
+    // adds necessary lifecycle instrumentation that is cohesive within the run loop
+    #[allow(clippy::too_many_lines)]
     pub async fn run(&self, quiet: bool) -> Result<ScanResult> {
         let started_at = Utc::now();
+        let scan_started = Instant::now();
         let scan_id = Uuid::new_v4().to_string();
         let max_concurrent = self.ctx.config.scan.max_concurrent_modules;
+
+        // Wire the built-in audit-log handler before the first publish so no
+        // lifecycle events are lost. The JoinHandle is dropped (tokio detaches).
+        let _audit_log_handle =
+            subscribe_audit_log_if_enabled(&self.ctx.config.audit_log, &self.ctx.events);
+
+        self.ctx.events.publish(ScanEvent::ScanStarted {
+            scan_id: scan_id.clone(),
+            target: self.ctx.target.url.as_str().to_string(),
+        });
 
         if !quiet {
             println!(
@@ -233,15 +264,35 @@ impl Orchestrator {
                                 tool.dimmed()
                             );
                         }
-                        modules_skipped.push((
-                            module.id().to_string(),
-                            format!("external tool '{tool}' not found"),
-                        ));
+                        let reason = format!("external tool '{tool}' not found");
+                        self.ctx.events.publish(ScanEvent::ModuleSkipped {
+                            scan_id: scan_id.clone(),
+                            module_id: module.id().to_string(),
+                            reason: reason.clone(),
+                        });
+                        modules_skipped.push((module.id().to_string(), reason));
                         continue;
                     }
                 }
             }
             runnable.push(module.as_ref());
+        }
+
+        // Fire pre-scan hooks
+        if let Some(ref runner) = self.hook_runner {
+            if runner.has_hooks(crate::engine::hook_runner::HookPoint::PreScan) {
+                let module_ids: Vec<&str> = runnable.iter().map(|m| m.id()).collect();
+                let pre_scan_data = serde_json::json!({
+                    "target": self.ctx.target.url.as_str(),
+                    "profile": self.ctx.config.scan.profile,
+                    "modules": module_ids,
+                });
+                // Pre-scan hooks can modify data but we don't apply changes in v1
+                // (future: parse modified modules list)
+                let _ = runner
+                    .execute(crate::engine::hook_runner::HookPoint::PreScan, &pre_scan_data)
+                    .await;
+            }
         }
 
         // Run modules concurrently with semaphore
@@ -261,15 +312,76 @@ impl Orchestrator {
 
             let spinner = if quiet { None } else { Some(progress::module_spinner(&module_name)) };
 
+            self.ctx.events.publish(ScanEvent::ModuleStarted {
+                scan_id: scan_id.clone(),
+                module_id: module_id.clone(),
+                module_name: module_name.clone(),
+            });
+            let module_started = Instant::now();
+
             // Run the module
             let result = module.run(ctx).await;
             drop(permit);
+            let duration_ms =
+                u64::try_from(module_started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
             match result {
                 Ok(findings) => {
                     if let Some(pb) = &spinner {
                         progress::finish_success(pb, &module_name, findings.len());
                     }
+
+                    // Fire post-module hooks
+                    let findings = if let Some(ref runner) = self.hook_runner {
+                        if runner.has_hooks(crate::engine::hook_runner::HookPoint::PostModule) {
+                            let module_data = serde_json::json!({
+                                "module_id": &module_id,
+                                "module_name": &module_name,
+                                "findings": &findings,
+                                "finding_count": findings.len(),
+                            });
+                            if let Some(modified) = runner
+                                .execute(
+                                    crate::engine::hook_runner::HookPoint::PostModule,
+                                    &module_data,
+                                )
+                                .await
+                            {
+                                // Try to extract modified findings
+                                modified["findings"]
+                                    .as_array()
+                                    .and_then(|arr| {
+                                        serde_json::from_value::<Vec<Finding>>(
+                                            serde_json::Value::Array(arr.clone()),
+                                        )
+                                        .ok()
+                                    })
+                                    .unwrap_or(findings)
+                            } else {
+                                findings
+                            }
+                        } else {
+                            findings
+                        }
+                    } else {
+                        findings
+                    };
+
+                    // Emit one FindingProduced event per finding, then ModuleCompleted.
+                    for finding in &findings {
+                        self.ctx.events.publish(ScanEvent::FindingProduced {
+                            scan_id: scan_id.clone(),
+                            module_id: module_id.clone(),
+                            finding: Box::new(finding.clone()),
+                        });
+                    }
+                    self.ctx.events.publish(ScanEvent::ModuleCompleted {
+                        scan_id: scan_id.clone(),
+                        module_id: module_id.clone(),
+                        findings_count: findings.len(),
+                        duration_ms,
+                    });
+
                     handles.push((module_id, Ok(findings)));
                 }
                 Err(e) => {
@@ -277,6 +389,11 @@ impl Orchestrator {
                     if let Some(pb) = &spinner {
                         progress::finish_error(pb, &module_name, &err_str);
                     }
+                    self.ctx.events.publish(ScanEvent::ModuleError {
+                        scan_id: scan_id.clone(),
+                        module_id: module_id.clone(),
+                        error: err_str.clone(),
+                    });
                     handles.push((module_id, Err(err_str)));
                 }
             }
@@ -299,6 +416,32 @@ impl Orchestrator {
         }
 
         all_findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+
+        // Fire post-scan hooks
+        if let Some(ref runner) = self.hook_runner {
+            if runner.has_hooks(crate::engine::hook_runner::HookPoint::PostScan) {
+                let post_scan_data = serde_json::json!({
+                    "scan_id": &scan_id,
+                    "target": self.ctx.target.url.as_str(),
+                    "total_findings": all_findings.len(),
+                    "summary": {
+                        "critical": all_findings.iter().filter(|f| f.severity == crate::engine::severity::Severity::Critical).count(),
+                        "high": all_findings.iter().filter(|f| f.severity == crate::engine::severity::Severity::High).count(),
+                    },
+                });
+                let _ = runner
+                    .execute(crate::engine::hook_runner::HookPoint::PostScan, &post_scan_data)
+                    .await;
+            }
+        }
+
+        let total_duration_ms =
+            u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.ctx.events.publish(ScanEvent::ScanCompleted {
+            scan_id: scan_id.clone(),
+            total_findings: all_findings.len(),
+            duration_ms: total_duration_ms,
+        });
 
         Ok(ScanResult::new(
             scan_id,
@@ -331,9 +474,18 @@ impl Orchestrator {
         use super::checkpoint;
 
         let started_at = resume_from.map_or_else(Utc::now, |cp| cp.started_at);
+        let scan_started = Instant::now();
         let scan_id =
             resume_from.map_or_else(|| Uuid::new_v4().to_string(), |cp| cp.scan_id.clone());
         let max_concurrent = self.ctx.config.scan.max_concurrent_modules;
+
+        let _audit_log_handle =
+            subscribe_audit_log_if_enabled(&self.ctx.config.audit_log, &self.ctx.events);
+
+        self.ctx.events.publish(ScanEvent::ScanStarted {
+            scan_id: scan_id.clone(),
+            target: self.ctx.target.url.as_str().to_string(),
+        });
 
         // Initialize checkpoint state from resume or fresh
         let mut cp = resume_from.map_or_else(
@@ -384,10 +536,13 @@ impl Orchestrator {
                                 tool.dimmed()
                             );
                         }
-                        modules_skipped.push((
-                            module.id().to_string(),
-                            format!("external tool '{tool}' not found"),
-                        ));
+                        let reason = format!("external tool '{tool}' not found");
+                        self.ctx.events.publish(ScanEvent::ModuleSkipped {
+                            scan_id: scan_id.clone(),
+                            module_id: module.id().to_string(),
+                            reason: reason.clone(),
+                        });
+                        modules_skipped.push((module.id().to_string(), reason));
                         continue;
                     }
                 }
@@ -422,14 +577,36 @@ impl Orchestrator {
             let module_id = module.id().to_string();
             let spinner = if quiet { None } else { Some(progress::module_spinner(&module_name)) };
 
+            self.ctx.events.publish(ScanEvent::ModuleStarted {
+                scan_id: scan_id.clone(),
+                module_id: module_id.clone(),
+                module_name: module_name.clone(),
+            });
+            let module_started = Instant::now();
+
             let result = module.run(ctx).await;
             drop(permit);
+            let duration_ms =
+                u64::try_from(module_started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
             match result {
                 Ok(findings) => {
                     if let Some(pb) = &spinner {
                         progress::finish_success(pb, &module_name, findings.len());
                     }
+                    for finding in &findings {
+                        self.ctx.events.publish(ScanEvent::FindingProduced {
+                            scan_id: scan_id.clone(),
+                            module_id: module_id.clone(),
+                            finding: Box::new(finding.clone()),
+                        });
+                    }
+                    self.ctx.events.publish(ScanEvent::ModuleCompleted {
+                        scan_id: scan_id.clone(),
+                        module_id: module_id.clone(),
+                        findings_count: findings.len(),
+                        duration_ms,
+                    });
                     cp.record_module(&module_id, &findings);
                     // Save checkpoint after each module
                     let _ = checkpoint::save_checkpoint(&cp, checkpoint_path);
@@ -439,6 +616,11 @@ impl Orchestrator {
                     if let Some(pb) = &spinner {
                         progress::finish_error(pb, &module_name, &err_str);
                     }
+                    self.ctx.events.publish(ScanEvent::ModuleError {
+                        scan_id: scan_id.clone(),
+                        module_id: module_id.clone(),
+                        error: err_str.clone(),
+                    });
                     modules_skipped.push((module_id, err_str));
                 }
             }
@@ -450,6 +632,14 @@ impl Orchestrator {
         let modules_run = cp.completed_modules.clone();
         let mut all_findings = cp.findings;
         all_findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+
+        let total_duration_ms =
+            u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.ctx.events.publish(ScanEvent::ScanCompleted {
+            scan_id: scan_id.clone(),
+            total_findings: all_findings.len(),
+            duration_ms: total_duration_ms,
+        });
 
         Ok(ScanResult::new(
             scan_id,
@@ -472,8 +662,17 @@ impl Orchestrator {
     /// Returns an error if the semaphore is closed or a fatal scan error occurs.
     pub async fn run_phased(&mut self, quiet: bool) -> Result<ScanResult> {
         let started_at = Utc::now();
+        let scan_started = Instant::now();
         let scan_id = Uuid::new_v4().to_string();
         let max_concurrent = self.ctx.config.scan.max_concurrent_modules;
+
+        let _audit_log_handle =
+            subscribe_audit_log_if_enabled(&self.ctx.config.audit_log, &self.ctx.events);
+
+        self.ctx.events.publish(ScanEvent::ScanStarted {
+            scan_id: scan_id.clone(),
+            target: self.ctx.target.url.as_str().to_string(),
+        });
 
         // Partition modules into recon and non-recon
         let (recon, scanners): (Vec<_>, Vec<_>) =
@@ -498,6 +697,7 @@ impl Orchestrator {
         run_module_batch(
             &recon,
             &self.ctx,
+            &scan_id,
             max_concurrent,
             quiet,
             &mut all_findings,
@@ -517,6 +717,7 @@ impl Orchestrator {
         run_module_batch(
             &scanners,
             &self.ctx,
+            &scan_id,
             max_concurrent,
             quiet,
             &mut all_findings,
@@ -526,6 +727,14 @@ impl Orchestrator {
         .await?;
 
         all_findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+
+        let total_duration_ms =
+            u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.ctx.events.publish(ScanEvent::ScanCompleted {
+            scan_id: scan_id.clone(),
+            total_findings: all_findings.len(),
+            duration_ms: total_duration_ms,
+        });
 
         Ok(ScanResult::new(
             scan_id,
@@ -540,10 +749,11 @@ impl Orchestrator {
 
 /// Run a batch of modules concurrently, collecting findings and status.
 // JUSTIFICATION: Vec<Box<dyn ScanModule>> is the module storage type; &[&Box] is natural for partitioned references
-#[allow(clippy::borrowed_box)]
+#[allow(clippy::borrowed_box, clippy::too_many_arguments)]
 async fn run_module_batch(
     modules: &[&Box<dyn ScanModule>],
     ctx: &crate::engine::scan_context::ScanContext,
+    scan_id: &str,
     max_concurrent: usize,
     quiet: bool,
     findings: &mut Vec<Finding>,
@@ -564,10 +774,13 @@ async fn run_module_batch(
                             tool.dimmed()
                         );
                     }
-                    modules_skipped.push((
-                        module.id().to_string(),
-                        format!("external tool '{tool}' not found"),
-                    ));
+                    let reason = format!("external tool '{tool}' not found");
+                    ctx.events.publish(ScanEvent::ModuleSkipped {
+                        scan_id: scan_id.to_string(),
+                        module_id: module.id().to_string(),
+                        reason: reason.clone(),
+                    });
+                    modules_skipped.push((module.id().to_string(), reason));
                     continue;
                 }
             }
@@ -581,14 +794,35 @@ async fn run_module_batch(
         let module_id = module.id().to_string();
         let spinner = if quiet { None } else { Some(progress::module_spinner(&module_name)) };
 
+        ctx.events.publish(ScanEvent::ModuleStarted {
+            scan_id: scan_id.to_string(),
+            module_id: module_id.clone(),
+            module_name: module_name.clone(),
+        });
+        let module_started = Instant::now();
+
         let result = module.run(ctx).await;
         drop(permit);
+        let duration_ms = u64::try_from(module_started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         match result {
             Ok(found) => {
                 if let Some(pb) = &spinner {
                     progress::finish_success(pb, &module_name, found.len());
                 }
+                for finding in &found {
+                    ctx.events.publish(ScanEvent::FindingProduced {
+                        scan_id: scan_id.to_string(),
+                        module_id: module_id.clone(),
+                        finding: Box::new(finding.clone()),
+                    });
+                }
+                ctx.events.publish(ScanEvent::ModuleCompleted {
+                    scan_id: scan_id.to_string(),
+                    module_id: module_id.clone(),
+                    findings_count: found.len(),
+                    duration_ms,
+                });
                 modules_run.push(module_id);
                 findings.extend(found);
             }
@@ -597,6 +831,11 @@ async fn run_module_batch(
                 if let Some(pb) = &spinner {
                     progress::finish_error(pb, &module_name, &err_str);
                 }
+                ctx.events.publish(ScanEvent::ModuleError {
+                    scan_id: scan_id.to_string(),
+                    module_id: module_id.clone(),
+                    error: err_str.clone(),
+                });
                 modules_skipped.push((module_id, err_str));
             }
         }
@@ -611,4 +850,110 @@ fn is_tool_installed(tool: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::engine::events::{subscribe_handler, EventBus, EventHandler, ScanEvent};
+    use crate::engine::finding::Finding;
+    use crate::engine::module_trait::{ModuleCategory, ScanModule};
+    use crate::engine::severity::Severity;
+    use crate::engine::target::Target;
+    use async_trait::async_trait;
+    use std::sync::Mutex;
+
+    struct OkModule;
+
+    #[async_trait]
+    impl ScanModule for OkModule {
+        fn name(&self) -> &str {
+            "OK"
+        }
+        fn id(&self) -> &str {
+            "ok"
+        }
+        fn category(&self) -> ModuleCategory {
+            ModuleCategory::Recon
+        }
+        fn description(&self) -> &str {
+            "test module producing one finding"
+        }
+        async fn run(&self, _ctx: &ScanContext) -> Result<Vec<Finding>> {
+            Ok(vec![Finding::new(
+                "ok",
+                Severity::Low,
+                "fixture finding",
+                "emitted by test module",
+                "https://example.com",
+            )])
+        }
+    }
+
+    struct CollectingHandler {
+        events: Arc<Mutex<Vec<ScanEvent>>>,
+    }
+
+    #[async_trait]
+    impl EventHandler for CollectingHandler {
+        async fn handle(&self, event: ScanEvent) -> std::result::Result<(), String> {
+            self.events.lock().map_err(|e| e.to_string())?.push(event);
+            Ok(())
+        }
+    }
+
+    fn discriminant(event: &ScanEvent) -> &'static str {
+        match event {
+            ScanEvent::ScanStarted { .. } => "ScanStarted",
+            ScanEvent::ModuleStarted { .. } => "ModuleStarted",
+            ScanEvent::ModuleCompleted { .. } => "ModuleCompleted",
+            ScanEvent::ModuleSkipped { .. } => "ModuleSkipped",
+            ScanEvent::ModuleError { .. } => "ModuleError",
+            ScanEvent::FindingProduced { .. } => "FindingProduced",
+            ScanEvent::ScanCompleted { .. } => "ScanCompleted",
+            ScanEvent::Custom { .. } => "Custom",
+        }
+    }
+
+    /// Regression test #6: Orchestrator emits the expected lifecycle event
+    /// sequence when running a single test module.
+    #[tokio::test]
+    async fn test_orchestrator_emits_scan_events() {
+        let target = Target::parse("https://example.com").expect("parse target");
+        let config = Arc::new(AppConfig::default());
+        let http_client = reqwest::Client::builder().build().expect("http client");
+        let ctx = ScanContext::new(target, config, http_client);
+
+        let collected: Arc<Mutex<Vec<ScanEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let handler: Arc<dyn EventHandler> =
+            Arc::new(CollectingHandler { events: collected.clone() });
+        let bus: EventBus = ctx.events.clone();
+        let join = subscribe_handler(&bus, handler);
+
+        let mut orch = Orchestrator::new(ctx);
+        orch.modules.push(Box::new(OkModule));
+
+        let result = orch.run(true).await.expect("scan");
+        assert_eq!(result.findings.len(), 1);
+
+        // Drop the bus on the orchestrator side so the handler loop exits.
+        drop(orch);
+        drop(bus);
+        join.await.expect("handler join");
+
+        let events = collected.lock().expect("lock");
+        let names: Vec<&str> = events.iter().map(discriminant).collect();
+        assert_eq!(
+            names,
+            vec![
+                "ScanStarted",
+                "ModuleStarted",
+                "FindingProduced",
+                "ModuleCompleted",
+                "ScanCompleted",
+            ],
+            "event sequence"
+        );
+    }
 }

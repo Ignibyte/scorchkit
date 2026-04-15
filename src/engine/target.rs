@@ -74,6 +74,46 @@ impl Target {
         Ok(Self { raw, url, domain: None, port: 0, is_https: false })
     }
 
+    /// Create a target for an infra scan using a synthetic `infra://` URL.
+    ///
+    /// `raw` is percent-encoded into the URL path so arbitrary infra target
+    /// forms (CIDR ranges, host:port endpoints, IPv6 literals) round-trip
+    /// cleanly. This mirrors [`Target::from_path`] for SAST — it exists so
+    /// the infra orchestrator can reuse [`crate::engine::scan_result::ScanResult`] without forcing the
+    /// reporting, storage, and AI layers to accept a union target type.
+    ///
+    /// Domain is `None`, port is `0`, `is_https` is `false`. The `raw` field
+    /// holds the original user input.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ScorchError::InvalidTarget` if `raw` is empty or cannot be
+    /// percent-encoded into a valid URL.
+    pub fn from_infra(raw: &str) -> Result<Self> {
+        if raw.trim().is_empty() {
+            return Err(ScorchError::InvalidTarget {
+                target: raw.to_string(),
+                reason: "empty infra target".to_string(),
+            });
+        }
+        let encoded: String = raw
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~' | '/' | ':') {
+                    c.to_string()
+                } else {
+                    format!("%{:02X}", c as u32)
+                }
+            })
+            .collect();
+        let url_str = format!("infra:///{encoded}");
+        let url = Url::parse(&url_str).map_err(|e| ScorchError::InvalidTarget {
+            target: raw.to_string(),
+            reason: format!("cannot build infra:// URL: {e}"),
+        })?;
+        Ok(Self { raw: raw.to_string(), url, domain: None, port: 0, is_https: false })
+    }
+
     /// Return the base URL (scheme + host + port if non-default).
     #[must_use]
     pub fn base_url(&self) -> String {
@@ -212,5 +252,34 @@ mod tests {
     fn parse_targets_file_missing_errors() {
         let result = parse_targets_file(std::path::Path::new("/nonexistent/targets.txt"));
         assert!(result.is_err());
+    }
+
+    /// Verify `Target::from_infra` constructs a valid `infra://` URL target.
+    #[test]
+    fn test_target_from_infra() -> Result<()> {
+        let t = Target::from_infra("10.0.0.0/24")?;
+        assert_eq!(t.raw, "10.0.0.0/24");
+        assert_eq!(t.url.scheme(), "infra");
+        assert!(t.domain.is_none());
+        assert_eq!(t.port, 0);
+        assert!(!t.is_https);
+        Ok(())
+    }
+
+    /// Verify `Target::from_infra` rejects empty input.
+    #[test]
+    fn test_target_from_infra_empty_errors() {
+        assert!(Target::from_infra("").is_err());
+        assert!(Target::from_infra("   ").is_err());
+    }
+
+    /// Verify `Target::from_infra` percent-encodes special characters so an
+    /// IPv6 CIDR round-trips cleanly.
+    #[test]
+    fn test_target_from_infra_ipv6_cidr() -> Result<()> {
+        let t = Target::from_infra("2001:db8::/32")?;
+        assert_eq!(t.raw, "2001:db8::/32");
+        assert_eq!(t.url.scheme(), "infra");
+        Ok(())
     }
 }

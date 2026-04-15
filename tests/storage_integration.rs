@@ -278,7 +278,9 @@ async fn test_finding_status_lifecycle() {
         (VulnStatus::Remediated, "remediated"),
         (VulnStatus::Verified, "verified"),
     ] {
-        let ok = storage::findings::update_finding_status(&pool, finding_id, status).await.unwrap();
+        let ok = storage::findings::update_finding_status(&pool, finding_id, status, None)
+            .await
+            .unwrap();
         assert!(ok);
         let updated = storage::findings::get_finding(&pool, finding_id).await.unwrap().unwrap();
         assert_eq!(updated.status, expected_str);

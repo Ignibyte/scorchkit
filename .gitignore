@@ -1,0 +1,9 @@
+/target
+/examples/*/target
+/examples/*/Cargo.lock
+*.swp
+*.swo
+.env
+.mcp.json
+reports/
+.claude/worktrees/

@@ -73,6 +73,24 @@ After the scan completes:
 3. **Group related findings** (e.g., multiple header issues)
 4. **Note confidence levels** — flag low-confidence findings that may be false positives
 
+## Formatting Guidelines
+
+When presenting scan results to the user:
+- Use a **summary table** with severity counts at the top
+- Present individual findings as **blockquotes** with severity badge, target, and description
+- Use `backtick code` for URLs, module IDs, and technical values
+- Use **bold** for severity levels: **Critical**, **High**, **Medium**, **Low**, **Info**
+- Group findings by severity (Critical first) or by module
+- Show confidence percentage in brackets: `[90%]`
+- For large result sets, summarize then offer to show details per category
+
+Example finding format:
+> **#1 Critical** `[92%]` — SQL Injection \
+> `https://example.com/api/users?id=1` \
+> Module: `injection` | CWE-89 | OWASP A03:2021 \
+> *Parameter `id` is injectable via error-based detection* \
+> **Fix:** Use parameterized queries instead of string concatenation
+
 ## Step 6: Suggest Next Steps
 
 Based on findings:

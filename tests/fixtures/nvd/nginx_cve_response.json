@@ -1,0 +1,76 @@
+{
+  "resultsPerPage": 2,
+  "startIndex": 0,
+  "totalResults": 2,
+  "format": "NVD_CVE",
+  "version": "2.0",
+  "timestamp": "2025-01-15T12:00:00.000",
+  "vulnerabilities": [
+    {
+      "cve": {
+        "id": "CVE-2024-7347",
+        "sourceIdentifier": "cna@nginx.com",
+        "published": "2024-08-14T19:15:30.020",
+        "lastModified": "2024-08-15T13:01:10.150",
+        "vulnStatus": "Awaiting Analysis",
+        "descriptions": [
+          {
+            "lang": "en",
+            "value": "NGINX Open Source and NGINX Plus have a vulnerability in the ngx_http_mp4_module that might allow an attacker to over-read NGINX worker memory."
+          }
+        ],
+        "metrics": {
+          "cvssMetricV31": [
+            {
+              "source": "cna@nginx.com",
+              "type": "Secondary",
+              "cvssData": {
+                "version": "3.1",
+                "vectorString": "CVSS:3.1/AV:N/AC:H/PR:H/UI:N/S:U/C:H/I:H/A:H",
+                "baseScore": 7.2,
+                "baseSeverity": "HIGH"
+              }
+            }
+          ]
+        },
+        "references": [
+          { "url": "https://mailman.nginx.org/pipermail/nginx-announce/2024/CK4VEXYNHCFP6Z3HSCNAYNFGPMVCNHFI.html" },
+          { "url": "https://my.f5.com/manage/s/article/K000140108" }
+        ]
+      }
+    },
+    {
+      "cve": {
+        "id": "CVE-2023-44487",
+        "sourceIdentifier": "cve@mitre.org",
+        "published": "2023-10-10T14:15:10.000",
+        "lastModified": "2024-04-23T20:15:46.000",
+        "vulnStatus": "Modified",
+        "descriptions": [
+          {
+            "lang": "en",
+            "value": "The HTTP/2 protocol allows a denial of service (server resource consumption) because request cancellation can reset many streams quickly, as exploited in the wild in August through October 2023."
+          }
+        ],
+        "metrics": {
+          "cvssMetricV31": [
+            {
+              "source": "nvd@nist.gov",
+              "type": "Primary",
+              "cvssData": {
+                "version": "3.1",
+                "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+                "baseScore": 7.5,
+                "baseSeverity": "HIGH"
+              }
+            }
+          ]
+        },
+        "references": [
+          { "url": "https://www.kb.cert.org/vuls/id/421644" },
+          { "url": "https://nvd.nist.gov/vuln/detail/CVE-2023-44487" }
+        ]
+      }
+    }
+  ]
+}

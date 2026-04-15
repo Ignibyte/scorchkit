@@ -18,7 +18,77 @@ engine/
   evidence.rs        HttpEvidence struct for request/response capture
   scope.rs           ScopeRule enum for scope management
   oob.rs             Out-of-band callback infrastructure (Interactsh)
+  events.rs          Event bus — ScanEvent enum, EventBus, EventHandler trait
+  hook_runner.rs     Script-based lifecycle hooks + HookEventHandler adapter
 ```
+
+## Event Bus v2 (`events.rs`)
+
+In-process pub/sub for scan lifecycle events, wrapping `tokio::sync::broadcast`:
+
+- **`ScanEvent`** — 7 owned (no-lifetime, `Clone`) variants: `ScanStarted`, `ModuleStarted`, `ModuleCompleted`, `ModuleSkipped`, `ModuleError`, `FindingProduced` (with `Box<Finding>`), `ScanCompleted`.
+- **`EventBus`** — cheaply-cloneable wrapper over `broadcast::Sender<ScanEvent>`. Fire-and-forget `publish()` (send errors only when there are zero subscribers; logged at `debug`). `subscribe()` hands out receivers; `subscriber_count()` for diagnostics. Default capacity 256.
+- **`EventHandler`** — async trait (`Send + Sync`) with `handle(&self, event) -> Result<(), String>`. Handler errors are logged, not propagated — observability must never abort a scan.
+- **`subscribe_handler(bus, handler)`** — spawns a tokio task that drives the handler with every event until the bus is dropped (receiver sees `RecvError::Closed`). Lagged receivers log and continue.
+
+`EventBus` is a field on both `ScanContext.events` and `CodeContext.events` so modules may publish custom events. The orchestrators (`Orchestrator::run()`, `run_with_checkpoint()`, `run_phased()`, `run_module_batch()`; `CodeOrchestrator::run()`) publish lifecycle events at every relevant point.
+
+### Custom module events (v2b.1)
+
+`ScanEvent::Custom { kind: String, data: serde_json::Value }` lets modules emit domain-specific events without expanding the core lifecycle variant set. Kinds follow a dotted-namespace convention (e.g. `"crawler.depth-reached"`, `"waf.detected"`) — documented but not enforced. Typed payloads round-trip via `serde_json::to_value` / `serde_json::from_value`.
+
+`subscribe_filtered(bus, handler, predicate)` wraps `subscribe_handler` with a predicate check before handler dispatch. The filter runs on the subscriber's task (broadcast still delivers every event to every subscriber; the filter just chooses to ignore non-matches). Generic over `F: Fn(&ScanEvent) -> bool + Send + Sync + 'static` for ergonomic closure use with zero explicit boxing.
+
+`HookEventHandler` ignores `ScanEvent::Custom` — there's no standard mapping from an arbitrary kind string to the three hook points. Users who want script dispatch for custom events can write a native `EventHandler` directly.
+
+### Built-in audit log (`AuditLogHandler`)
+
+`src/engine/audit_log.rs` provides the first production subscriber of the event bus — a file-based JSONL sink enabled via `[audit_log]` in `scorchkit.toml`.
+
+- `AuditLogHandler::new(&path)` opens the file in append+create mode (returns `ScorchError::Io` on failure).
+- `impl EventHandler` serializes each `ScanEvent` with `serde_json::to_string` and appends `{line}\n`; flushes after every write.
+- I/O errors are logged at `warn` and swallowed — audit logging is best-effort observability and must never abort a scan.
+- `subscribe_audit_log_if_enabled(&config.audit_log, &ctx.events)` is the helper both orchestrators call at the top of `run()` (before the first publish) to wire the handler when config enables it.
+
+`ScanEvent` derives `Serialize` to support JSON emission. Variant and field names are part of the on-the-wire JSONL format: renaming either is a breaking change for downstream consumers. The default externally-tagged representation means each line is a single-key object like `{"ScanStarted": {"scan_id": "...", "target": "..."}}`.
+
+## Infra module family (v2.0 foundation)
+
+`src/engine/infra_module.rs` introduces the third module family alongside `ScanModule` (DAST) and `CodeModule` (SAST). All infra code is feature-gated behind `infra = ["dep:ipnet"]` and absent from the default build.
+
+- **`InfraModule`** — async trait with `name`/`id`/`category`/`description`/`run`/`requires_external_tool`/`required_tool`/`protocols` methods, mirroring `ScanModule`.
+- **`InfraCategory`** — five variants in v1: `PortScan`, `Fingerprint`, `CveMatch`, `TlsInfra`, `Dns`. WORK-104 will add `NetworkAuth` and `ServiceEnum`.
+- **`InfraTarget`** (`src/engine/infra_target.rs`) — sum type with `Ip(IpAddr)`, `Cidr(ipnet::IpNet)`, `Host(String)`, `Endpoint { host, port }`, and `Multi(Vec<Self>)` variants. `parse(&str)` accepts CIDR, IP, host, host:port, and bracketed IPv6 endpoint forms. `iter_ips()` flattens the target into individual addresses (CIDR via `IpNet::hosts`, host returns empty pending DNS resolution in WORK-102).
+- **`InfraContext`** (`src/engine/infra_context.rs`) — same shape as `ScanContext`/`CodeContext`: target, config, HTTP client, shared data, and the event bus. Network credentials field comes in WORK-104.
+- **`InfraOrchestrator`** (`src/runner/infra_orchestrator.rs`) — mirrors `Orchestrator`/`CodeOrchestrator` exactly: same `ScanEvent` lifecycle sequence, same `subscribe_audit_log_if_enabled` wire-up, same semaphore-bounded concurrency. Returns the existing `ScanResult` type (target reuses `Target::from_infra` to wrap the infra target string in a synthetic `infra://` URL — same trick `from_path` uses for SAST).
+- **`TcpProbeModule`** (`src/infra/tcp_probe.rs`) — the v1 demonstration module. Privilege-free TCP-connect probe against a configurable port list (default: 22, 80, 443, 3306, 5432, 6379, 8080, 8443) with bounded timeout. Emits one Info Finding per open port. Real port scanning (SYN/XMAS) lands in WORK-102's nmap migration.
+- **CLI:** `scorchkit infra <target> [--profile quick|standard] [--modules a,b,c] [--skip x,y]` (gated).
+- **Facade:** `Engine::infra_scan(target: &str)` (gated).
+
+The roadmap continues with WORK-103 (OSV CVE matcher), WORK-104 (authenticated network scanning), WORK-105 (unified `assess` command composing DAST+SAST+Infra), WORK-106 (storage migration + MCP tools).
+
+### CVE correlation (`cve.rs` + `infra/cve_match.rs`)
+
+`CveRecord { id, cvss_score, severity, description, references, cpe }` is the unified shape for CVE data across the codebase (findings, storage, reporting). `CveLookup` is an async trait (`Send + Sync`) with a single `query(cpe) -> Result<Vec<CveRecord>>` method — backends are free to hit NVD, OSV, a local database, or return test fixtures. `severity_from_cvss` maps a CVSS v3.x base score onto `Severity` using standard bands.
+
+`infra::CveMatchModule` is the consumer side of the WORK-102 fingerprint pipeline. It reads fingerprints via `read_fingerprints`, iterates those with a `cpe` set, queries the injected lookup sequentially, and emits one `Finding` per matched CVE with the CVE ID + CVSS score in the title and evidence. Per-fingerprint query errors are logged at `warn` and skipped so a single backend hiccup doesn't abort the scan.
+
+`CveMatchModule::new(lookup: Box<dyn CveLookup>)` takes its backend by injection — it's intentionally absent from `infra::register_modules()`. The fixture-backed `infra::MockCveLookup` exercises the module in tests. Two production backends ship behind the same trait: `infra::cve_nvd::NvdCveLookup` (WORK-103b) for system-software CPEs and `infra::cve_osv::OsvCveLookup` (WORK-103c) for language-package CPEs. Backend selection is config-driven: `[cve] backend = "disabled" | "mock" | "nvd" | "osv"` plus a `[cve.nvd]` or `[cve.osv]` sub-block. `infra::cve_lookup::build_cve_lookup(&AppConfig)` is the factory; `Engine::infra_scan` (which `full_assessment` calls) consults it and appends `CveMatchModule` automatically when a backend is configured. Both backends own their own `reqwest::Client` (separate from the scan client so pen-test proxy / insecure-TLS settings never leak into vendor calls), wrap a `governor::RateLimiter` (NVD: 5/30s anonymous or 50/30s with key; OSV: conservative 10 RPS under their ~25 QPS fair-use cap), and consult a sha256-keyed file-system TTL cache (`infra::cve_cache::FsCache`, with negative caching) under per-backend cache directories (`scorchkit/cve/` for NVD, `scorchkit/cve-osv/` for OSV) so flushing one doesn't affect the other. OSV's package-coordinate API requires CPE → ecosystem translation; the pure `infra::cpe_purl::cpe_to_package(cpe)` carries an embedded ≥30-entry static mapping table covering the highest-value language-ecosystem CPEs (npm, PyPI, Maven, Go, crates.io, RubyGems, NuGet, Packagist) and returns `None` for unmapped CPEs (system software lives in NVD, not OSV). OSV severities arrive as CVSS vector strings; the new `engine::cve::cvss_v3_base_score(vector)` is a faithful in-process implementation of the [CVSS v3.1 base-score formula](https://www.first.org/cvss/v3.1/specification-document) reusable by any future vector-surfacing backend. See `docs/modules/cve-nvd.md` and `docs/modules/cve-osv.md` for operator-facing config references.
+
+### Service fingerprints (`service_fingerprint.rs`)
+
+`ServiceFingerprint { port, protocol, service_name, product, version, cpe }` is the shared data type for service detection. `parse_nmap_xml_fingerprints(xml)` is the pure parser both the DAST `tools::NmapModule` and the infra `infra::NmapModule` call; the DAST wrapper layers severity classification and outdated-version checks on top, while the infra wrapper emits Info findings and publishes `Vec<ServiceFingerprint>` to `shared_data` under the `SHARED_KEY_FINGERPRINTS` constant for downstream CVE correlation. `build_cpe(vendor, product, version)` produces CPE 2.3 URIs. `publish_fingerprints` / `read_fingerprints` helpers encapsulate the JSON encoding required to round-trip structured data through `SharedData`'s `Vec<String>` store.
+
+## Hook adapter — `HookEventHandler` (`hook_runner.rs`)
+
+`HookEventHandler` bridges the event bus to the existing script-based hook system. It subscribes to the event stream and maps events to the three `HookPoint` script invocations:
+
+- `ScanEvent::ScanStarted` → `HookPoint::PreScan`
+- `ScanEvent::FindingProduced` → buffered per `(scan_id, module_id)` in an internal `Mutex<HashMap>`
+- `ScanEvent::ModuleCompleted` → `HookPoint::PostModule` (buffer drained, full findings array handed to the script)
+- `ScanEvent::ScanCompleted` → `HookPoint::PostScan`
+
+The adapter runs hooks for observable side effects (logging, notifications, exports). It does **not** feed modifications back into the scan result — publishing is fire-and-forget. Post-module finding modification remains handled by the synchronous `HookRunner::execute()` call in `Orchestrator::run()`. The two systems coexist: the orchestrator still invokes `HookRunner` directly; `HookEventHandler` is an additive opt-in for event-driven subscribers.
 
 ## ScorchError (`error.rs`)
 

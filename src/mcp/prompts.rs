@@ -435,7 +435,203 @@ fn correlation_rules() -> Vec<CorrelationRule> {
                     || title_has(f, "token")
             },
         },
+        // === Cross-domain DAST+SAST correlation rules ===
+        CorrelationRule {
+            name: "Confirmed SQL Injection: Code + Runtime",
+            severity: "critical",
+            narrative: "SQL injection patterns detected in source code AND exploitable SQL \
+                        injection confirmed at runtime. The code-level finding proves the \
+                        vulnerability is real, not a scanner false positive.",
+            priority: "immediate",
+            trigger: |fs| {
+                let has_dast_sqli = fs.iter().any(|f| {
+                    f.module_id == "injection" || f.module_id == "sqlmap" || f.module_id == "nosql"
+                });
+                let has_sast_sqli = fs.iter().any(|f| {
+                    is_sast_module(&f.module_id)
+                        && (title_has(f, "sql")
+                            || title_has(f, "injection")
+                            || title_has(f, "G201"))
+                });
+                has_dast_sqli && has_sast_sqli
+            },
+            member_filter: |f| {
+                title_has(f, "sql")
+                    || title_has(f, "injection")
+                    || f.module_id == "injection"
+                    || f.module_id == "sqlmap"
+                    || f.module_id == "nosql"
+            },
+        },
+        CorrelationRule {
+            name: "Hardcoded Secrets + Runtime Exposure",
+            severity: "critical",
+            narrative: "Secrets detected in source code by SAST AND sensitive data exposure \
+                        detected at runtime. The application is leaking credentials that are \
+                        visible in the codebase — both the source and the leak are confirmed.",
+            priority: "immediate",
+            trigger: |fs| {
+                let has_sast_secrets = fs.iter().any(|f| {
+                    f.module_id == "gitleaks"
+                        || (is_sast_module(&f.module_id)
+                            && (title_has(f, "secret")
+                                || title_has(f, "hardcoded")
+                                || title_has(f, "password")
+                                || title_has(f, "api key")))
+                });
+                let has_dast_exposure = fs.iter().any(|f| {
+                    f.module_id == "sensitive"
+                        || f.module_id == "js_analysis"
+                        || (!is_sast_module(&f.module_id)
+                            && (title_has(f, "secret") || title_has(f, "exposed")))
+                });
+                has_sast_secrets && has_dast_exposure
+            },
+            member_filter: |f| {
+                f.module_id == "gitleaks"
+                    || f.module_id == "sensitive"
+                    || f.module_id == "js_analysis"
+                    || title_has(f, "secret")
+                    || title_has(f, "hardcoded")
+                    || title_has(f, "credential")
+                    || title_has(f, "exposed")
+            },
+        },
+        CorrelationRule {
+            name: "Vulnerable Dependency + Exploitable Endpoint",
+            severity: "high",
+            narrative: "A known-vulnerable dependency was detected by SAST AND the runtime \
+                        scan found an exploitable endpoint. The vulnerable library may be \
+                        reachable through the web interface.",
+            priority: "high",
+            trigger: |fs| {
+                let has_vuln_dep = fs.iter().any(|f| {
+                    f.module_id == "osv-scanner"
+                        || f.module_id == "grype"
+                        || f.module_id == "dep-audit"
+                        || (is_sast_module(&f.module_id) && title_has(f, "vulnerable"))
+                });
+                let has_dast_exploit = fs.iter().any(|f| {
+                    !is_sast_module(&f.module_id)
+                        && (f.module_id == "injection"
+                            || f.module_id == "xss"
+                            || f.module_id == "ssrf"
+                            || f.module_id == "path_traversal"
+                            || f.module_id == "ssti")
+                });
+                has_vuln_dep && has_dast_exploit
+            },
+            member_filter: |f| {
+                f.module_id == "osv-scanner"
+                    || f.module_id == "grype"
+                    || f.module_id == "dep-audit"
+                    || title_has(f, "vulnerable")
+                    || title_has(f, "CVE")
+                    || f.module_id == "injection"
+                    || f.module_id == "xss"
+                    || f.module_id == "ssrf"
+            },
+        },
+        CorrelationRule {
+            name: "IaC Misconfiguration + Runtime Misconfig",
+            severity: "high",
+            narrative: "Infrastructure as Code misconfiguration detected by Checkov AND \
+                        runtime security misconfiguration detected by DAST. The infrastructure \
+                        deficiency is provable from both code review and live testing.",
+            priority: "high",
+            trigger: |fs| {
+                let has_iac =
+                    fs.iter().any(|f| f.module_id == "checkov" || f.module_id == "hadolint");
+                let has_runtime_misconfig = fs.iter().any(|f| {
+                    f.module_id == "misconfig" || f.module_id == "headers" || f.module_id == "ssl"
+                });
+                has_iac && has_runtime_misconfig
+            },
+            member_filter: |f| {
+                f.module_id == "checkov"
+                    || f.module_id == "hadolint"
+                    || f.module_id == "misconfig"
+                    || f.module_id == "headers"
+                    || f.module_id == "ssl"
+                    || title_has(f, "misconfiguration")
+            },
+        },
+        CorrelationRule {
+            name: "Auth Bypass: Code Weakness + Runtime Exploit",
+            severity: "critical",
+            narrative: "Authentication or authorization weaknesses found in source code AND \
+                        auth bypass or session issues detected at runtime. The code proves the \
+                        runtime vulnerability is not a false positive.",
+            priority: "immediate",
+            trigger: |fs| {
+                let has_sast_auth = fs.iter().any(|f| {
+                    is_sast_module(&f.module_id)
+                        && (title_has(f, "auth")
+                            || title_has(f, "password")
+                            || title_has(f, "session")
+                            || title_has(f, "jwt")
+                            || title_has(f, "token"))
+                });
+                let has_dast_auth = fs.iter().any(|f| {
+                    f.module_id == "auth"
+                        || f.module_id == "jwt"
+                        || f.module_id == "idor"
+                        || (!is_sast_module(&f.module_id) && title_has(f, "auth"))
+                });
+                has_sast_auth && has_dast_auth
+            },
+            member_filter: |f| {
+                title_has(f, "auth")
+                    || title_has(f, "session")
+                    || title_has(f, "jwt")
+                    || title_has(f, "password")
+                    || f.module_id == "auth"
+                    || f.module_id == "jwt"
+                    || f.module_id == "idor"
+            },
+        },
+        CorrelationRule {
+            name: "Supply Chain Risk: Risky Package + Missing Security Headers",
+            severity: "high",
+            narrative: "A known-risky or compromised package detected in the dependency tree \
+                        AND the web application lacks Content Security Policy. Malicious code \
+                        in the dependency could exfiltrate data without CSP restrictions.",
+            priority: "high",
+            trigger: |fs| {
+                let has_risky_dep =
+                    fs.iter().any(|f| f.module_id == "dep-audit" && title_has(f, "risky"));
+                let has_missing_csp = fs
+                    .iter()
+                    .any(|f| title_has(f, "csp") || title_has(f, "content-security-policy"));
+                has_risky_dep && has_missing_csp
+            },
+            member_filter: |f| {
+                (f.module_id == "dep-audit" && title_has(f, "risky"))
+                    || title_has(f, "csp")
+                    || title_has(f, "content-security-policy")
+            },
+        },
     ]
+}
+
+/// Check if a module ID belongs to a SAST module (code scanner, not web scanner).
+fn is_sast_module(module_id: &str) -> bool {
+    matches!(
+        module_id,
+        "semgrep"
+            | "osv-scanner"
+            | "gitleaks"
+            | "bandit"
+            | "gosec"
+            | "checkov"
+            | "grype"
+            | "hadolint"
+            | "eslint-security"
+            | "phpstan"
+            | "dep-audit"
+            | "snyk-test"
+            | "snyk-code"
+    )
 }
 
 /// Check if a finding's title contains a case-insensitive pattern.
@@ -690,5 +886,146 @@ mod tests {
         assert_eq!(cred_chain.remediation_priority, "immediate");
         assert!(cred_chain.findings.contains(&"f1".to_string()));
         assert!(cred_chain.findings.contains(&"f2".to_string()));
+    }
+
+    // === Cross-domain DAST+SAST correlation tests ===
+
+    /// Verify SAST SQL injection + DAST SQL injection triggers the
+    /// "Confirmed SQL Injection" cross-domain chain.
+    #[test]
+    fn test_correlate_cross_sqli() {
+        let findings = vec![
+            CorrelationFinding {
+                id: "dast-1".to_string(),
+                module_id: "injection".to_string(),
+                title: "SQL Injection in /api/users".to_string(),
+                severity: "high".to_string(),
+            },
+            CorrelationFinding {
+                id: "sast-1".to_string(),
+                module_id: "semgrep".to_string(),
+                title: "SQL string formatting detected".to_string(),
+                severity: "high".to_string(),
+            },
+        ];
+
+        let chains = correlate_attack_chains(&findings);
+        assert!(chains.iter().any(|c| c.name.contains("Confirmed SQL Injection")));
+    }
+
+    /// Verify SAST secrets + DAST data exposure triggers the
+    /// "Hardcoded Secrets + Runtime Exposure" chain.
+    #[test]
+    fn test_correlate_cross_secrets() {
+        let findings = vec![
+            CorrelationFinding {
+                id: "sast-1".to_string(),
+                module_id: "gitleaks".to_string(),
+                title: "Exposed secret: AWS Access Key".to_string(),
+                severity: "high".to_string(),
+            },
+            CorrelationFinding {
+                id: "dast-1".to_string(),
+                module_id: "sensitive".to_string(),
+                title: "Sensitive data in response body".to_string(),
+                severity: "medium".to_string(),
+            },
+        ];
+
+        let chains = correlate_attack_chains(&findings);
+        assert!(chains.iter().any(|c| c.name.contains("Hardcoded Secrets")));
+    }
+
+    /// Verify vulnerable dependency + exploitable DAST endpoint triggers the
+    /// "Vulnerable Dependency + Exploitable Endpoint" chain.
+    #[test]
+    fn test_correlate_cross_vuln_dep() {
+        let findings = vec![
+            CorrelationFinding {
+                id: "sast-1".to_string(),
+                module_id: "osv-scanner".to_string(),
+                title: "CVE-2023-44487: vulnerable http2 library".to_string(),
+                severity: "critical".to_string(),
+            },
+            CorrelationFinding {
+                id: "dast-1".to_string(),
+                module_id: "xss".to_string(),
+                title: "Reflected XSS in search parameter".to_string(),
+                severity: "high".to_string(),
+            },
+        ];
+
+        let chains = correlate_attack_chains(&findings);
+        assert!(chains.iter().any(|c| c.name.contains("Vulnerable Dependency")));
+    }
+
+    /// Verify IaC + runtime misconfig triggers the cross-domain chain.
+    #[test]
+    fn test_correlate_cross_iac_misconfig() {
+        let findings = vec![
+            CorrelationFinding {
+                id: "sast-1".to_string(),
+                module_id: "checkov".to_string(),
+                title: "CKV_AWS_18: S3 bucket missing logging".to_string(),
+                severity: "high".to_string(),
+            },
+            CorrelationFinding {
+                id: "dast-1".to_string(),
+                module_id: "headers".to_string(),
+                title: "Missing security headers".to_string(),
+                severity: "medium".to_string(),
+            },
+        ];
+
+        let chains = correlate_attack_chains(&findings);
+        assert!(chains.iter().any(|c| c.name.contains("IaC Misconfiguration")));
+    }
+
+    /// Verify SAST-only or DAST-only findings do NOT trigger cross-domain rules.
+    #[test]
+    fn test_correlate_cross_no_false_positive() {
+        // SAST-only: should not trigger cross-domain rules
+        let sast_only = vec![
+            CorrelationFinding {
+                id: "s1".to_string(),
+                module_id: "semgrep".to_string(),
+                title: "SQL injection pattern".to_string(),
+                severity: "high".to_string(),
+            },
+            CorrelationFinding {
+                id: "s2".to_string(),
+                module_id: "gitleaks".to_string(),
+                title: "Exposed secret".to_string(),
+                severity: "high".to_string(),
+            },
+        ];
+
+        let chains = correlate_attack_chains(&sast_only);
+        // Should NOT contain cross-domain chains (no DAST findings)
+        assert!(
+            !chains.iter().any(|c| c.name.contains("Confirmed SQL Injection")),
+            "SAST-only should not trigger cross-domain SQL chain"
+        );
+    }
+
+    /// Verify the `is_sast_module` helper correctly identifies all SAST modules.
+    #[test]
+    fn test_is_sast_module() {
+        assert!(is_sast_module("semgrep"));
+        assert!(is_sast_module("osv-scanner"));
+        assert!(is_sast_module("gitleaks"));
+        assert!(is_sast_module("bandit"));
+        assert!(is_sast_module("gosec"));
+        assert!(is_sast_module("checkov"));
+        assert!(is_sast_module("grype"));
+        assert!(is_sast_module("hadolint"));
+        assert!(is_sast_module("eslint-security"));
+        assert!(is_sast_module("phpstan"));
+        assert!(is_sast_module("dep-audit"));
+        // DAST modules should NOT match
+        assert!(!is_sast_module("xss"));
+        assert!(!is_sast_module("injection"));
+        assert!(!is_sast_module("headers"));
+        assert!(!is_sast_module("nmap"));
     }
 }

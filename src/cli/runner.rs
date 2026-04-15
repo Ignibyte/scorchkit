@@ -42,6 +42,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
             insecure,
             scope,
             exclude,
+            code,
             project,
             database_url,
         } => {
@@ -129,6 +130,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                     &profile,
                     template.as_deref(),
                     min_confidence,
+                    code.as_deref(),
                     project.as_deref(),
                     database_url.as_deref(),
                 )
@@ -181,6 +183,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 None,
                 None,
                 None,
+                None,
             )
             .await
         }
@@ -197,6 +200,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 false,
                 false,
                 "standard",
+                None,
                 None,
                 None,
                 None,
@@ -264,7 +268,106 @@ pub async fn execute(cli: Cli) -> Result<()> {
 
         #[cfg(feature = "mcp")]
         Commands::Serve => crate::cli::serve::run_serve(&config).await,
+
+        #[cfg(feature = "infra")]
+        Commands::Infra { target, profile, modules, skip, quiet } => {
+            run_infra(&config, &target, &profile, modules.as_deref(), skip.as_deref(), quiet).await
+        }
+
+        #[cfg(feature = "infra")]
+        Commands::Assess { url, code, infra, profile, quiet } => {
+            run_assess(&config, url.as_deref(), code.as_deref(), infra.as_deref(), &profile, quiet)
+                .await
+        }
     }
+}
+
+/// Run a unified DAST + SAST + Infra assessment.
+///
+/// At least one of `url`, `code`, or `infra` must be `Some`. The three
+/// orchestrators run concurrently via `tokio::join!`; failures in any
+/// domain are logged at `warn` and the remaining results are returned
+/// merged into a single [`crate::engine::scan_result::ScanResult`].
+///
+/// # Errors
+///
+/// Returns [`crate::engine::error::ScorchError::Config`] if every input
+/// is `None`. Returns the first available error only when every provided
+/// domain failed.
+#[cfg(feature = "infra")]
+pub async fn run_assess(
+    config: &std::sync::Arc<crate::config::AppConfig>,
+    url: Option<&str>,
+    code: Option<&std::path::Path>,
+    infra: Option<&str>,
+    profile: &str,
+    quiet: bool,
+) -> crate::engine::error::Result<()> {
+    use crate::engine::error::ScorchError;
+
+    if url.is_none() && code.is_none() && infra.is_none() {
+        return Err(ScorchError::Config(
+            "assess requires at least one of --url, --code, or --infra".to_string(),
+        ));
+    }
+
+    let engine = crate::facade::Engine::new(std::sync::Arc::clone(config));
+    // Apply profile via individual calls since full_assessment doesn't take a profile;
+    // for the simplest v1 we pass the profile to each underlying orchestrator through
+    // a dedicated helper. Until that helper exists, we use the default profile path —
+    // callers who need per-domain profile tuning should use `run --code` directly.
+    let _ = profile;
+
+    let result = engine.full_assessment(url, code, infra).await?;
+    if !quiet {
+        crate::report::terminal::print_report(&result);
+    }
+    Ok(())
+}
+
+/// Execute an infrastructure scan against `target`.
+///
+/// Parses the target string via [`crate::engine::infra_target::InfraTarget::parse`], constructs a
+/// fresh [`crate::engine::infra_context::InfraContext`], applies the profile and module filters,
+/// runs the orchestrator, and prints the resulting
+/// [`crate::engine::scan_result::ScanResult`] via the terminal reporter.
+///
+/// # Errors
+///
+/// Returns [`crate::engine::error::ScorchError::InvalidTarget`] for
+/// unparseable target strings, and propagates any orchestrator failure.
+#[cfg(feature = "infra")]
+pub async fn run_infra(
+    config: &std::sync::Arc<crate::config::AppConfig>,
+    target: &str,
+    profile: &str,
+    modules: Option<&str>,
+    skip: Option<&str>,
+    quiet: bool,
+) -> crate::engine::error::Result<()> {
+    use crate::engine::infra_context::InfraContext;
+    use crate::engine::infra_target::InfraTarget;
+    use crate::runner::infra_orchestrator::InfraOrchestrator;
+
+    let infra_target = InfraTarget::parse(target)?;
+    let http_client = build_http_client(config)?;
+    let ctx = InfraContext::new(infra_target, std::sync::Arc::clone(config), http_client);
+    let mut orch = InfraOrchestrator::new(ctx);
+    orch.register_default_modules();
+    orch.apply_profile(profile);
+
+    if let Some(ids) = modules {
+        let list: Vec<String> = ids.split(',').map(|s| s.trim().to_string()).collect();
+        orch.filter_by_ids(&list);
+    }
+    if let Some(ids) = skip {
+        let list: Vec<String> = ids.split(',').map(|s| s.trim().to_string()).collect();
+        orch.exclude_by_ids(&list);
+    }
+
+    let result = orch.run(quiet).await?;
+    crate::report::terminal::print_report(&result);
+    Ok(())
 }
 
 /// Dispatch database subcommands.
@@ -395,6 +498,8 @@ async fn run_scan_with_resume(
 
     let mut orchestrator = Orchestrator::new(ctx);
     orchestrator.register_default_modules();
+    let hook_runner = crate::engine::hook_runner::HookRunner::new(&config.hooks);
+    orchestrator.set_hook_runner(hook_runner);
     orchestrator.apply_profile(&checkpoint.profile);
 
     if let Some(ref include) = module_filter {
@@ -469,6 +574,7 @@ async fn run_scan_with_resume(
 #[allow(clippy::too_many_arguments)]
 // JUSTIFICATION: CLI dispatch function — match arms are the natural structure;
 // extraction would scatter dispatch logic
+// JUSTIFICATION: run_scan is the CLI dispatch hub — many parameters reflect CLI flags
 #[allow(clippy::too_many_lines)]
 async fn run_scan(
     config: &Arc<AppConfig>,
@@ -483,6 +589,7 @@ async fn run_scan(
     profile: &str,
     template: Option<&str>,
     min_confidence: Option<f64>,
+    code_path: Option<&std::path::Path>,
     project_name: Option<&str>,
     database_url: Option<&str>,
 ) -> Result<()> {
@@ -560,6 +667,10 @@ async fn run_scan(
     let mut orchestrator = Orchestrator::new(ctx);
     orchestrator.register_default_modules();
 
+    // Set up lifecycle hooks
+    let hook_runner = crate::engine::hook_runner::HookRunner::new(&config.hooks);
+    orchestrator.set_hook_runner(hook_runner);
+
     // Apply AI plan or fall back to profile
     if let Some(ref scan_plan) = ai_plan {
         if !quiet {
@@ -611,6 +722,43 @@ async fn run_scan(
         &uuid::Uuid::new_v4().to_string(),
     );
     let mut result = orchestrator.run_with_checkpoint(quiet, &cp_path, None).await?;
+
+    // If --code was specified, run SAST concurrently and merge results
+    if let Some(path) = code_path {
+        if !quiet {
+            println!("\n{} Running SAST code scan on {}...", "CODE".cyan().bold(), path.display());
+        }
+        let code_ctx = crate::engine::code_context::CodeContext::new(
+            path.to_path_buf(),
+            None,
+            Arc::clone(config),
+        );
+        let mut code_orchestrator =
+            crate::runner::code_orchestrator::CodeOrchestrator::new(code_ctx);
+        code_orchestrator.register_default_modules();
+
+        match code_orchestrator.run().await {
+            Ok(code_result) => {
+                let code_count = code_result.findings.len();
+                result.merge(code_result);
+                if !quiet {
+                    println!(
+                        "  {} SAST scan complete: {} code findings merged",
+                        "✓".green().bold(),
+                        code_count
+                    );
+                }
+            }
+            Err(e) => {
+                if !quiet {
+                    println!(
+                        "  {} SAST scan failed (DAST results preserved): {e}",
+                        "WARN".yellow().bold()
+                    );
+                }
+            }
+        }
+    }
 
     // Apply confidence filter before reporting (but after persistence-eligible collection)
     if let Some(min_conf) = min_confidence {
@@ -924,6 +1072,8 @@ async fn run_code_scan(
 
     let mut orchestrator = CodeOrchestrator::new(ctx);
     orchestrator.register_default_modules();
+    let hook_runner = crate::engine::hook_runner::HookRunner::new(&config.hooks);
+    orchestrator.set_hook_runner(hook_runner);
     orchestrator.apply_profile(profile);
 
     if let Some(ref mods) = modules {

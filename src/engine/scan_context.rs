@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::config::AppConfig;
 
+use super::events::EventBus;
 use super::shared_data::SharedData;
 use super::target::Target;
 
@@ -19,12 +20,24 @@ pub struct ScanContext {
     /// Modules publish discovered data (URLs, forms, technologies) and
     /// downstream modules read it. Thread-safe via internal `RwLock`.
     pub shared_data: Arc<SharedData>,
+    /// In-process event bus for scan lifecycle events.
+    ///
+    /// Modules may publish custom events via `ctx.events.publish(...)` in
+    /// addition to the lifecycle events emitted by orchestrators.
+    pub events: EventBus,
 }
 
 impl ScanContext {
-    /// Create a new scan context with an empty shared data store.
+    /// Create a new scan context with an empty shared data store and a
+    /// default-capacity event bus.
     #[must_use]
     pub fn new(target: Target, config: Arc<AppConfig>, http_client: reqwest::Client) -> Self {
-        Self { target, config, http_client, shared_data: Arc::new(SharedData::new()) }
+        Self {
+            target,
+            config,
+            http_client,
+            shared_data: Arc::new(SharedData::new()),
+            events: EventBus::default(),
+        }
     }
 }

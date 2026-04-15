@@ -17,9 +17,33 @@ pub struct AppConfig {
     /// Custom wordlist paths for brute-force and enumeration modules.
     #[serde(default)]
     pub wordlists: WordlistConfig,
+    /// Lifecycle hooks for scan extensibility.
+    #[serde(default)]
+    pub hooks: HookConfig,
     /// Webhook endpoints for scan lifecycle notifications.
     #[serde(default)]
     pub webhooks: Vec<crate::runner::hooks::WebhookConfig>,
+    /// JSONL audit-log sink for scan-lifecycle events.
+    #[serde(default)]
+    pub audit_log: AuditLogConfig,
+    /// CVE backend configuration (NVD or mock).
+    #[serde(default)]
+    pub cve: super::cve::CveConfig,
+}
+
+/// Configuration for the built-in JSONL audit-log event subscriber.
+///
+/// Disabled by default. When `enabled` is true and `path` is `Some`, the
+/// orchestrator wires an [`crate::engine::audit_log::AuditLogHandler`] that
+/// appends every published [`crate::engine::events::ScanEvent`] to the file
+/// as one JSON record per line.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AuditLogConfig {
+    /// Turn the audit-log sink on. Defaults to `false`.
+    pub enabled: bool,
+    /// Destination file. Opened in append+create mode. Parent directory must exist.
+    pub path: Option<PathBuf>,
 }
 
 /// Database connection configuration for persistent storage.
@@ -72,6 +96,8 @@ pub struct ScanConfig {
     pub scope_exclude: Vec<String>,
     /// Directory containing plugin definition files (.toml).
     pub plugins_dir: Option<PathBuf>,
+    /// Directory containing YAML rule definition files (.yaml/.yml).
+    pub rules_dir: Option<PathBuf>,
     /// Skip TLS certificate verification (for self-signed certs in local dev).
     #[serde(default)]
     pub insecure: bool,
@@ -92,6 +118,7 @@ impl Default for ScanConfig {
             scope_include: Vec::new(),
             scope_exclude: Vec::new(),
             plugins_dir: None,
+            rules_dir: None,
             insecure: false,
         }
     }
@@ -225,6 +252,40 @@ impl Default for ReportConfig {
             output_dir: PathBuf::from("./reports"),
             include_evidence: true,
             include_remediation: true,
+        }
+    }
+}
+
+/// Configuration for scan lifecycle hooks.
+///
+/// Hooks are external scripts/binaries that fire at scan lifecycle points.
+/// They receive JSON on stdin and can optionally return modified JSON on stdout.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HookConfig {
+    /// Scripts to run before scanning begins. Can modify scan configuration.
+    #[serde(default)]
+    pub pre_scan: Vec<PathBuf>,
+    /// Scripts to run after each module completes. Can filter/enrich findings.
+    #[serde(default)]
+    pub post_module: Vec<PathBuf>,
+    /// Scripts to run after all modules complete. Fire-and-forget (output ignored).
+    #[serde(default)]
+    pub post_scan: Vec<PathBuf>,
+    /// Maximum time in seconds to wait for each hook script. Default: 30.
+    pub timeout_seconds: u64,
+    /// If true, hook failures log a warning but don't block the scan. Default: true.
+    pub fail_open: bool,
+}
+
+impl Default for HookConfig {
+    fn default() -> Self {
+        Self {
+            pre_scan: Vec::new(),
+            post_module: Vec::new(),
+            post_scan: Vec::new(),
+            timeout_seconds: 30,
+            fail_open: true,
         }
     }
 }

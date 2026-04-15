@@ -14,8 +14,42 @@ targets = []
 # =============================================================================
 # [advisories] -- Security advisory database checks
 # =============================================================================
+#
+# Every ignore entry MUST include a `reason` field explaining WHY. This is
+# the deny.toml equivalent of the `// JUSTIFICATION:` comment required on
+# `#[allow]` attributes per Constitution §14.
+#
+# Cadence: revisit this list after major Cargo.lock updates. If any ignored
+# advisory escalates (new severity, upstream patch released), open a pipeline
+# to bump the relevant dep chain.
 [advisories]
-ignore = []
+ignore = [
+    # JUSTIFICATION: sqlx pulls `rsa` transitively via its optional `mysql`
+    # feature. ScorchKit enables only the `postgres` feature, so `rsa` sits
+    # in Cargo.lock but is never linked at runtime. Upstream has no fix.
+    # Tracker: https://rustsec.org/advisories/RUSTSEC-2023-0071
+    { id = "RUSTSEC-2023-0071", reason = "rsa present transitively via unused sqlx-mysql feature; postgres-only build never links it" },
+
+    # JUSTIFICATION: `fxhash` is no longer maintained. Comes in via
+    # scraper -> selectors -> fxhash. No safe upgrade is available; the
+    # upstream advisory itself says "No safe upgrade". Replacing scraper
+    # is a separate, larger pipeline (HTML parsing surface).
+    # Tracker: https://rustsec.org/advisories/RUSTSEC-2025-0057
+    { id = "RUSTSEC-2025-0057", reason = "unmaintained fxhash via scraper->selectors; no safe upgrade; scraper swap is a separate pipeline" },
+
+    # JUSTIFICATION: `number_prefix` is no longer maintained. Comes in via
+    # indicatif (progress spinners). No safe upgrade available. indicatif
+    # itself is actively maintained but hasn't migrated off number_prefix.
+    # Tracker: https://rustsec.org/advisories/RUSTSEC-2025-0119
+    { id = "RUSTSEC-2025-0119", reason = "unmaintained number_prefix via indicatif; no safe upgrade; revisit after next indicatif major" },
+
+    # JUSTIFICATION: `rand` 0.9 has an unsoundness bug only triggered when
+    # a custom logger intercepts `rand::rng()`. ScorchKit uses the default
+    # `tracing` subscriber with no custom rand logger, so the code path is
+    # unreachable. Comes in via tungstenite, quinn/reqwest, and governor.
+    # Tracker: https://rustsec.org/advisories/RUSTSEC-2026-0097
+    { id = "RUSTSEC-2026-0097", reason = "rand 0.9 unsoundness requires custom logger; ScorchKit uses default tracing subscriber, path is unreachable" },
+]
 
 # =============================================================================
 # [licenses] -- License compliance
@@ -37,6 +71,12 @@ allow = [
     "CC0-1.0",
     "OpenSSL",
     "CDLA-Permissive-2.0",
+    # JUSTIFICATION: MPL-2.0 is OSI-approved, FSF-Free, and file-level
+    # copyleft only — safe to allow for binary/lib consumers that aren't
+    # redistributing modified MPL sources. Currently required by: colored
+    # (direct dep) and the scraper family (cssparser, cssparser-macros,
+    # selectors). Standard industry practice for MIT-licensed Rust projects.
+    "MPL-2.0",
 ]
 
 exceptions = [

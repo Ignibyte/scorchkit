@@ -90,6 +90,10 @@ pub enum Commands {
         #[arg(long)]
         exclude: Option<String>,
 
+        /// Also run SAST code scanning on the given path (DAST+SAST combined)
+        #[arg(long)]
+        code: Option<std::path::PathBuf>,
+
         /// Associate scan with a project and persist results to the database
         #[arg(long)]
         project: Option<String>,
@@ -263,6 +267,57 @@ pub enum Commands {
     /// Start the MCP server on stdio transport
     #[cfg(feature = "mcp")]
     Serve,
+
+    /// Run a unified assessment: DAST + SAST + Infra combined.
+    ///
+    /// At least one of `--url`, `--code`, or `--infra` is required.
+    /// The orchestrators run concurrently and results are merged into a
+    /// single report.
+    #[cfg(feature = "infra")]
+    Assess {
+        /// DAST target URL (optional).
+        #[arg(long)]
+        url: Option<String>,
+
+        /// SAST code path (optional).
+        #[arg(long)]
+        code: Option<std::path::PathBuf>,
+
+        /// Infrastructure target — IP, CIDR, host, or `host:port` (optional).
+        #[arg(long)]
+        infra: Option<String>,
+
+        /// Scan profile applied to each applicable orchestrator.
+        #[arg(long, default_value = "standard")]
+        profile: String,
+
+        /// Suppress progress output.
+        #[arg(long)]
+        quiet: bool,
+    },
+
+    /// Run an infrastructure scan (host, IP, or CIDR target)
+    #[cfg(feature = "infra")]
+    Infra {
+        /// Target: IP (`192.0.2.1`), CIDR (`10.0.0.0/24`), host (`example.com`), or endpoint (`host:port`)
+        target: String,
+
+        /// Scan profile: `quick` (port scan only) or `standard` (default: all registered modules)
+        #[arg(long, default_value = "standard")]
+        profile: String,
+
+        /// Comma-separated module IDs to run (overrides the profile).
+        #[arg(long)]
+        modules: Option<String>,
+
+        /// Comma-separated module IDs to skip.
+        #[arg(long)]
+        skip: Option<String>,
+
+        /// Suppress progress output.
+        #[arg(long)]
+        quiet: bool,
+    },
 }
 
 #[derive(Debug, Clone, ValueEnum)]

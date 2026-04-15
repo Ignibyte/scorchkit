@@ -1,0 +1,16 @@
+# Example rule: detect exposed admin panels
+id: admin-panel-exposure
+name: Admin Panel Exposed
+severity: high
+description: |
+  An admin panel is accessible without authentication at /admin. This may
+  allow unauthorized administrative access to the application.
+remediation: |
+  Restrict /admin to authenticated administrators only. Use middleware
+  or an auth gateway to enforce access control before the page renders.
+request:
+  path: "/admin"
+  method: GET
+matchers:
+  status: 200
+  body_regex: "(?i)(admin (login|dashboard|panel|console)|administrator)"

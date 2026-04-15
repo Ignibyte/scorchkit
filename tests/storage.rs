@@ -337,7 +337,7 @@ mod storage_tests {
         let fid = findings[0].id;
 
         // Transition: New → Acknowledged
-        storage::findings::update_finding_status(&pool, fid, VulnStatus::Acknowledged)
+        storage::findings::update_finding_status(&pool, fid, VulnStatus::Acknowledged, None)
             .await
             .expect("ack");
 
@@ -347,12 +347,12 @@ mod storage_tests {
         assert_eq!(acked.len(), 1);
 
         // Transition: Acknowledged → Remediated
-        storage::findings::update_finding_status(&pool, fid, VulnStatus::Remediated)
+        storage::findings::update_finding_status(&pool, fid, VulnStatus::Remediated, None)
             .await
             .expect("remediate");
 
         // Transition: Remediated → Verified
-        storage::findings::update_finding_status(&pool, fid, VulnStatus::Verified)
+        storage::findings::update_finding_status(&pool, fid, VulnStatus::Verified, None)
             .await
             .expect("verify");
 
@@ -462,6 +462,7 @@ mod storage_tests {
             &pool,
             new_findings[0].id,
             VulnStatus::FalsePositive,
+            None,
         )
         .await
         .expect("mark fp");
@@ -584,9 +585,14 @@ mod storage_tests {
 
         // 7. Update status
         let xss_finding = all.iter().find(|f| f.module_id == "xss").expect("xss finding");
-        storage::findings::update_finding_status(&pool, xss_finding.id, VulnStatus::Remediated)
-            .await
-            .expect("remediate xss");
+        storage::findings::update_finding_status(
+            &pool,
+            xss_finding.id,
+            VulnStatus::Remediated,
+            None,
+        )
+        .await
+        .expect("remediate xss");
 
         // 8. Verify scans list
         let scans = storage::scans::list_scans(&pool, project.id).await.expect("list scans");

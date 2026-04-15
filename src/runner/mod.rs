@@ -1,7 +1,10 @@
 pub mod checkpoint;
 pub mod code_orchestrator;
 pub mod hooks;
+#[cfg(feature = "infra")]
+pub mod infra_orchestrator;
 pub mod orchestrator;
 pub mod plugin;
 pub mod progress;
+pub mod rule_engine;
 pub mod subprocess;
