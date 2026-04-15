@@ -14,13 +14,20 @@ pub mod httpx;
 pub mod hydra;
 pub mod interactsh;
 pub mod katana;
+pub mod kerbrute;
+pub mod masscan;
 pub mod metasploit;
+pub mod naabu;
 pub mod nikto;
 pub mod nmap;
 pub mod nuclei;
+pub mod nxc;
+pub mod onesixtyone;
 pub mod paramspider;
 pub mod prowler;
+pub mod smbmap;
 pub mod sqlmap;
+pub mod ssh_audit;
 pub mod sslyze;
 pub mod subfinder;
 pub mod testssl;
@@ -69,5 +76,13 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(gobuster::GobusterModule),
         Box::new(dnsrecon::DnsreconModule),
         Box::new(enum4linux::Enum4linuxModule),
+        // WORK-111: network/infra tool batch
+        Box::new(masscan::MasscanModule),
+        Box::new(naabu::NaabuModule),
+        Box::new(smbmap::SmbmapModule),
+        Box::new(nxc::NxcModule),
+        Box::new(kerbrute::KerbruteModule),
+        Box::new(ssh_audit::SshAuditModule),
+        Box::new(onesixtyone::OnesixtyoneModule),
     ]
 }

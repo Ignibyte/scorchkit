@@ -470,6 +470,65 @@ fn tool_specs() -> Vec<ToolSpec> {
             min_version: Some("8.0.0"),
             remediation: "Install: go install github.com/gitleaks/gitleaks/v8@latest",
         },
+        // WORK-111: network/infra tool batch
+        ToolSpec {
+            binary: "masscan",
+            name: "masscan",
+            category: "Network",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: apt install masscan (Debian/Ubuntu) or build from \
+                          https://github.com/robertdavidgraham/masscan",
+        },
+        ToolSpec {
+            binary: "naabu",
+            name: "naabu",
+            category: "Network",
+            version_flag: Some("-version"),
+            min_version: None,
+            remediation: "Install: go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest",
+        },
+        ToolSpec {
+            binary: "smbmap",
+            name: "smbmap",
+            category: "Network",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install smbmap (or pip install smbmap)",
+        },
+        ToolSpec {
+            binary: "nxc",
+            name: "NetExec (nxc)",
+            category: "Network",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install git+https://github.com/Pennyw0rth/NetExec",
+        },
+        ToolSpec {
+            binary: "kerbrute",
+            name: "kerbrute",
+            category: "Network",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: go install github.com/ropnop/kerbrute@latest",
+        },
+        ToolSpec {
+            binary: "ssh-audit",
+            name: "ssh-audit",
+            category: "Network",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install ssh-audit (or pip install ssh-audit)",
+        },
+        ToolSpec {
+            binary: "onesixtyone",
+            name: "onesixtyone",
+            category: "Network",
+            version_flag: None,
+            min_version: None,
+            remediation: "Install: apt install onesixtyone (Debian/Ubuntu) or build from \
+                          https://github.com/trailofbits/onesixtyone",
+        },
     ]
 }
 
