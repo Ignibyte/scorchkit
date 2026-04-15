@@ -27,6 +27,10 @@ CONSTITUTION.md
 # Hook enforcement (private)
 .claude/settings.json
 
+# Per-operator local permissions allowlist (operator paths + machine-
+# specific permission rules; never publish)
+.claude/settings.local.json
+
 # Pipeline documents and templates
 docs/planning/
 
