@@ -589,6 +589,60 @@ fn tool_specs() -> Vec<ToolSpec> {
             min_version: None,
             remediation: "Install: gem install brakeman",
         },
+        // WORK-112: DAST polish tool batch
+        ToolSpec {
+            binary: "commix",
+            name: "commix",
+            category: "Web",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install commix or git clone \
+                          https://github.com/commixproject/commix",
+        },
+        ToolSpec {
+            binary: "xsstrike",
+            name: "XSStrike",
+            category: "Web",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install xsstrike or git clone \
+                          https://github.com/s0md3v/XSStrike",
+        },
+        ToolSpec {
+            binary: "whatweb",
+            name: "WhatWeb",
+            category: "Recon",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: apt install whatweb (Debian/Ubuntu) or git clone \
+                          https://github.com/urbanadventurer/WhatWeb",
+        },
+        ToolSpec {
+            binary: "wapiti",
+            name: "Wapiti",
+            category: "Web",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install wapiti3",
+        },
+        ToolSpec {
+            binary: "linkfinder",
+            name: "LinkFinder",
+            category: "Recon",
+            version_flag: Some("--help"),
+            min_version: None,
+            remediation: "Install: pipx install linkfinder or git clone \
+                          https://github.com/GerbenJavado/LinkFinder",
+        },
+        ToolSpec {
+            binary: "eyewitness",
+            name: "EyeWitness",
+            category: "Recon",
+            version_flag: Some("--help"),
+            min_version: None,
+            remediation: "Install: apt install eyewitness or git clone \
+                          https://github.com/RedSiege/EyeWitness",
+        },
     ]
 }
 
