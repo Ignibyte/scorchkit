@@ -507,6 +507,10 @@ async fn send_client_hello_and_classify(
             Ok(t) => t,
             Err(_) => return ProbeOutcome::Unknown,
         },
+        // RDP-TLS cipher / version enumeration would require driving the
+        // X.224 CR/CC dance before every probe handshake. Not supported
+        // today — return Unknown so no findings are fabricated.
+        TlsMode::RdpTls => return ProbeOutcome::Unknown,
     };
 
     let hello = build_client_hello(version, ciphers, host);
@@ -629,6 +633,10 @@ async fn probe_modern_version(
             Ok(t) => t,
             Err(_) => return ProbeOutcome::Unknown,
         },
+        // RDP-TLS version enumeration would require driving the X.224
+        // CR/CC dance before every probe handshake. Not supported today —
+        // return Unknown so no findings are fabricated.
+        TlsMode::RdpTls => return ProbeOutcome::Unknown,
     };
 
     let Ok(server_name) = rustls::pki_types::ServerName::try_from(host.to_string()) else {

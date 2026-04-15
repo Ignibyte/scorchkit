@@ -166,11 +166,11 @@ Shells out to `nmap -sV` for service-version detection. Uses the shared `parse_n
 
 ### `tls_probe::TlsInfraModule`
 
-Probes non-HTTP TLS services. Implicit TLS ports: SMTPS 465, LDAPS 636, IMAPS 993, POP3S 995. STARTTLS upgrade ports: SMTP 25 / 587, IMAP 143, POP3 110. Each port is connected, upgraded (when applicable), handshaken through rustls, and the peer cert runs through the same four checks the DAST `ssl` module does: expired, self-signed, weak signature, subject/SAN mismatch. The shared logic lives in `engine::tls_probe` (`CertInfo`, `TlsMode`, `StarttlsProtocol`, `probe_tls`, `check_certificate`, `parse_certificate`) — both DAST and Infra call into it so finding shapes are identical.
+Probes non-HTTP TLS services. Implicit TLS ports: SMTPS 465, LDAPS 636, IMAPS 993, POP3S 995. STARTTLS upgrade ports: SMTP 25 / 587, IMAP 143, POP3 110. RDP-TLS on port 3389 (WORK-148) via the MS-RDPBCGR X.224 Connection Request / Connection Confirm negotiation requesting `PROTOCOL_SSL`. Each port is connected, upgraded (when applicable), handshaken through rustls, and the peer cert runs through the same four checks the DAST `ssl` module does: expired, self-signed, weak signature, subject/SAN mismatch. The shared logic lives in `engine::tls_probe` (`CertInfo`, `TlsMode` — `Implicit` / `Starttls` / `RdpTls`, `StarttlsProtocol`, `probe_tls`, `check_certificate`, `parse_certificate`) — both DAST and Infra call into it so finding shapes are identical.
 
-Handshake failures surface as Info findings (port closed / service doesn't speak TLS), not defects.
+Handshake failures surface as Info findings (port closed / service doesn't speak TLS; NLA-only RDP host returned `RDP_NEG_FAILURE`), not defects.
 
-**Hardening enumeration (WORK-143):** When `TlsInfraConfig::enum_protocols` is `true` (default), the module additionally calls `engine::tls_enum::enumerate_tls_versions` per port and aggregates results into per-severity findings (SSLv3 / TLSv1.0 → Critical; TLSv1.1 → High; TLSv1.2 / TLSv1.3 → Info summary). When `cipher_enum_limit = Some(N)` is set (opt-in, default `None`), the module also calls `engine::tls_enum::enumerate_weak_ciphers` with the budget and emits per-severity-tier findings for accepted weak suites. Full per-entry lists appear in each finding's `evidence` field to keep the report readable. RDP-TLS (X.224 negotiation) remains a follow-up (#118).
+**Hardening enumeration (WORK-143):** When `TlsInfraConfig::enum_protocols` is `true` (default), the module additionally calls `engine::tls_enum::enumerate_tls_versions` per port and aggregates results into per-severity findings (SSLv3 / TLSv1.0 → Critical; TLSv1.1 → High; TLSv1.2 / TLSv1.3 → Info summary). When `cipher_enum_limit = Some(N)` is set (opt-in, default `None`), the module also calls `engine::tls_enum::enumerate_weak_ciphers` with the budget and emits per-severity-tier findings for accepted weak suites. Full per-entry lists appear in each finding's `evidence` field to keep the report readable.
 
 ### `dns_probe::DnsInfraModule`
 
@@ -211,4 +211,3 @@ Both facade methods are gated on `#[cfg(feature = "infra")]`.
 - **`NetworkAuth` and `ServiceEnum` category variants** — follow-up for native credentialed probe modules (SSH login, SMB mount, SNMP walk). `NetworkCredentials` field on `InfraContext` shipped in WORK-146 — see [auth-config.md](auth-config.md).
 - **WORK-106** — Storage migration + MCP tools for infra scans
 - DNS resolution for `InfraTarget::Host` in `iter_ips()`
-- RDP-TLS handshake in `TlsInfraModule` (#118)
