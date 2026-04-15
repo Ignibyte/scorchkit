@@ -691,8 +691,6 @@ mod tests {
     //! (scanner/ssl.rs and infra/tls_probe.rs).
 
     use super::*;
-    use tokio::io::AsyncReadExt as _;
-    use tokio::io::AsyncWriteExt as _;
     use tokio::net::TcpListener;
 
     fn fixture_cert(
