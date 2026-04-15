@@ -8,10 +8,12 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use tracing::debug;
 
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
+use crate::engine::network_credentials::{format_redacted_argv, NetworkCredentials};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
 use crate::runner::subprocess;
@@ -48,16 +50,32 @@ impl ScanModule for NxcModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let host = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
-        // `nxc smb <host>` prints host info; with empty creds it also
-        // tests null-session access. `--no-progress` keeps stdout clean.
-        let output = subprocess::run_tool(
-            "nxc",
-            &["smb", host, "-u", "", "-p", "", "--no-progress"],
-            Duration::from_secs(60),
-        )
-        .await?;
+        let creds = NetworkCredentials::from_config_with_env(&ctx.config.network_credentials);
+        let owned = build_argv(&creds, host);
+        // Borrow into &[&str] for subprocess::run_tool + argv logging.
+        let args: Vec<&str> = owned.iter().map(String::as_str).collect();
+        debug!("nxc: {}", format_redacted_argv(&args));
+        let output = subprocess::run_tool("nxc", &args, Duration::from_secs(60)).await?;
         Ok(parse_nxc_output(&output.stdout, ctx.target.url.as_str(), host))
     }
+}
+
+/// Build the nxc argv. With SMB credentials present, forwards them via
+/// `-u USER -p PASS`. Without credentials, preserves the existing
+/// null-session probe (`-u "" -p ""`).
+#[must_use]
+fn build_argv(creds: &NetworkCredentials, host: &str) -> Vec<String> {
+    let user = creds.smb_username.as_deref().unwrap_or("");
+    let password = creds.smb_password.as_deref().unwrap_or("");
+    vec![
+        "smb".to_string(),
+        host.to_string(),
+        "-u".to_string(),
+        user.to_string(),
+        "-p".to_string(),
+        password.to_string(),
+        "--no-progress".to_string(),
+    ]
 }
 
 /// Parse nxc text output into findings.
@@ -146,5 +164,28 @@ mod tests {
     #[test]
     fn parse_nxc_output_empty() {
         assert!(parse_nxc_output("", "https://example.com", "example.com").is_empty());
+    }
+
+    /// With credentials configured, argv carries `-u alice -p s3cret`.
+    #[test]
+    fn nxc_argv_with_credentials() {
+        let creds = NetworkCredentials {
+            smb_username: Some("alice".to_string()),
+            smb_password: Some("s3cret".to_string()),
+            ..Default::default()
+        };
+        let argv = build_argv(&creds, "example.com");
+        assert_eq!(
+            argv,
+            vec!["smb", "example.com", "-u", "alice", "-p", "s3cret", "--no-progress"]
+        );
+    }
+
+    /// Without credentials, argv preserves the null-session behaviour.
+    #[test]
+    fn nxc_argv_without_credentials() {
+        let creds = NetworkCredentials::default();
+        let argv = build_argv(&creds, "example.com");
+        assert_eq!(argv, vec!["smb", "example.com", "-u", "", "-p", "", "--no-progress"]);
     }
 }

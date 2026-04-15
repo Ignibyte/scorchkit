@@ -29,6 +29,9 @@ pub use crate::engine::events::{
 // Audit log
 pub use crate::engine::audit_log::AuditLogHandler;
 
+// Network credentials (WORK-146) — authenticated network scanning.
+pub use crate::engine::network_credentials::NetworkCredentials;
+
 // Service fingerprints (not feature-gated — useful wherever service data flows)
 pub use crate::engine::service_fingerprint::ServiceFingerprint;
 

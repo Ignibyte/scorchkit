@@ -11,10 +11,12 @@ use std::io::Write as _;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use tracing::debug;
 
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
+use crate::engine::network_credentials::{format_redacted_argv, NetworkCredentials};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
 use crate::runner::subprocess;
@@ -76,15 +78,34 @@ impl ScanModule for KerbruteModule {
             }
         }
         let path = tmp.path().to_string_lossy().to_string();
-        // kerbrute userenum --dc <host> --domain <host> <user-file>
-        let output = subprocess::run_tool(
-            "kerbrute",
-            &["userenum", "--dc", host, "--domain", host, &path],
-            Duration::from_secs(60),
-        )
-        .await?;
+        let creds = NetworkCredentials::from_config_with_env(&ctx.config.network_credentials);
+        let owned = build_argv(&creds, host, &path);
+        let args: Vec<&str> = owned.iter().map(String::as_str).collect();
+        debug!("kerbrute: {}", format_redacted_argv(&args));
+        let output = subprocess::run_tool("kerbrute", &args, Duration::from_secs(60)).await?;
         Ok(parse_kerbrute_output(&output.stdout, ctx.target.url.as_str(), host))
     }
+}
+
+/// Build the kerbrute argv. When a Kerberos principal is configured
+/// (`alice@CORP.EXAMPLE`), extract the domain portion and forward via
+/// `--domain <DOMAIN>`. Without a principal (or with an unparseable
+/// one), fall back to the existing host-based default.
+#[must_use]
+fn build_argv(creds: &NetworkCredentials, host: &str, user_file: &str) -> Vec<String> {
+    let domain = creds
+        .kerberos_principal
+        .as_deref()
+        .and_then(|p| p.split_once('@').map(|(_, d)| d.to_string()))
+        .unwrap_or_else(|| host.to_string());
+    vec![
+        "userenum".to_string(),
+        "--dc".to_string(),
+        host.to_string(),
+        "--domain".to_string(),
+        domain,
+        user_file.to_string(),
+    ]
 }
 
 /// Parse kerbrute output for `[+] VALID USERNAME:` lines.
@@ -161,5 +182,49 @@ mod tests {
             assert!(!u.is_empty());
             assert!(!u.contains('\n'));
         }
+    }
+
+    /// A configured Kerberos principal contributes its domain portion
+    /// to kerbrute's `--domain` flag.
+    #[test]
+    fn kerbrute_argv_with_principal_extracts_domain() {
+        let creds = NetworkCredentials {
+            kerberos_principal: Some("alice@CORP.EXAMPLE".to_string()),
+            ..Default::default()
+        };
+        let argv = build_argv(&creds, "dc1.corp.example", "/tmp/users.txt");
+        assert_eq!(
+            argv,
+            vec![
+                "userenum",
+                "--dc",
+                "dc1.corp.example",
+                "--domain",
+                "CORP.EXAMPLE",
+                "/tmp/users.txt"
+            ]
+        );
+    }
+
+    /// Without a principal, the domain falls back to the target host.
+    #[test]
+    fn kerbrute_argv_without_principal_uses_host() {
+        let creds = NetworkCredentials::default();
+        let argv = build_argv(&creds, "example.com", "/tmp/users.txt");
+        assert_eq!(
+            argv,
+            vec!["userenum", "--dc", "example.com", "--domain", "example.com", "/tmp/users.txt"]
+        );
+    }
+
+    /// A principal without an `@` (unparseable) falls back to the host.
+    #[test]
+    fn kerbrute_argv_unparseable_principal_falls_back() {
+        let creds = NetworkCredentials {
+            kerberos_principal: Some("no-at-sign".to_string()),
+            ..Default::default()
+        };
+        let argv = build_argv(&creds, "example.com", "/tmp/users.txt");
+        assert!(argv.contains(&"example.com".to_string()));
     }
 }
