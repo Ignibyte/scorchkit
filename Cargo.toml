@@ -78,7 +78,7 @@ serde_yaml = "0.9.34"
 default = []
 storage = ["dep:sqlx", "dep:sha2", "dep:croner"]
 mcp = ["storage", "dep:rmcp", "dep:schemars"]
-infra = ["dep:ipnet", "dep:sha2"]
+infra = ["dep:ipnet", "dep:sha2", "dep:hickory-resolver"]
 # Note: sha2 under `infra` powers content-addressed CVE cache filenames.
 
 [dependencies.sqlx]
@@ -106,6 +106,12 @@ optional = true
 [dependencies.ipnet]
 version = "2"
 optional = true
+
+[dependencies.hickory-resolver]
+version = "0.25"
+optional = true
+# Uses default features (`system-config` + `tokio`) — we need both for
+# `TokioResolver::builder_tokio()` to resolve from `/etc/resolv.conf`.
 
 [dev-dependencies]
 assert_cmd = "2"
