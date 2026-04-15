@@ -8,14 +8,17 @@ pub mod brakeman;
 pub mod cargo_audit;
 pub mod cargo_deny;
 pub mod checkov;
+pub mod dockle;
 pub mod eslint_security;
 pub mod gitleaks;
 pub mod gosec;
 pub mod grype;
 pub mod hadolint;
 pub mod kics;
+pub mod kubescape;
 pub mod osv_scanner;
 pub mod phpstan;
+pub mod scoutsuite;
 pub mod semgrep;
 pub mod slither;
 pub mod snyk_code;
@@ -47,5 +50,9 @@ pub fn register_modules() -> Vec<Box<dyn CodeModule>> {
         Box::new(kics::KicsModule),
         Box::new(slither::SlitherModule),
         Box::new(brakeman::BrakemanModule),
+        // WORK-114: container/cloud tool batch
+        Box::new(dockle::DockleModule),
+        Box::new(kubescape::KubescapeModule),
+        Box::new(scoutsuite::ScoutsuiteModule),
     ]
 }
