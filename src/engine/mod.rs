@@ -16,6 +16,7 @@ pub mod infra_module;
 #[cfg(feature = "infra")]
 pub mod infra_target;
 pub mod module_trait;
+pub mod network_credentials;
 pub mod oob;
 pub mod scan_context;
 pub mod scan_result;

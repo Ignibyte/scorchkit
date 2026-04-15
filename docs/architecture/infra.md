@@ -208,7 +208,7 @@ Both facade methods are gated on `#[cfg(feature = "infra")]`.
 
 ## Future Work
 
-- **WORK-104** — `NetworkAuth` and `ServiceEnum` category variants + `NetworkCredentials` field on `InfraContext`
+- **`NetworkAuth` and `ServiceEnum` category variants** — follow-up for native credentialed probe modules (SSH login, SMB mount, SNMP walk). `NetworkCredentials` field on `InfraContext` shipped in WORK-146 — see [auth-config.md](auth-config.md).
 - **WORK-106** — Storage migration + MCP tools for infra scans
 - DNS resolution for `InfraTarget::Host` in `iter_ips()`
 - RDP-TLS handshake in `TlsInfraModule` (#118)
