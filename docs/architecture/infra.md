@@ -174,14 +174,15 @@ Handshake failures surface as Info findings (port closed / service doesn't speak
 
 ### `dns_probe::DnsInfraModule`
 
-Four native async DNS probes via `hickory-resolver`:
+Native DNS probes via `hickory-resolver` (with `dnssec-aws-lc-rs` for chain validation) and `hickory-proto` (transitive, used for the native AXFR probe over raw TCP):
 
 - **Wildcard A/AAAA detection** — queries a random 16-hex-char subdomain (64 bits of UUID-derived entropy so no collision with real subdomains). Medium severity if wildcard resolves.
-- **DNSSEC** — checks for `DNSKEY` record at apex. Medium severity when absent.
+- **DNSSEC — two-pass (WORK-145).** Pass 1: DNSKEY presence at the apex (Medium if missing). Pass 2: validating resolver with `ResolverOpts::validate = true` triggers hickory's parent-DS → DNSKEY → RRSIG chain walk; errors classify via `classify_dnssec_error` into Critical (bogus / bad RRSIG), High (expired signature), Medium (missing DS at parent), or Medium (indeterminate). Success → Info "Chain Validated".
 - **CAA** — checks for CAA records. Low severity when absent.
 - **NS enumeration** — lists authoritative name servers. Info finding.
+- **AXFR zone transfer (WORK-145).** Native raw-TCP probe — hand-crafted `hickory-proto` `Message` with `QTYPE=AXFR`, 2-byte TCP length prefix, first-response classification (`NoError` + `AA` + `ANCOUNT>0` + SOA-in-answers = accepted). Fans out across every NS in the zone, emits one Critical finding per accepting server. Rejections (every healthy server) are silent at `debug!` level. 2s per-NS timeout.
 
-AXFR zone transfer testing stays with the existing DAST `tools::dnsrecon` and `tools::dnsx` wrappers — a native implementation would require `hickory-client`.
+AXFR is now handled natively — the external `tools::dnsrecon` / `tools::dnsx` wrappers remain as alternatives for operators who need full-zone enumeration rather than just acceptance probing.
 
 ### `cve_match::CveMatchModule` (injected)
 
@@ -211,4 +212,3 @@ Both facade methods are gated on `#[cfg(feature = "infra")]`.
 - **WORK-106** — Storage migration + MCP tools for infra scans
 - DNS resolution for `InfraTarget::Host` in `iter_ips()`
 - RDP-TLS handshake in `TlsInfraModule` (#118)
-- AXFR migration from DAST wrappers to native `hickory-client` in `DnsInfraModule`
