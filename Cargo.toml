@@ -114,8 +114,13 @@ optional = true
 [dependencies.hickory-resolver]
 version = "0.25"
 optional = true
+features = ["dnssec-aws-lc-rs"]
 # Uses default features (`system-config` + `tokio`) — we need both for
 # `TokioResolver::builder_tokio()` to resolve from `/etc/resolv.conf`.
+# `dnssec-aws-lc-rs` enables full DNSSEC chain validation via
+# `ResolverOpts::validate = true` (WORK-145). aws-lc-rs matches the
+# crypto provider rustls already uses (WORK-143) — single crypto
+# backend across the binary.
 
 [dev-dependencies]
 assert_cmd = "2"
