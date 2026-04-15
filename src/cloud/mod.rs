@@ -5,40 +5,55 @@
 //! [`crate::engine::cloud_module::CloudModule`] and are registered via
 //! [`register_modules`].
 //!
-//! ## WORK-150 state: empty registry
+//! ## Current registry (WORK-151)
 //!
-//! This module tree ships empty at WORK-150 — the load-bearing type
-//! surface and orchestrator wiring are the deliverable, not any
-//! concrete posture check. Concrete modules land in:
+//! - [`prowler::ProwlerCloudModule`] — Prowler-driven AWS posture audit
+//!   (CIS AWS Foundations + 400+ checks). Module id `"prowler-cloud"`.
 //!
-//! - **WORK-151** — Prowler-as-`CloudModule` (AWS coverage via the
-//!   existing `tools::prowler` wrapper, reshaped to the cloud-family
-//!   surface)
-//! - **WORK-152** — Scoutsuite-as-`CloudModule` (multi-cloud fan-out)
-//! - **WORK-153** — Kubescape-as-`CloudModule` (Kubernetes cluster
+//! ## Follow-up pipelines
+//!
+//! - **WORK-152** — Scoutsuite as `CloudModule` (multi-cloud fan-out —
+//!   GCP / Azure / AWS / `AliCloud` / OCI)
+//! - **WORK-153** — Kubescape as `CloudModule` (Kubernetes cluster
 //!   posture)
 //! - **WORK-154** — Finding-shape normalization + compliance tagging
-//!   across the three wrappers
+//!   across cloud modules; shared OCSF parser extraction (once there
+//!   are two consumers)
+
+pub mod prowler;
 
 use crate::engine::cloud_module::CloudModule;
 
-/// Returns every built-in cloud module. Empty at WORK-150 — populated
-/// by WORK-151+.
+/// Returns every built-in cloud module.
+///
+/// The list grows as concrete posture-checking modules land. Order
+/// is lexicographic by module id so default scans have a stable
+/// module sequence across builds.
 #[must_use]
 pub fn register_modules() -> Vec<Box<dyn CloudModule>> {
-    vec![]
+    vec![Box::new(prowler::ProwlerCloudModule)]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::cloud_module::{CloudCategory, CloudProvider};
 
-    /// Pins the WORK-150 empty-registry contract. When WORK-151 ships
-    /// the Prowler cloud module, this test will update to assert the
-    /// expected non-empty count.
+    /// Pins the WORK-151 registry shape: exactly one module,
+    /// `prowler-cloud`, Compliance category, AWS provider.
+    ///
+    /// When WORK-152 adds Scoutsuite the expected count flips to 2
+    /// and additional assertions pin the new module's id + metadata.
     #[test]
-    fn test_cloud_register_modules_empty() {
+    fn test_cloud_register_modules_contains_prowler() {
         let modules = register_modules();
-        assert!(modules.is_empty(), "WORK-150 ships no concrete cloud modules");
+        assert_eq!(modules.len(), 1, "WORK-151 registers exactly one cloud module");
+
+        let m = &modules[0];
+        assert_eq!(m.id(), "prowler-cloud");
+        assert_eq!(m.category(), CloudCategory::Compliance);
+        assert_eq!(m.providers(), &[CloudProvider::Aws]);
+        assert!(m.requires_external_tool());
+        assert_eq!(m.required_tool(), Some("prowler"));
     }
 }
