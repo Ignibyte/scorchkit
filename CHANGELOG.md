@@ -4,6 +4,8 @@ All notable changes to ScorchKit will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-04-15
+
 ### Fixed
 - **NVD pagination — CPEs matching more than one page no longer silently truncate (WORK-147, closes #121)** — `NvdCveLookup::query` now follows NVD's `startIndex` pagination automatically, aggregating records across pages until `records.len() >= totalResults` or the hard `MAX_PAGES = 10` (≈20,000-record) ceiling. Pre-v2.1.x the query discarded everything past the first 2000 records silently, meaning CPEs for heavy software (`nginx`, `openssh`, `apache_httpd`) returned incomplete CVE sets. A zero-record page breaks the loop unconditionally to defend against misbehaving mirrors. Page count is logged at `debug!` so operators see the request cost. (WORK-147)
 
