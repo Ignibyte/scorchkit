@@ -1,4 +1,6 @@
 pub mod checkpoint;
+#[cfg(feature = "cloud")]
+pub mod cloud_orchestrator;
 pub mod code_orchestrator;
 pub mod hooks;
 #[cfg(feature = "infra")]

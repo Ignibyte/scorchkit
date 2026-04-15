@@ -41,6 +41,8 @@
 pub mod agent;
 pub mod ai;
 pub mod cli;
+#[cfg(feature = "cloud")]
+pub mod cloud;
 pub mod config;
 pub mod engine;
 pub mod facade;

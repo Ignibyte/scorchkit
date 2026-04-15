@@ -1,5 +1,13 @@
 pub mod api_spec;
 pub mod audit_log;
+#[cfg(feature = "cloud")]
+pub mod cloud_context;
+#[cfg(feature = "cloud")]
+pub mod cloud_credentials;
+#[cfg(feature = "cloud")]
+pub mod cloud_module;
+#[cfg(feature = "cloud")]
+pub mod cloud_target;
 pub mod code_context;
 pub mod code_module;
 pub mod compliance;

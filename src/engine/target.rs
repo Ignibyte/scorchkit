@@ -114,6 +114,48 @@ impl Target {
         Ok(Self { raw: raw.to_string(), url, domain: None, port: 0, is_https: false })
     }
 
+    /// Create a target for a cloud-posture scan using a synthetic
+    /// `cloud://` URL.
+    ///
+    /// `raw` is percent-encoded into the URL path so cloud-target
+    /// strings like `aws:123456789012` / `gcp:my-project` / `all`
+    /// round-trip cleanly. Mirrors [`Target::from_infra`] for the
+    /// cloud family (WORK-150) — exists so the cloud orchestrator can
+    /// reuse [`crate::engine::scan_result::ScanResult`] without
+    /// forcing reporting / storage / AI layers to accept a union
+    /// target type.
+    ///
+    /// Domain is `None`, port is `0`, `is_https` is `false`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScorchError::InvalidTarget`] if `raw` is empty or
+    /// cannot be percent-encoded into a valid URL.
+    pub fn from_cloud(raw: &str) -> Result<Self> {
+        if raw.trim().is_empty() {
+            return Err(ScorchError::InvalidTarget {
+                target: raw.to_string(),
+                reason: "empty cloud target".to_string(),
+            });
+        }
+        let encoded: String = raw
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~' | '/' | ':') {
+                    c.to_string()
+                } else {
+                    format!("%{:02X}", c as u32)
+                }
+            })
+            .collect();
+        let url_str = format!("cloud:///{encoded}");
+        let url = Url::parse(&url_str).map_err(|e| ScorchError::InvalidTarget {
+            target: raw.to_string(),
+            reason: format!("cannot build cloud:// URL: {e}"),
+        })?;
+        Ok(Self { raw: raw.to_string(), url, domain: None, port: 0, is_https: false })
+    }
+
     /// Return the base URL (scheme + host + port if non-default).
     #[must_use]
     pub fn base_url(&self) -> String {
@@ -281,5 +323,25 @@ mod tests {
         assert_eq!(t.raw, "2001:db8::/32");
         assert_eq!(t.url.scheme(), "infra");
         Ok(())
+    }
+
+    /// Verify `Target::from_cloud` constructs a valid `cloud://` URL
+    /// target (WORK-150).
+    #[test]
+    fn test_target_from_cloud_constructs_cloud_url() -> Result<()> {
+        let t = Target::from_cloud("aws:123456789012")?;
+        assert_eq!(t.raw, "aws:123456789012");
+        assert_eq!(t.url.scheme(), "cloud");
+        assert!(t.domain.is_none());
+        assert_eq!(t.port, 0);
+        assert!(!t.is_https);
+        Ok(())
+    }
+
+    /// Verify `Target::from_cloud` rejects empty input (WORK-150).
+    #[test]
+    fn test_target_from_cloud_empty_errors() {
+        assert!(Target::from_cloud("").is_err());
+        assert!(Target::from_cloud("   ").is_err());
     }
 }

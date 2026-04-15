@@ -84,6 +84,9 @@ storage = ["dep:sqlx", "dep:sha2", "dep:croner"]
 mcp = ["storage", "dep:rmcp", "dep:schemars"]
 infra = ["dep:ipnet", "dep:sha2", "dep:hickory-resolver"]
 # Note: sha2 under `infra` powers content-addressed CVE cache filenames.
+# WORK-150: cloud family seam — trait + orchestrator + CLI wiring only.
+# No SDK deps until WORK-151+ adds native cloud modules.
+cloud = []
 
 [dependencies.sqlx]
 version = "0.8"
