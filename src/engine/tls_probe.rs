@@ -25,8 +25,10 @@
 //!
 //! ## What's out of scope
 //!
-//! - TLS protocol-version enumeration (forced min/max handshakes).
-//! - Cipher-suite enumeration (one handshake per cipher).
+//! - **TLS protocol-version enumeration** and **cipher-suite
+//!   enumeration** now live in [`crate::engine::tls_enum`]. That module
+//!   answers "which versions / ciphers will the server accept?" while
+//!   this one answers "is the peer certificate valid?".
 //! - RDP-TLS (requires X.224 Connection Request negotiation).
 
 use std::io::{self};
@@ -158,7 +160,17 @@ pub async fn probe_tls(
 
 /// Drive the STARTTLS-equivalent command dance for the given
 /// protocol, returning the same `TcpStream` ready for TLS upgrade.
-async fn run_starttls_preamble(
+///
+/// Exposed at crate scope so [`crate::engine::tls_enum`] can reuse the
+/// STARTTLS preamble without duplicating the wire protocol.
+///
+/// # Errors
+///
+/// Returns an I/O error if the TCP read/write fails, if the peer
+/// closes before sending a positive STARTTLS response, or if the
+/// protocol-specific negative response (e.g. SMTP not-220, IMAP
+/// not-OK, POP3 not-`+OK`) is received.
+pub(crate) async fn run_starttls_preamble(
     mut tcp: TcpStream,
     protocol: StarttlsProtocol,
 ) -> io::Result<TcpStream> {
