@@ -74,6 +74,10 @@ base64 = "0.22"
 regex = { version = "1.12.3", default-features = false, features = ["std", "perf"] }
 serde_yaml = "0.9.34"
 
+# Temporary files (used by tool wrappers that need to materialise
+# wordlists / community lists for external CLIs).
+tempfile = "3"
+
 [features]
 default = []
 storage = ["dep:sqlx", "dep:sha2", "dep:croner"]
