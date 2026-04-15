@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use scraper::{Html, Selector};
 
+use crate::engine::api_spec::read_api_spec;
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
@@ -79,6 +80,41 @@ impl ScanModule for CsrfModule {
                         .with_cwe(352)
                         .with_confidence(0.7),
                 );
+            }
+        }
+
+        // WORK-108b: surface state-changing endpoints from any
+        // published API spec. We can't probe CSRF protection on a
+        // JSON API the same way as an HTML form (no in-page token
+        // to inspect), so this is operator-actionable Info: each
+        // state-changing endpoint should require a CSRF header
+        // (X-CSRF-Token / X-XSRF-Token) or SameSite=strict cookies.
+        if let Some(spec) = read_api_spec(&ctx.shared_data) {
+            for endpoint in &spec.endpoints {
+                if matches!(endpoint.method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
+                    findings.push(
+                        Finding::new(
+                            "csrf",
+                            Severity::Info,
+                            format!(
+                                "Discovered state-changing endpoint: {} {}",
+                                endpoint.method, endpoint.url
+                            ),
+                            "A discovered API endpoint accepts a state-changing HTTP method. \
+                             Verify it requires a CSRF token (X-CSRF-Token / X-XSRF-Token \
+                             header) or is protected by SameSite=Strict cookies."
+                                .to_string(),
+                            endpoint.url.clone(),
+                        )
+                        .with_evidence(format!("method={} url={}", endpoint.method, endpoint.url))
+                        .with_remediation(
+                            "Require a CSRF token header on state-changing API requests.",
+                        )
+                        .with_owasp("A05:2021 Security Misconfiguration")
+                        .with_cwe(352)
+                        .with_confidence(0.5),
+                    );
+                }
             }
         }
 

@@ -49,8 +49,13 @@ Returning early on `None` gives consumers a clean fallback to their existing cra
 ## Wired modules
 
 - **Producer:** `tools::vespasian` (WORK-107)
-- **Consumer:** `scanner::injection` (WORK-108) — appends each discovered endpoint with sentinel parameter values to its existing SQLi probe path
-- **Pending consumers:** `scanner::csrf`, `scanner::idor`, `scanner::graphql`, `scanner::auth`, `scanner::ratelimit` — tracked by WORK-108b in the backlog
+- **Consumers:**
+  - `scanner::injection` (WORK-108) — appends each discovered endpoint with sentinel parameter values to its existing SQLi probe path
+  - `scanner::csrf` (WORK-108b) — flags state-changing endpoints (POST/PUT/PATCH/DELETE) for operator CSRF review
+  - `scanner::idor` (WORK-108b) — surfaces ID-shaped parameters via `param_looks_like_id` heuristic
+  - `scanner::graphql` (WORK-108b) — adds spec endpoints whose URL contains `graphql`/`gql` to the discovered-endpoints list, then runs the existing introspection / depth-abuse / batch-abuse / field-suggestion / mutation-enum tests
+  - `scanner::auth` (WORK-108b) — sends an unauthenticated request per endpoint; flags 200 responses with non-trivial bodies as "may not require auth"
+  - `scanner::ratelimit` (WORK-108b) — sends 10 rapid GET requests per spec endpoint (capped at first 10 endpoints); flags absence of 429 / 503 as "no rate limit observed"
 
 ## Why a separate type
 

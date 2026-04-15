@@ -98,6 +98,58 @@ impl ScanModule for AuthSessionModule {
             check_logout_invalidation(ctx, url, &mut findings).await?;
         }
 
+        // WORK-108b: probe each spec-discovered endpoint for missing
+        // auth. A 200 response to an unauthenticated request to an
+        // endpoint that should require auth is a Medium finding.
+        // We only flag responses that contain content (Content-Length
+        // > 0) to reduce false positives on liveness probes.
+        if let Some(spec) = crate::engine::api_spec::read_api_spec(&ctx.shared_data) {
+            for endpoint in &spec.endpoints {
+                let request = match endpoint.method.as_str() {
+                    "GET" | "HEAD" => ctx.http_client.get(&endpoint.url),
+                    "POST" => ctx.http_client.post(&endpoint.url),
+                    "PUT" => ctx.http_client.put(&endpoint.url),
+                    "DELETE" => ctx.http_client.delete(&endpoint.url),
+                    "PATCH" => ctx.http_client.patch(&endpoint.url),
+                    _ => continue,
+                };
+                let Ok(response) = request.send().await else { continue };
+                let status = response.status();
+                if status.is_success() {
+                    let body_len = response.content_length().unwrap_or(0);
+                    if body_len > 32 {
+                        findings.push(
+                            Finding::new(
+                                "auth-session",
+                                Severity::Medium,
+                                format!(
+                                    "Discovered endpoint accepts unauthenticated request: {} {}",
+                                    endpoint.method, endpoint.url
+                                ),
+                                format!(
+                                    "An unauthenticated {} request to {} returned {} with \
+                                     {body_len} bytes of body content. If this endpoint \
+                                     should require authentication, the access-control check \
+                                     is missing.",
+                                    endpoint.method, endpoint.url, status
+                                ),
+                                endpoint.url.clone(),
+                            )
+                            .with_evidence(format!("status={status} body_len={body_len}"))
+                            .with_remediation(
+                                "Verify the endpoint enforces authentication. If it's \
+                                 intentionally public, document it; otherwise add an auth \
+                                 check.",
+                            )
+                            .with_owasp("A01:2021 Broken Access Control")
+                            .with_cwe(306)
+                            .with_confidence(0.6),
+                        );
+                    }
+                }
+            }
+        }
+
         Ok(findings)
     }
 }

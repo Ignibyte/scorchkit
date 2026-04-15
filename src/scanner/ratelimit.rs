@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use crate::engine::api_spec::read_api_spec;
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
@@ -98,7 +99,60 @@ impl ScanModule for RateLimitModule {
             break; // Only test the first login endpoint found
         }
 
+        // WORK-108b: probe spec-discovered endpoints for rate-limit
+        // enforcement. Extracted to a helper so this `run` stays
+        // under clippy's `too_many_lines` cap.
+        probe_spec_endpoints(ctx, &mut findings).await;
+
         Ok(findings)
+    }
+}
+
+/// Hit each spec-discovered endpoint with 10 rapid GET requests
+/// (capped at the first 10 endpoints) and emit a Low finding when
+/// neither 429 nor 503 appears.
+async fn probe_spec_endpoints(ctx: &ScanContext, findings: &mut Vec<Finding>) {
+    let Some(spec) = read_api_spec(&ctx.shared_data) else { return };
+    for endpoint in spec.endpoints.iter().take(10) {
+        let mut limited = false;
+        let mut sent = 0u32;
+        for _ in 0..10 {
+            match ctx.http_client.get(&endpoint.url).send().await {
+                Ok(r) => {
+                    sent += 1;
+                    let s = r.status().as_u16();
+                    if s == 429 || s == 503 {
+                        limited = true;
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        if !limited && sent >= 10 {
+            findings.push(
+                Finding::new(
+                    "ratelimit",
+                    Severity::Low,
+                    format!("No rate-limit observed on {}", endpoint.url),
+                    format!(
+                        "10 rapid GET requests to {} returned no 429 / 503 / Retry-After \
+                         response. The endpoint may be vulnerable to brute-force or \
+                         resource-exhaustion attacks.",
+                        endpoint.url
+                    ),
+                    endpoint.url.clone(),
+                )
+                .with_evidence(format!("sent={sent} no-429/503 received"))
+                .with_remediation(
+                    "Apply per-IP / per-user rate limits on every API endpoint, not just \
+                     login. Consider a sliding-window limiter at the edge.",
+                )
+                .with_owasp("A04:2021 Insecure Design")
+                .with_cwe(770)
+                .with_confidence(0.6),
+            );
+        }
     }
 }
 
