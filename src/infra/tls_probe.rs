@@ -8,6 +8,11 @@
 //!   POP3S (995). Port is TLS-wrapped from byte zero.
 //! - **STARTTLS:** SMTP (25, 587), IMAP (143), POP3 (110). Plain TCP
 //!   connect → protocol-specific upgrade command → TLS.
+//! - **RDP-TLS:** RDP (3389). Plain TCP connect → X.224 Connection
+//!   Request / Connection Confirm negotiation (MS-RDPBCGR) requesting
+//!   `PROTOCOL_SSL` → TLS. NLA-only hosts respond with
+//!   `RDP_NEG_FAILURE` and surface as Info findings (port speaks RDP
+//!   but not plain `PROTOCOL_SSL`), not defects.
 //!
 //! Per-port, the module runs [`crate::engine::tls_probe::probe_tls`]
 //! then pipes the resulting [`crate::engine::tls_probe::CertInfo`]
@@ -30,8 +35,8 @@
 //!
 //! ## What's out of scope (for now)
 //!
-//! - RDP-TLS on 3389: RDP has its own X.224 negotiation dance before
-//!   TLS. Non-trivial; tracked as a follow-up.
+//! - (none — protocol-version + cipher-suite enumeration shipped in
+//!   WORK-143, RDP-TLS shipped in WORK-148.)
 
 use async_trait::async_trait;
 
@@ -87,6 +92,7 @@ pub const DEFAULT_PROBE_TARGETS: &[TlsProbeTarget] = &[
         mode: TlsMode::Starttls(StarttlsProtocol::Pop3),
         label: "POP3+STARTTLS",
     },
+    TlsProbeTarget { port: 3389, mode: TlsMode::RdpTls, label: "RDP-TLS" },
 ];
 
 /// Configuration for [`TlsInfraModule`].
@@ -451,11 +457,14 @@ mod tests {
     fn tls_infra_default_probe_list_coverage() {
         let cfg = TlsInfraConfig::default();
         let ports: Vec<u16> = cfg.targets.iter().map(|t| t.port).collect();
-        for expected in [465, 636, 993, 995, 25, 587, 143, 110] {
+        for expected in [465, 636, 993, 995, 25, 587, 143, 110, 3389] {
             assert!(ports.contains(&expected), "missing default probe port {expected}");
         }
         assert!(!ports.contains(&443), "443 belongs to DAST ssl, not infra tls_infra");
-        assert!(!ports.contains(&3389), "RDP-TLS is explicitly out of scope for v1");
+        // RDP-TLS is now a supported default probe (WORK-148).
+        let rdp = cfg.targets.iter().find(|t| t.port == 3389).expect("3389 present");
+        assert_eq!(rdp.label, "RDP-TLS", "port 3389 must be labelled RDP-TLS");
+        assert!(matches!(rdp.mode, TlsMode::RdpTls), "port 3389 must use TlsMode::RdpTls");
     }
 
     /// Every default entry has a non-empty label (used in evidence).
