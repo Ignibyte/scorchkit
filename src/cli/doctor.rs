@@ -643,6 +643,32 @@ fn tool_specs() -> Vec<ToolSpec> {
             remediation: "Install: apt install eyewitness or git clone \
                           https://github.com/RedSiege/EyeWitness",
         },
+        // WORK-114: container/cloud tool batch
+        ToolSpec {
+            binary: "dockle",
+            name: "dockle",
+            category: "Container",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: brew install goodwithtech/r/dockle or download from \
+                          https://github.com/goodwithtech/dockle/releases",
+        },
+        ToolSpec {
+            binary: "kubescape",
+            name: "kubescape",
+            category: "Cloud",
+            version_flag: Some("version"),
+            min_version: None,
+            remediation: "Install: curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | /bin/bash",
+        },
+        ToolSpec {
+            binary: "scout",
+            name: "Scout Suite",
+            category: "Cloud",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install scoutsuite",
+        },
     ]
 }
 
