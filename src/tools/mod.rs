@@ -34,6 +34,7 @@ pub mod testssl;
 pub mod theharvester;
 pub mod trivy;
 pub mod trufflehog;
+pub mod vespasian;
 pub mod wafw00f;
 pub mod wpscan;
 pub mod zap;
@@ -84,5 +85,7 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(kerbrute::KerbruteModule),
         Box::new(ssh_audit::SshAuditModule),
         Box::new(onesixtyone::OnesixtyoneModule),
+        // WORK-107: Vespasian API endpoint discovery
+        Box::new(vespasian::VespasianModule),
     ]
 }

@@ -529,6 +529,15 @@ fn tool_specs() -> Vec<ToolSpec> {
             remediation: "Install: apt install onesixtyone (Debian/Ubuntu) or build from \
                           https://github.com/trailofbits/onesixtyone",
         },
+        // WORK-107: Vespasian API endpoint discovery
+        ToolSpec {
+            binary: "vespasian",
+            name: "Vespasian",
+            category: "API Discovery",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: go install github.com/praetorian-inc/vespasian/cmd/vespasian@latest",
+        },
     ]
 }
 
