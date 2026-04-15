@@ -1,6 +1,11 @@
 # ScorchKit
 
-A Rust-based web application security testing toolkit and orchestrator. 41 modules covering the OWASP Top 10, wrapping 21 external pentesting tools behind a unified CLI. Features Claude AI integration for intelligent analysis of findings.
+A Rust-based web application security testing toolkit and orchestrator. DAST + SAST + Infra in one binary, with Claude AI integration for intelligent analysis of findings.
+
+- **DAST** — 41 web-app modules covering the OWASP Top 10 (built-in scanners + 21 external tool wrappers).
+- **SAST** — code scanning via the `code` subcommand (built-in + tool wrappers).
+- **Infra** (v2.0, `--features infra`) — host/network probes for port scan, service fingerprinting, **CVE correlation against NVD or OSV**, **TLS hygiene** (SMTPS/LDAPS/IMAPS/POP3S + STARTTLS on SMTP/IMAP/POP3), and **DNS hygiene** (wildcard, DNSSEC, CAA, NS).
+- **Unified `assess`** — DAST + SAST + Infra in one command via `scorchkit assess --url ... --code ... --infra ...`.
 
 ## Install
 
@@ -98,6 +103,28 @@ Install any tool and it automatically activates. Missing tools are skipped grace
 | `arjun` | Arjun | Parameter discovery | [docs/tools/arjun.md](docs/tools/arjun.md) |
 | `cewl` | CeWL | Wordlist generation | [docs/tools/cewl.md](docs/tools/cewl.md) |
 | `droopescan` | Droopescan | CMS scanning | [docs/tools/droopescan.md](docs/tools/droopescan.md) |
+
+### Infrastructure scanning (v2.0, `--features infra`)
+
+Probes hosts, IPs, and CIDR ranges. Same `Finding` / report pipeline as DAST. Run with `scorchkit infra <target>` or include in a unified scan via `scorchkit assess --infra <target>`.
+
+| Module | Category | Description | Docs |
+|--------|----------|-------------|------|
+| `tcp_probe` | PortScan | Privilege-free TCP-connect reachability against a configurable port list | — |
+| `nmap` (infra) | PortScan + Fingerprint | `nmap -sV` with shared service-fingerprint publication for downstream CVE correlation | — |
+| `cve_match` | CveMatch | Correlate detected service fingerprints against a `CveLookup` backend (NVD or OSV) | [docs/modules/cve-nvd.md](docs/modules/cve-nvd.md) · [docs/modules/cve-osv.md](docs/modules/cve-osv.md) |
+| `tls_infra` | TlsInfra | TLS handshake + cert analysis on SMTPS/LDAPS/IMAPS/POP3S + STARTTLS on SMTP (25/587), IMAP (143), POP3 (110) | [docs/modules/tls-infra.md](docs/modules/tls-infra.md) |
+| `dns_infra` | Dns | Wildcard A/AAAA detection, DNSSEC presence (DNSKEY), CAA record presence, NS enumeration | [docs/modules/dns-infra.md](docs/modules/dns-infra.md) |
+
+CVE backends are config-driven via `[cve]` in `config.toml`:
+
+```toml
+[cve]
+backend = "nvd"   # or "osv" or "mock" or "disabled"
+
+[cve.nvd]
+api_key = "..."   # optional; or set SCORCHKIT_NVD_API_KEY
+```
 
 ## AI Analysis
 

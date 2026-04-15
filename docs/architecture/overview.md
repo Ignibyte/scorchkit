@@ -1,6 +1,12 @@
 # ScorchKit Architecture Overview
 
-ScorchKit is a modular web application security testing toolkit written in Rust. It operates as both a native scanner (built-in Rust modules that perform security checks directly) and an orchestrator (wrapping and coordinating external pentesting tools behind a unified interface). The tool targets OWASP Top 10 web vulnerabilities and integrates Claude AI for intelligent analysis, planning, and autonomous operation.
+ScorchKit is a modular web-app + code + infrastructure security testing toolkit written in Rust. It operates as both a native scanner (built-in Rust modules that perform checks directly) and an orchestrator (wrapping and coordinating external pentesting tools behind a unified interface). Three module families:
+
+- **DAST** (`ScanModule`) — URL-targeted; OWASP Top 10 web vulnerabilities; Orchestrator in `runner/orchestrator.rs`.
+- **SAST** (`CodeModule`) — path-targeted; static analysis + SCA + secrets + IaC; CodeOrchestrator in `runner/code_orchestrator.rs`.
+- **Infra** (`InfraModule`, gated `infra` feature) — host/IP/CIDR-targeted; port scanning, service fingerprinting, **CVE correlation** (NVD + OSV backends), **non-HTTP TLS** (SMTPS/LDAPS/IMAPS/POP3S + STARTTLS), **DNS hygiene** (wildcard/DNSSEC/CAA/NS); InfraOrchestrator in `runner/infra_orchestrator.rs`. The v2.0 arc filled every declared `InfraCategory` variant.
+
+The unified `scorchkit assess --url ... --code ... --infra ...` runs all three concurrently via `tokio::join!` and merges results into one `ScanResult`. Claude AI integration powers analysis, planning, and autonomous operation.
 
 ---
 
