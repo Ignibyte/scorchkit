@@ -54,13 +54,15 @@ pub use crate::infra::cve_match::CveMatchModule;
 #[cfg(feature = "infra")]
 pub use crate::infra::cve_mock::MockCveLookup;
 #[cfg(feature = "infra")]
+pub use crate::infra::cve_multi::MultiCveLookup;
+#[cfg(feature = "infra")]
 pub use crate::infra::cve_nvd::NvdCveLookup;
 #[cfg(feature = "infra")]
 pub use crate::infra::cve_osv::OsvCveLookup;
 
 // CVE configuration (always available — `CveConfig` is on `AppConfig`).
 pub use crate::config::cve::OsvConfig;
-pub use crate::config::{CveBackendKind, CveConfig, NvdConfig};
+pub use crate::config::{CompositeConfig, CompositeSource, CveBackendKind, CveConfig, NvdConfig};
 
 // Infra (feature-gated)
 #[cfg(feature = "infra")]

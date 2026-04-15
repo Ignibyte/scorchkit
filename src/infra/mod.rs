@@ -9,6 +9,7 @@ pub mod cve_cache;
 pub mod cve_lookup;
 pub mod cve_match;
 pub mod cve_mock;
+pub mod cve_multi;
 pub mod cve_nvd;
 pub mod cve_osv;
 pub mod dns_probe;

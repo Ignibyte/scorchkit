@@ -225,6 +225,12 @@ struct OsvVuln {
     severity: Vec<OsvSeverity>,
     #[serde(default)]
     references: Vec<OsvReference>,
+    /// Alternate identifiers for this vulnerability — e.g. a `CVE-YYYY-NNNN`
+    /// id when this is a `GHSA-` record. Preserved on [`CveRecord::aliases`]
+    /// and consumed by [`crate::infra::cve_multi::MultiCveLookup`] for
+    /// cross-backend dedup.
+    #[serde(default)]
+    aliases: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -264,7 +270,15 @@ fn record_from(v: OsvVuln, cpe: &str) -> CveRecord {
     let severity = cvss_score.map_or(Severity::Info, severity_from_cvss);
     let description = if v.summary.is_empty() { v.details } else { v.summary };
     let references = v.references.into_iter().map(|r| r.url).collect();
-    CveRecord { id: v.id, cvss_score, severity, description, references, cpe: cpe.to_string() }
+    CveRecord {
+        id: v.id,
+        cvss_score,
+        severity,
+        description,
+        references,
+        cpe: cpe.to_string(),
+        aliases: v.aliases,
+    }
 }
 
 /// First parseable CVSS v3.x vector from the severity array.
@@ -357,6 +371,41 @@ mod tests {
         let recs =
             parse_osv_response(body, "cpe:2.3:a:expressjs:express:1.0:*:*:*:*:*:*:*").expect("p");
         assert!(recs.is_empty());
+    }
+
+    /// OSV responses with `aliases[]` populate the `CveRecord::aliases`
+    /// field — this is what [`crate::infra::cve_multi::MultiCveLookup`]
+    /// uses for cross-backend dedup.
+    #[test]
+    fn osv_response_populates_aliases() {
+        let body = br#"{
+            "vulns": [
+                {
+                    "id": "GHSA-xxxx-yyyy-zzzz",
+                    "aliases": ["CVE-2024-9999", "OSV-2024-5"],
+                    "summary": "Alias-bearing record"
+                }
+            ]
+        }"#;
+        let recs =
+            parse_osv_response(body, "cpe:2.3:a:pkg:widget:1.0:*:*:*:*:*:*:*").expect("parse");
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].aliases, vec!["CVE-2024-9999".to_string(), "OSV-2024-5".to_string()]);
+    }
+
+    /// Missing `aliases` field → empty `aliases` Vec (via `#[serde(default)]`).
+    /// Pins back-compat for existing OSV responses that omit the field.
+    #[test]
+    fn osv_response_empty_aliases_default() {
+        let body = br#"{
+            "vulns": [
+                {"id": "GHSA-aaa", "summary": "no aliases here"}
+            ]
+        }"#;
+        let recs =
+            parse_osv_response(body, "cpe:2.3:a:pkg:widget:1.0:*:*:*:*:*:*:*").expect("parse");
+        assert_eq!(recs.len(), 1);
+        assert!(recs[0].aliases.is_empty());
     }
 
     /// Default `OsvConfig::default().max_rps == 10` — the limiter

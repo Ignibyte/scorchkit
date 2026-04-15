@@ -344,7 +344,15 @@ fn record_from(cve: NvdCve, cpe: &str) -> CveRecord {
     let cvss_score = pick_best_cvss(&cve.metrics);
     let severity = cvss_score.map_or(Severity::Info, severity_from_cvss);
     let references = cve.references.into_iter().map(|r| r.url).collect();
-    CveRecord { id: cve.id, cvss_score, severity, description, references, cpe: cpe.to_string() }
+    CveRecord {
+        id: cve.id,
+        cvss_score,
+        severity,
+        description,
+        references,
+        cpe: cpe.to_string(),
+        aliases: Vec::new(),
+    }
 }
 
 /// Prefer English description; fall back to the first available; empty
