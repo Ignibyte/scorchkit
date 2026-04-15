@@ -538,6 +538,57 @@ fn tool_specs() -> Vec<ToolSpec> {
             min_version: None,
             remediation: "Install: go install github.com/praetorian-inc/vespasian/cmd/vespasian@latest",
         },
+        // WORK-113: SAST expansion batch
+        ToolSpec {
+            binary: "cargo-audit",
+            name: "cargo-audit",
+            category: "SCA",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: cargo install cargo-audit",
+        },
+        ToolSpec {
+            binary: "cargo-deny",
+            name: "cargo-deny",
+            category: "SCA",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: cargo install cargo-deny",
+        },
+        ToolSpec {
+            binary: "tflint",
+            name: "tflint",
+            category: "IaC",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: brew install tflint or curl-pipe-bash from \
+                          https://github.com/terraform-linters/tflint",
+        },
+        ToolSpec {
+            binary: "kics",
+            name: "KICS",
+            category: "IaC",
+            version_flag: Some("version"),
+            min_version: None,
+            remediation: "Install: brew install kics or download from \
+                          https://github.com/Checkmarx/kics/releases",
+        },
+        ToolSpec {
+            binary: "slither",
+            name: "slither",
+            category: "SAST",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install slither-analyzer",
+        },
+        ToolSpec {
+            binary: "brakeman",
+            name: "brakeman",
+            category: "SAST",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: gem install brakeman",
+        },
     ]
 }
 
