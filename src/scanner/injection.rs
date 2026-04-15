@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use scraper::{Html, Selector};
 use url::Url;
 
+use crate::engine::api_spec::read_api_spec;
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
@@ -67,8 +68,40 @@ impl ScanModule for InjectionModule {
             }
         }
 
+        // WORK-108: consume the published API spec (typically from
+        // `tools::vespasian`). For each discovered endpoint with
+        // parameters, build a probe URL and run the same SQLi tests
+        // we'd run on a crawled URL. No-op when no spec is published.
+        if let Some(spec) = read_api_spec(&ctx.shared_data) {
+            for endpoint in &spec.endpoints {
+                if endpoint.parameters.is_empty() {
+                    continue;
+                }
+                let probe_url = build_probe_url(&endpoint.url, &endpoint.parameters);
+                test_url_params(ctx, &probe_url, &mut findings).await?;
+            }
+        }
+
         Ok(findings)
     }
+}
+
+/// Build a probe URL from an `ApiEndpoint` by appending each
+/// parameter with a sentinel value. The injection tester then
+/// substitutes its payloads for those values when probing.
+fn build_probe_url(endpoint_url: &str, parameters: &[String]) -> String {
+    if parameters.is_empty() {
+        return endpoint_url.to_string();
+    }
+    let separator = if endpoint_url.contains('?') { '&' } else { '?' };
+    let mut query = String::new();
+    for (i, name) in parameters.iter().enumerate() {
+        let sep = if i == 0 { separator } else { '&' };
+        query.push(sep);
+        query.push_str(name);
+        query.push_str("=1");
+    }
+    format!("{endpoint_url}{query}")
 }
 
 /// Test URL parameters for SQL injection.
@@ -470,6 +503,32 @@ mod tests {
     use super::*;
 
     /// Unit tests for the SQL injection detection module's pure helper functions.
+
+    /// WORK-108: `build_probe_url` appends the parameters with sentinel
+    /// values, using `?` for the first separator and `&` thereafter.
+    #[test]
+    fn build_probe_url_appends_query_string() {
+        let url = build_probe_url(
+            "https://example.com/api/users",
+            &["page".to_string(), "limit".to_string()],
+        );
+        assert_eq!(url, "https://example.com/api/users?page=1&limit=1");
+    }
+
+    /// WORK-108: `build_probe_url` uses `&` when the URL already has
+    /// a query string.
+    #[test]
+    fn build_probe_url_appends_to_existing_query() {
+        let url = build_probe_url("https://example.com/api/users?fmt=json", &["page".to_string()]);
+        assert_eq!(url, "https://example.com/api/users?fmt=json&page=1");
+    }
+
+    /// WORK-108: empty parameter list returns the URL unchanged.
+    #[test]
+    fn build_probe_url_no_parameters_returns_input() {
+        let url = build_probe_url("https://example.com/api/users", &[]);
+        assert_eq!(url, "https://example.com/api/users");
+    }
 
     /// Verify that `detect_sql_error` identifies MySQL error strings in response bodies.
     #[test]

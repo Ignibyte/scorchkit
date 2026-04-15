@@ -36,6 +36,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
+use crate::engine::api_spec::{publish_api_spec, ApiEndpoint, ApiSpec};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
@@ -92,8 +93,65 @@ impl ScanModule for VespasianModule {
         // If the file is missing or empty, parse_vespasian_output
         // gracefully returns an empty Vec.
         let yaml = std::fs::read_to_string(&out_path).unwrap_or_default();
+        // WORK-108: publish the parsed spec to shared_data so
+        // downstream scanners (injection, csrf, idor, graphql,
+        // auth, ratelimit) can consume each discovered endpoint.
+        let spec = build_api_spec(&yaml, url);
+        publish_api_spec(&ctx.shared_data, &spec);
         Ok(parse_vespasian_output(&yaml, url, &output.stdout))
     }
+}
+
+/// Translate a Vespasian-emitted `OpenAPI` YAML into the `ApiSpec`
+/// shared-data primitive. Resolves relative paths against `base_url`.
+#[must_use]
+pub fn build_api_spec(yaml: &str, base_url: &str) -> ApiSpec {
+    let trimmed = yaml.trim();
+    if trimmed.is_empty() {
+        return ApiSpec::default();
+    }
+    let Ok(doc): std::result::Result<serde_yaml::Value, _> = serde_yaml::from_str(trimmed) else {
+        return ApiSpec::default();
+    };
+    let title = doc
+        .get("info")
+        .and_then(|i| i.get("title"))
+        .and_then(serde_yaml::Value::as_str)
+        .unwrap_or("(untitled)")
+        .to_string();
+    let mut endpoints = Vec::new();
+    let base = base_url.trim_end_matches('/').to_string();
+    if let Some(paths) = doc.get("paths").and_then(serde_yaml::Value::as_mapping) {
+        for (path, ops) in paths {
+            let Some(path_str) = path.as_str() else { continue };
+            let Some(ops_map) = ops.as_mapping() else { continue };
+            for (method, op) in ops_map {
+                let Some(method_str) = method.as_str() else { continue };
+                if !matches_http_method(method_str) {
+                    continue;
+                }
+                let parameters = extract_parameter_names(op);
+                endpoints.push(ApiEndpoint {
+                    method: method_str.to_uppercase(),
+                    url: format!("{base}{path_str}"),
+                    parameters,
+                });
+            }
+        }
+    }
+    ApiSpec { title, endpoints }
+}
+
+/// Pull parameter names from an `OpenAPI` operation's `parameters`
+/// array. Skips entries without a usable `name` field.
+fn extract_parameter_names(op: &serde_yaml::Value) -> Vec<String> {
+    let Some(params) = op.get("parameters").and_then(serde_yaml::Value::as_sequence) else {
+        return Vec::new();
+    };
+    params
+        .iter()
+        .filter_map(|p| p.get("name").and_then(serde_yaml::Value::as_str).map(String::from))
+        .collect()
 }
 
 /// Parse a Vespasian-emitted `OpenAPI` 3.0 YAML document into findings.
