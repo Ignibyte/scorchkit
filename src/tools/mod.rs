@@ -1,11 +1,13 @@
 pub mod amass;
 pub mod arjun;
 pub mod cewl;
+pub mod commix;
 pub mod dalfox;
 pub mod dnsrecon;
 pub mod dnsx;
 pub mod droopescan;
 pub mod enum4linux;
+pub mod eyewitness;
 pub mod feroxbuster;
 pub mod ffuf;
 pub mod gau;
@@ -15,6 +17,7 @@ pub mod hydra;
 pub mod interactsh;
 pub mod katana;
 pub mod kerbrute;
+pub mod linkfinder;
 pub mod masscan;
 pub mod metasploit;
 pub mod naabu;
@@ -36,7 +39,10 @@ pub mod trivy;
 pub mod trufflehog;
 pub mod vespasian;
 pub mod wafw00f;
+pub mod wapiti;
+pub mod whatweb;
 pub mod wpscan;
+pub mod xsstrike;
 pub mod zap;
 
 use crate::engine::module_trait::ScanModule;
@@ -87,5 +93,12 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(onesixtyone::OnesixtyoneModule),
         // WORK-107: Vespasian API endpoint discovery
         Box::new(vespasian::VespasianModule),
+        // WORK-112: DAST polish tool batch
+        Box::new(commix::CommixModule),
+        Box::new(xsstrike::XsstrikeModule),
+        Box::new(whatweb::WhatwebModule),
+        Box::new(wapiti::WapitiModule),
+        Box::new(linkfinder::LinkfinderModule),
+        Box::new(eyewitness::EyewitnessModule),
     ]
 }
