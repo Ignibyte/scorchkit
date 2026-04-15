@@ -32,6 +32,10 @@ pub use crate::engine::audit_log::AuditLogHandler;
 // Service fingerprints (not feature-gated — useful wherever service data flows)
 pub use crate::engine::service_fingerprint::ServiceFingerprint;
 
+// TLS enumeration primitives (WORK-143) — published regardless of the
+// infra feature because they're useful for any TLS-aware scanner.
+pub use crate::engine::tls_enum::{CipherSuiteId, CipherWeakness, ProbeOutcome, TlsVersionId};
+
 // API spec shared-data primitive (WORK-108) — published by tools like
 // vespasian, consumed by injection / csrf / idor / graphql / auth /
 // ratelimit scanners
