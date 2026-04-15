@@ -11,6 +11,7 @@ pub mod cve_match;
 pub mod cve_mock;
 pub mod cve_nvd;
 pub mod cve_osv;
+pub mod dns_probe;
 pub mod nmap;
 pub mod tcp_probe;
 pub mod tls_probe;
@@ -33,5 +34,6 @@ pub fn register_modules() -> Vec<Box<dyn InfraModule>> {
         Box::new(tcp_probe::TcpProbeModule::default()),
         Box::new(nmap::NmapModule),
         Box::new(tls_probe::TlsInfraModule::default()),
+        Box::new(dns_probe::DnsInfraModule),
     ]
 }
