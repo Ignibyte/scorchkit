@@ -17,10 +17,10 @@ The unified `scorchkit assess --url ... --code ... --infra ...` runs all three c
                     │  CLI (clap)      │    │  MCP Server     │
                     │  args.rs         │    │  (rmcp stdio)   │
                     │                  │    │  24 tools       │
-                    │  run, recon,     │    │  6 resources    │
-                    │  scan, analyze,  │    │  5 prompts      │
-                    │  diff, agent,    │    └────────┬────────┘
-                    │  init, doctor,   │             │
+                    │  run, code,      │    │  6 resources    │
+                    │  infra, assess,  │    │  5 prompts      │
+                    │  analyze, diff,  │    └────────┬────────┘
+                    │  agent, doctor,  │             │
                     │  modules, db,    │             │
                     │  serve, schedule │             │
                     └────────┬─────────┘             │
@@ -35,7 +35,7 @@ The unified `scorchkit assess --url ... --code ... --infra ...` runs all three c
                        │                                     │
                        │  ┌─────────┐ ┌─────────┐ ┌───────┐ │
                        │  │ Recon   │ │ Scanner │ │ Tools │ │  ScanModule trait
-                       │  │ (10)   │ │ (35)    │ │ (32)  │ │
+                       │  │ (10)    │ │ (35)    │ │ (46)  │ │
                        │  └────┬────┘ └────┬────┘ └───┬───┘ │
                        └───────┼───────────┼──────────┼─────┘
                                │           │          │
@@ -112,20 +112,27 @@ pub trait ScanModule: Send + Sync {
 
 ### Module Categories
 
-ScorchKit ships with 77 built-in modules plus user plugins:
+ScorchKit ships three module families (DAST, SAST, Infra) plus user plugins. As of v2.1:
 
-| Category | Count | Purpose | Registration |
-|----------|-------|---------|--------------|
-| **Recon** | 10 | Information gathering | `recon::register_modules()` |
-| **Scanner** | 35 | Active vulnerability detection | `scanner::register_modules()` |
-| **Tools** | 32 | External tool wrappers | `tools::register_modules()` |
-| **Plugins** | variable | User-defined via TOML | `plugin::load_plugins()` |
+| Family | Trait | Count | Registration |
+|--------|-------|-------|--------------|
+| **DAST / Recon** | `ScanModule` | 10 | `recon::register_modules()` |
+| **DAST / Scanner** | `ScanModule` | 35 | `scanner::register_modules()` |
+| **DAST / Tools** | `ScanModule` | 46 | `tools::register_modules()` |
+| **SAST / Built-in** | `CodeModule` | 1 | `sast::register_modules()` |
+| **SAST / Tools** | `CodeModule` | 21 | `sast_tools::register_modules()` |
+| **Infra** (feature-gated) | `InfraModule` | 5 | `infra::register_modules()` + injected `CveMatchModule` |
+| **Plugins** | `ScanModule` | variable | `plugin::load_plugins()` |
 
 **Recon modules** (10): headers, tech, discovery, subdomain, crawler, dns, js-analysis, cname-takeover, vhost, cloud.
 
 **Scanner modules** (35): auth, cors, csp, waf, ssl, misconfig, csrf, injection, cmdi, xss, ssrf, xxe, idor, jwt, redirect, sensitive, upload, websocket, graphql, subtakeover, acl, api, api-schema, ratelimit, path-traversal, ssti, crlf, host-header, nosql, ldap, smuggling, prototype-pollution, mass-assignment, clickjacking, dom-xss.
 
-**Tool wrappers** (32): interactsh, nmap, nuclei, nikto, sqlmap, feroxbuster, sslyze, zap, ffuf, metasploit, wafw00f, testssl, wpscan, amass, subfinder, dalfox, hydra, httpx, theharvester, arjun, cewl, droopescan, katana, gau, paramspider, trufflehog, prowler, trivy, dnsx, gobuster, dnsrecon, enum4linux.
+**DAST tool wrappers** (46): interactsh, nmap, nuclei, nikto, sqlmap, feroxbuster, sslyze, zap, ffuf, metasploit, wafw00f, testssl, wpscan, amass, subfinder, dalfox, hydra, httpx, theharvester, arjun, cewl, droopescan, katana, gau, paramspider, trufflehog, prowler, trivy, dnsx, gobuster, dnsrecon, enum4linux, masscan, naabu, smbmap, nxc, kerbrute, ssh-audit, onesixtyone, vespasian, commix, xsstrike, whatweb, wapiti, linkfinder, eyewitness.
+
+**SAST tool wrappers** (21): semgrep, osv-scanner, gitleaks, bandit, gosec, checkov, grype, hadolint, eslint-security, phpstan, snyk-test, snyk-code, cargo-audit, cargo-deny, tflint, kics, slither, brakeman, dockle, kubescape, scoutsuite. Plus the built-in `dep-audit` SAST module (language-agnostic lockfile heuristics).
+
+**Infra modules** (5): tcp-probe, nmap (infra variant with fingerprint publication), tls-infra, dns-infra, and the optional `cve-match` appended by [`Engine::infra_scan`](engine.md) when a `CveLookup` backend is configured. See [infra.md](infra.md) for the full `InfraModule` contract and [cve-backends.md](cve-backends.md) for the NVD and OSV backends.
 
 ### Module Registration
 
@@ -715,18 +722,21 @@ ScorchKit uses Cargo features to gate optional subsystems:
 
 ```toml
 [features]
-default = []                              # CLI-only, no database, no MCP
-storage = ["dep:sqlx", "dep:sha2", "dep:croner"]  # PostgreSQL persistence
+default = []                                       # CLI-only, no database, no MCP, no infra
+storage = ["dep:sqlx", "dep:sha2", "dep:croner"]   # PostgreSQL persistence
 mcp = ["storage", "dep:rmcp", "dep:schemars"]      # MCP server (implies storage)
+infra = ["dep:ipnet", "dep:hickory-resolver"]      # Infrastructure scanning (InfraModule family)
 ```
 
 ### Build Configurations
 
-| Build | Command | Modules | Storage | MCP | Test Count |
-|-------|---------|---------|---------|-----|------------|
-| Default | `cargo build` | All 77 scan modules | No | No | ~178 |
-| Storage | `cargo build --features storage` | All + DB persistence | Yes | No | ~230 |
-| Full | `cargo build --features mcp` | All + DB + MCP server | Yes | Yes | ~287 |
+| Build | Command | Families | Extras |
+|-------|---------|----------|--------|
+| Default | `cargo build` | DAST + SAST | — |
+| Storage | `cargo build --features storage` | DAST + SAST | PostgreSQL persistence |
+| MCP | `cargo build --features mcp` | DAST + SAST | PostgreSQL + MCP server |
+| Infra | `cargo build --features infra` | DAST + SAST + Infra | Enables `scorchkit infra`, `scorchkit assess --infra ...`, CVE backends |
+| All | `cargo build --features "mcp infra"` | DAST + SAST + Infra | PostgreSQL + MCP + Infra |
 
 ### Feature-Gated Code
 
@@ -743,6 +753,13 @@ pub mod runner;       // Always available
 pub mod report;       // Always available
 pub mod config;       // Always available
 
+pub mod sast;         // SAST built-in analyzers
+pub mod sast_tools;   // SAST tool wrappers
+pub mod facade;       // High-level Engine facade
+
+#[cfg(feature = "infra")]
+pub mod infra;        // Infrastructure scanning modules (InfraModule)
+
 #[cfg(feature = "storage")]
 pub mod storage;      // PostgreSQL persistence
 
@@ -750,7 +767,7 @@ pub mod storage;      // PostgreSQL persistence
 pub mod mcp;          // MCP server (requires storage)
 ```
 
-The `mcp` feature implies `storage` -- the MCP server needs database access for project management and finding persistence. All feature-gated dev-dependencies are duplicated in `[dev-dependencies]` so tests can compile against all features.
+The `mcp` feature implies `storage` -- the MCP server needs database access for project management and finding persistence. The `infra` feature is independent: it adds the `InfraModule` family, the `scorchkit infra` and `scorchkit assess` subcommands, and the CVE backends (NVD + OSV). All feature-gated dev-dependencies are duplicated in `[dev-dependencies]` so tests can compile against all features.
 
 ---
 

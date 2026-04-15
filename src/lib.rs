@@ -26,7 +26,8 @@
 //! # Architecture
 //!
 //! - **[`engine`]** — Core types: [`Finding`], [`Severity`], [`Target`],
-//!   [`ScanResult`], [`ScanModule`] trait, [`CodeModule`] trait
+//!   [`ScanResult`], [`engine::module_trait::ScanModule`] trait,
+//!   [`engine::code_module::CodeModule`] trait
 //! - **[`runner`]** — Orchestrators for concurrent module execution
 //! - **[`recon`]** / **[`scanner`]** / **[`tools`]** — DAST modules
 //!   (reconnaissance, vulnerability scanning, external tool wrappers)

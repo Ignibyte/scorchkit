@@ -157,7 +157,7 @@ fn extract_parameter_names(op: &serde_yaml::Value) -> Vec<String> {
 /// Parse a Vespasian-emitted `OpenAPI` 3.0 YAML document into findings.
 ///
 /// We extract every `paths.<path>.<method>` pair and emit one Info
-/// finding per endpoint (capped at [`MAX_ENDPOINT_FINDINGS`]) plus a
+/// finding per endpoint (capped at 50 to avoid finding floods) plus a
 /// summary finding listing the total endpoint count and any notable
 /// info from `info.title`.
 #[must_use]

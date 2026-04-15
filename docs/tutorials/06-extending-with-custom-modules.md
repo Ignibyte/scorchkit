@@ -32,7 +32,7 @@ For SAST, swap in `CodeModule` + `CodeContext`. For Infra, `InfraModule` + `Infr
 
 ## 2. The example crate
 
-`examples/custom_scanner/` is a separate cargo crate that depends on `scorchkit` as a library. It implements one trivial scanner that flags any URL containing the string "test".
+`examples/custom_scanner/` is a separate cargo crate that depends on `scorchkit` as a library. It implements `DebugMarkerScanner`, a minimal scanner that flags any response body containing the word "debug". A sibling crate, `examples/custom_code_scanner/`, shows the same shape for SAST via the `CodeModule` trait.
 
 Read it first:
 
@@ -43,40 +43,44 @@ cat examples/custom_scanner/src/lib.rs
 The shape:
 
 ```rust
+use async_trait::async_trait;
 use scorchkit::prelude::*;
 
-pub struct ContainsTestModule;
+#[derive(Debug, Default)]
+pub struct DebugMarkerScanner;
 
 #[async_trait]
-impl ScanModule for ContainsTestModule {
-    fn name(&self) -> &'static str { "Contains Test" }
-    fn id(&self) -> &'static str { "contains_test" }
-    fn category(&self) -> ModuleCategory { ModuleCategory::Recon }
-    fn description(&self) -> &'static str { "Flags URLs that contain the string 'test'" }
+impl ScanModule for DebugMarkerScanner {
+    fn name(&self) -> &'static str { "Debug Marker Scanner" }
+    fn id(&self) -> &'static str { "debug-marker" }
+    fn category(&self) -> ModuleCategory { ModuleCategory::Scanner }
+    fn description(&self) -> &'static str {
+        "Example plugin: flags responses containing the word 'debug'"
+    }
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
-        if !ctx.target.url.as_str().contains("test") {
+        let body = ctx.http_client
+            .get(ctx.target.url.as_str())
+            .send().await
+            .map_err(|e| ScorchError::Config(format!("request failed: {e}")))?
+            .text().await
+            .map_err(|e| ScorchError::Config(format!("body read failed: {e}")))?;
+
+        if !body.to_lowercase().contains("debug") {
             return Ok(Vec::new());
         }
         Ok(vec![Finding::new(
-            "contains_test",
-            Severity::Info,
-            "URL contains 'test'",
-            format!("URL is {}", ctx.target.url),
+            "debug-marker",
+            Severity::Low,
+            "Debug marker detected in response",
+            "Response body contains the word 'debug'.",
             ctx.target.url.as_str(),
-        ).with_confidence(1.0)])
+        ).with_confidence(0.6)])
     }
 }
 ```
 
-Running it:
-
-```bash
-cd examples/custom_scanner
-cargo run --example demo_scan
-```
-
-(Or whatever entry point the example wires up — check its `Cargo.toml`.)
+The crate is a library only — there's no `demo_scan` binary. To exercise it, either build the library and the module's unit tests (`cargo test -p custom_scanner`), or wire it into your own binary crate that constructs an `Orchestrator` and registers it (see §4 below).
 
 ## 3. Build your own
 
@@ -183,14 +187,15 @@ If you're upstreaming the module:
 4. Add a doc at `docs/modules/powered-by-leak.md`.
 5. Open a PR.
 
-If it's a one-off for your own use, keep it in a separate crate that depends on `scorchkit` (the way `examples/custom_scanner` does), and construct your own `Orchestrator` that includes your module:
+If it's a one-off for your own use, keep it in a separate crate that depends on `scorchkit` (the way `examples/custom_scanner` does). At the moment, `Orchestrator` (DAST) only exposes `register_default_modules` + filter APIs — not a public `add_module` — so the cleanest path for out-of-tree use is to drive your module directly from your own binary:
 
 ```rust
-let mut orch = Orchestrator::new(ctx);
-orch.register_default_modules();
-orch.add_module(Box::new(PoweredByVersionLeak));
-let result = orch.run(false).await?;
+let ctx = ScanContext::new(target, http_client, config);
+let module = PoweredByVersionLeak;
+let findings = module.run(&ctx).await?;
 ```
+
+If you need full orchestration (concurrency, progress, result aggregation) for an out-of-tree module, the `InfraOrchestrator` does expose `add_module` — or upstream the module via the steps above. Tracking a public `Orchestrator::add_module` extension point is a known gap.
 
 ## 5. Constraints to respect
 

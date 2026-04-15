@@ -15,7 +15,7 @@ const MAX_BODY_SIZE: usize = 10 * 1024;
 ///
 /// Stores the full request and response data that triggered or
 /// demonstrates a vulnerability. Response bodies are truncated
-/// to [`MAX_BODY_SIZE`] to prevent memory bloat.
+/// to a fixed maximum (10 KiB) to prevent memory bloat.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpEvidence {
     /// HTTP method (GET, POST, PUT, etc.).
@@ -78,7 +78,11 @@ impl HttpEvidence {
         self
     }
 
-    /// Add a response body, truncating to [`MAX_BODY_SIZE`] if needed.
+    /// Add a response body, truncating to 10 KiB if needed.
+    ///
+    /// When the supplied body exceeds the maximum size, it is
+    /// truncated at the byte boundary and [`Self::truncated`] is set
+    /// to `true`.
     #[must_use]
     pub fn with_response_body(mut self, body: impl Into<String>) -> Self {
         let body = body.into();

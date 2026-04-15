@@ -224,4 +224,4 @@ The `jq '[.findings[] | select(.severity == "...")] | length'` snippet from §2 
 | SARIF upload fails | GitHub limits SARIF to 25k runs | Filter the report before upload: `jq '...' scorchkit-report.sarif > filtered.sarif` |
 | CI takes 15 minutes building scorchkit | First build is from source | Cache `~/.cargo` and `target/`; or wait for the binary release |
 | `cve_match` returns nothing in CI but works locally | Cache directory is per-runner — first scan repopulates from scratch each time | Mount a persistent cache volume; or accept the first-scan cost |
-| Quick scan still finds Info noise | Quick profile is for speed, not signal-to-noise | Add `--severity medium` to filter Info / Low at the report-emit boundary |
+| Quick scan still finds Info noise | Quick profile is for speed, not signal-to-noise | There is no `--severity` flag; filter the JSON with `jq '[.findings[] \| select(.severity != "Info" and .severity != "Low")]'` before emitting the SARIF or consuming the report |

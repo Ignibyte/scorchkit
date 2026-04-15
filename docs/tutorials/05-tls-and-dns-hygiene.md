@@ -15,7 +15,7 @@ Most pentest tooling goes deep on web-app vulnerabilities and treats infrastruct
 ## 2. Run both probes
 
 ```bash
-sk infra example.com --features infra --modules tls_infra,dns_infra
+sk infra example.com --modules tls_infra,dns_infra
 ```
 
 You'll see findings tagged `tls_infra` and `dns_infra`. Each finding has `module_id` set so you can filter the JSON report later.
@@ -72,7 +72,8 @@ example.com.    IN  CAA  0 iodef "mailto:security@example.com"
 ## 6. Re-scan after fixes
 
 ```bash
-sk infra example.com --features infra --modules tls_infra,dns_infra -o json > after.json
+sk infra example.com --modules tls_infra,dns_infra -o json
+mv scorchkit-report.json after.json
 sk diff before.json after.json
 ```
 
@@ -83,10 +84,12 @@ sk diff before.json after.json
 Don't make this a one-time thing. Set up a weekly recurring scan:
 
 ```bash
-sk schedule create example.com --modules tls_infra,dns_infra --cron "0 9 * * 1"
+# Requires --features storage at build time and a configured Postgres.
+# Positional args: <project> <target> <cron>
+sk schedule create my-project example.com "0 9 * * 1" --profile standard
 ```
 
-(Requires `--features storage` and a configured Postgres. See [tutorial 04 §8](04-claude-code-workflow.md#8-recurring-scans-with-schedule).)
+Schedules attach to a project, not a bare target — create a project first with `sk project create my-project`. The schedule runs whichever profile you specify; to pin it to just `tls_infra,dns_infra` today, wrap the scan in a cron job or CI schedule (see [tutorial 08 §4](08-ci-cd-integration.md)) until per-schedule module overrides land.
 
 ## 8. Where to go next
 

@@ -2,7 +2,8 @@
 //!
 //! [`NvdCveLookup`] queries `services.nvd.nist.gov/rest/json/cves/2.0`
 //! with a `cpeName` parameter, parses the response into [`CveRecord`]s,
-//! caches them on disk via [`crate::infra::cve_cache::FsCache`], and
+//! caches them on disk via the crate-internal filesystem cache
+//! (`crate::infra::cve_cache::FsCache`), and
 //! rate-limits outbound requests via [`governor`] to NVD's published
 //! quotas (5 req/30s without API key, 50 req/30s with key).
 //!
