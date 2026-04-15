@@ -73,12 +73,17 @@ You'll see noticeably more findings, especially **Info** ones. Info findings are
 ## 6. Filter the noise
 
 ```bash
-# Just the High and Critical findings
-sk run https://httpbin.org --severity high
+# Hide low-confidence findings (likely false positives)
+sk run https://httpbin.org --min-confidence 0.7
 
 # Only specific modules
 sk run https://httpbin.org --modules ssl,headers,misconfig
+
+# Skip slow or noisy modules
+sk run https://httpbin.org --skip nuclei,sqlmap
 ```
+
+There is no built-in `--severity` filter on `run` — if you want a severity-gated view, emit JSON (`-o json`) and filter with `jq` (see [tutorial 08](08-ci-cd-integration.md) §2 for the pattern).
 
 ## 7. Where to go next
 

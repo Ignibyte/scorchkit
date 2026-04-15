@@ -81,17 +81,22 @@ Requires `--features storage` and a configured Postgres. Lets you walk findings 
 
 ```
 /finding list my-app
-/finding triage <finding-id>
+/finding list my-app --severity critical
+/finding show <finding-id>
+/finding status <finding-id> acknowledged
 ```
+
+`/finding status` walks you through the state machine (`new` → `acknowledged` → `remediated` → `verified`, plus side states like `false_positive`, `wont_fix`, `accepted_risk`).
 
 ## 8. Recurring scans with `/schedule`
 
 ```
-/schedule create my-app weekly
-/schedule run-due
+/schedule create my-app https://staging.my-app.com "0 9 * * 1"
+/schedule list my-app
+/schedule run
 ```
 
-Backed by the same cron-style scheduler the CLI uses; the slash command makes it interactive.
+Three positional args: project, target, cron (standard 5-field cron). Backed by the same cron-style scheduler the CLI uses; the slash command makes it interactive.
 
 ## 9. Project management with `/project`
 

@@ -72,20 +72,22 @@ At least one of the three is required. All three optional would error with `asse
 
 ## 7. Reading the merged report
 
-The terminal output groups findings by severity, not by family. To filter by source family later:
+The terminal output groups findings by severity, not by family. Every finding carries a `module_id`; the fastest way to slice by family is to emit JSON and filter with `jq`:
 
 ```bash
+sk assess --url ... --code ... --infra ... -o json
+
 # Just SAST findings
-sk analyze scorchkit-report.json -f filter --include-modules semgrep,gitleaks,bandit,gosec
+jq '[.findings[] | select(.module_id | IN("semgrep","gitleaks","bandit","gosec"))]' scorchkit-report.json
 
 # Just infra findings
-sk analyze scorchkit-report.json -f filter --include-modules tcp_probe,nmap,cve_match,tls_infra,dns_infra
+jq '[.findings[] | select(.module_id | IN("tcp_probe","nmap","cve_match","tls_infra","dns_infra"))]' scorchkit-report.json
 
-# Just DAST scanner findings (exclude recon noise)
-sk analyze scorchkit-report.json -f filter --exclude-modules headers,tech,discovery,subdomain,crawler
+# Exclude recon noise to focus on DAST scanner findings
+jq '[.findings[] | select(.module_id | IN("headers","tech","discovery","subdomain","crawler") | not)]' scorchkit-report.json
 ```
 
-Or open the JSON: every finding has a `module_id` field that tells you which scanner produced it.
+`sk analyze` itself has a `filter` focus mode (`-f filter`) but no per-module include/exclude flags at the CLI layer — it's a Claude-mediated triage of the whole report. Use `jq` when you want deterministic module-level filtering.
 
 ## 8. Where to go next
 
@@ -99,5 +101,5 @@ Or open the JSON: every finding has a `module_id` field that tells you which sca
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | One domain returns no findings even though you expect some | The domain's orchestrator failed silently — check stderr for `assess: domain failed: ...` warnings | Re-run with `RUST_LOG=debug` for the failing domain to see the underlying error |
-| The merged report is huge | Three families produce a lot of Info findings | Use `--severity medium` or higher; or filter via `analyze -f filter` after the fact |
-| `code` scan takes forever | A SAST tool is hanging on a deep repo (often Semgrep on a monorepo) | `--code-modules dep_audit,gitleaks` to skip Semgrep; or set `--code-profile quick` |
+| The merged report is huge | Three families produce a lot of Info findings | Emit JSON and filter with `jq '.findings[] \| select(.severity != "Info")'`; or run `sk analyze report.json -f filter` for a Claude-mediated triage |
+| `code` scan takes forever | A SAST tool is hanging on a deep repo (often Semgrep on a monorepo) | Run `sk code ... --profile quick` separately beforehand to confirm SAST completes, then re-run `assess` with `--profile quick` (applies to each orchestrator) |

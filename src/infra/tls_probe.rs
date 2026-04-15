@@ -1,8 +1,8 @@
 //! [`InfraModule`] that probes non-HTTP TLS services and analyses
 //! their certificates.
 //!
-//! Complements [`crate::scanner::ssl::SslModule`] (which handles HTTPS
-//! on a single URL) by scanning a host's broader TLS surface:
+//! Complements the DAST `scanner::ssl::SslModule` (which handles
+//! HTTPS on a single URL) by scanning a host's broader TLS surface:
 //!
 //! - **Implicit TLS:** SMTPS (465), LDAPS (636), IMAPS (993),
 //!   POP3S (995). Port is TLS-wrapped from byte zero.
@@ -47,7 +47,7 @@ pub struct TlsProbeTarget {
 
 /// Default probe list. Covers the common TLS-bearing mail / directory
 /// services. HTTPS (443) is intentionally absent — the DAST
-/// [`crate::scanner::ssl::SslModule`] owns that path.
+/// `scanner::ssl::SslModule` owns that path.
 pub const DEFAULT_PROBE_TARGETS: &[TlsProbeTarget] = &[
     TlsProbeTarget { port: 465, mode: TlsMode::Implicit, label: "SMTPS" },
     TlsProbeTarget { port: 636, mode: TlsMode::Implicit, label: "LDAPS" },

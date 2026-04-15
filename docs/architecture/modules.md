@@ -1,6 +1,17 @@
 # Writing Scan Modules
 
-This is the guide for adding new scan modules to ScorchKit. Every scanner - whether it performs built-in analysis or wraps an external tool - implements the `ScanModule` trait.
+This is the guide for adding new scan modules to ScorchKit. ScorchKit has three module families, each with its own trait. Pick the family that matches your input:
+
+| Family | Trait | Input | Context | When to use |
+|--------|-------|-------|---------|-------------|
+| **DAST** | `ScanModule` | URL target | `ScanContext` (HTTP client, cookies, shared data) | Probing a running web application |
+| **SAST** | `CodeModule` | Filesystem path | `CodeContext` (path, language, manifests, shared data) | Static code analysis, dependency auditing, secrets, IaC |
+| **Infra** | `InfraModule` | IP / CIDR / host / host:port | `InfraContext` (infra target, HTTP client, shared data) | Port scanning, service fingerprinting, CVE correlation, non-HTTP TLS, DNS hygiene |
+
+All three orchestrators emit the same `ScanEvent` lifecycle, all three feed `Vec<Finding>` into the same reporting / storage / AI pipelines, and all three respect the same `EventBus` and `SharedData`. This section walks through `ScanModule` in detail; `CodeModule` and `InfraModule` are architecturally analogous — only the inputs and the trait-specific accessors differ.
+
+- `CodeModule` — see [sast.md](sast.md). Additional method: `fn languages(&self) -> &[&str]` for language-aware filtering.
+- `InfraModule` — see [infra.md](infra.md). Additional method: `fn protocols(&self) -> &[&str]` for protocol filtering, plus a `fn category(&self) -> InfraCategory` that returns one of five infra variants instead of the two `ModuleCategory` variants.
 
 ## The ScanModule Trait
 
@@ -187,14 +198,17 @@ Same as built-in modules. The orchestrator will check tool availability before r
 
 ## Module Counts
 
-ScorchKit ships with 63 modules across four categories:
+See [overview.md §2](overview.md#2-module-system) for the authoritative per-family breakdown. Headline numbers as of v2.1:
 
-| Category | Count | Location |
-|----------|-------|----------|
-| Recon | 6 | `src/recon/` — headers, tech, discovery, subdomain, crawler, dns |
-| Scanner | 24 | `src/scanner/` — ssl, misconfig, csrf, injection, cmdi, xss, ssrf, xxe, idor, jwt, redirect, sensitive, api-schema, ratelimit, cors-deep, csp-deep, auth-session, upload, websocket, graphql, subtakeover, acl, api-security, waf |
-| Tools | 32 | `src/tools/` — amass, arjun, cewl, dalfox, dnsrecon, dnsx, droopescan, enum4linux, feroxbuster, ffuf, gau, gobuster, httpx, hydra, interactsh, katana, metasploit, nikto, nmap, nuclei, paramspider, prowler, sqlmap, sslyze, subfinder, testssl, theharvester, trivy, trufflehog, wafw00f, wpscan, zap |
-| User Plugins | variable | Loaded from TOML files via `runner::plugin::load_plugins()` |
+| Family | Trait | Count | Location |
+|--------|-------|-------|----------|
+| DAST / Recon | `ScanModule` | 10 | `src/recon/` |
+| DAST / Scanner | `ScanModule` | 35 | `src/scanner/` |
+| DAST / Tools | `ScanModule` | 46 | `src/tools/` |
+| SAST / Built-in | `CodeModule` | 1 | `src/sast/` — `dep-audit` |
+| SAST / Tools | `CodeModule` | 21 | `src/sast_tools/` |
+| Infra | `InfraModule` | 5 | `src/infra/` (feature-gated `infra`) |
+| User Plugins | `ScanModule` | variable | Loaded from TOML files via `runner::plugin::load_plugins()` |
 
 ## What the Orchestrator Provides
 

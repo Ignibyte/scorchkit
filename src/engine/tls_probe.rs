@@ -1,5 +1,6 @@
-//! Shared TLS probe — certificate inspection used by both DAST
-//! ([`crate::scanner::ssl`]) and infra ([`crate::infra::tls_probe`]).
+//! Shared TLS probe — certificate inspection used by both the DAST
+//! `scanner::ssl` module and the infra [`crate::infra::tls_probe`]
+//! module.
 //!
 //! Extracts the parts that don't depend on "is this an HTTPS URL or an
 //! IP + port?" so DAST and infra can both analyse a peer certificate

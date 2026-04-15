@@ -3,7 +3,8 @@
 //! [`OsvCveLookup`] queries `api.osv.dev/v1/query` with a JSON body of
 //! `{"package": {"name", "ecosystem"}, "version"}`, parses the response
 //! into [`CveRecord`]s, caches them on disk via
-//! [`crate::infra::cve_cache::FsCache`], and rate-limits outbound
+//! the crate-internal filesystem cache
+//! (`crate::infra::cve_cache::FsCache`), and rate-limits outbound
 //! requests via [`governor`] to a conservative 10 RPS by default
 //! (well under OSV's documented ~25 QPS fair-use cap).
 //!
