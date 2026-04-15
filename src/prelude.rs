@@ -75,6 +75,16 @@ pub use crate::engine::infra_module::{InfraCategory, InfraModule};
 #[cfg(feature = "infra")]
 pub use crate::engine::infra_target::InfraTarget;
 
+// Cloud (feature-gated — WORK-150)
+#[cfg(feature = "cloud")]
+pub use crate::engine::cloud_context::CloudContext;
+#[cfg(feature = "cloud")]
+pub use crate::engine::cloud_credentials::CloudCredentials;
+#[cfg(feature = "cloud")]
+pub use crate::engine::cloud_module::{CloudCategory, CloudModule, CloudProvider};
+#[cfg(feature = "cloud")]
+pub use crate::engine::cloud_target::CloudTarget;
+
 // Configuration
 pub use crate::config::AppConfig;
 

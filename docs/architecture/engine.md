@@ -91,6 +91,27 @@ WORK-108's bridge between API-discovery producers (`tools::vespasian`) and six d
 
 `ServiceFingerprint { port, protocol, service_name, product, version, cpe }` is the shared data type for service detection. `parse_nmap_xml_fingerprints(xml)` is the pure parser both the DAST `tools::NmapModule` and the infra `infra::NmapModule` call; the DAST wrapper layers severity classification and outdated-version checks on top, while the infra wrapper emits Info findings and publishes `Vec<ServiceFingerprint>` to `shared_data` under the `SHARED_KEY_FINGERPRINTS` constant for downstream CVE correlation. `build_cpe(vendor, product, version)` produces CPE 2.3 URIs. `publish_fingerprints` / `read_fingerprints` helpers encapsulate the JSON encoding required to round-trip structured data through `SharedData`'s `Vec<String>` store.
 
+## Cloud module family (v2.2 foundation)
+
+Fourth scanning family, landed in WORK-150. Parallel to DAST (`ScanModule`), SAST (`CodeModule`), and Infra (`InfraModule`) but operates on cloud control planes — AWS accounts, GCP projects, Azure subscriptions, and Kubernetes cluster contexts — via the new `CloudModule` trait in `src/engine/cloud_module.rs`. Gated on the new `cloud` Cargo feature.
+
+**Two-axis classification.** Unlike `InfraCategory` (single axis — protocol implies stack), cloud posture splits across two orthogonal enums:
+
+- **`CloudCategory`** (exactly one per module) — `Iam` / `Storage` / `Network` / `Compute` / `Kubernetes` / `Compliance` (cross-cutting benchmarks)
+- **`CloudProvider`** (zero or more per module) — `Aws` / `Gcp` / `Azure` / `Kubernetes`
+
+A cross-cloud "publicly-readable object storage" module is `CloudCategory::Storage` with `providers() == &[Aws, Gcp, Azure]`.
+
+**`CloudTarget` — prefix-dispatched parser.** `CloudTarget::parse` accepts `aws:123456789012` / `gcp:my-project` / `azure:<sub-guid>` / `k8s:<context>` / `all`. Unlike `InfraTarget::parse`'s shape inference, explicit prefixes are required because cloud IDs lack distinguishing syntactic fingerprints (AWS account numerics collide with port numbers, GCP project IDs are hostname-shaped, Azure GUIDs are ambiguous).
+
+**`CloudContext` — deliberate absence of `http_client`.** Unlike `InfraContext`, `CloudContext` does **not** carry a `reqwest::Client`. Cloud modules call provider SDKs (which manage their own HTTP clients with request signing) or tool-wrapper subprocesses (Prowler / Scoutsuite / Kubescape), never arbitrary `reqwest` calls. Future modules needing HTTP construct clients locally.
+
+**`CloudCredentials`** — WORK-146 `NetworkCredentials` pattern applied to cloud: hand-written `Debug` (never `derive`), env-var precedence via `SCORCHKIT_*` variables (`SCORCHKIT_AWS_PROFILE`, `SCORCHKIT_KUBE_CONTEXT`, …), env-wins-non-empty semantics. Eight `Option<String>` fields today — `aws_profile` / `aws_role_arn` / `aws_region` / `gcp_service_account_path` / `gcp_project_id` / `azure_subscription_id` / `azure_tenant_id` / `kube_context` — all identifiers that SDKs use to locate secrets elsewhere on disk. Hand-written `Debug` is mandatory regardless so future direct-bearer fields (e.g., `aws_secret_access_key` in WORK-151+) are redacted by construction.
+
+**`CloudOrchestrator`** — structural copy of `InfraOrchestrator` (~90% identical). Same lifecycle events, same semaphore-bounded concurrency, same audit-log wiring, same `ScanResult` return. Empty-registry contract: `cloud::register_modules()` returns `vec![]` at WORK-150 and the orchestrator handles that cleanly — `ScanStarted` + `ScanCompleted` still fire with zero findings. Concrete modules land in WORK-151 (Prowler), WORK-152 (Scoutsuite), WORK-153 (Kubescape), WORK-154 (finding normalization). Refactor to a generic `Orchestrator<M, C, T>` is deferred to a later pipeline — the concrete orchestrators remain readable and shipped.
+
+**Synthetic `cloud://` URL scheme.** `Target::from_cloud(raw)` wraps cloud-target strings in `cloud://...` so reporting / storage / AI layers consume cloud scans identically to DAST / SAST / Infra. Percent-encoding handles the `:` separator. Full operator docs in `docs/architecture/cloud.md`.
+
 ## Hook adapter — `HookEventHandler` (`hook_runner.rs`)
 
 `HookEventHandler` bridges the event bus to the existing script-based hook system. It subscribes to the event stream and maps events to the three `HookPoint` script invocations:
