@@ -173,6 +173,19 @@ Prowler, Scoutsuite, Kubescape, and Dockle already ship as `CodeModule` wrappers
 
 ## Concrete modules
 
+### `kubescape-cloud` (WORK-153) — K8s cluster posture
+
+Third `CloudModule`. Wraps the `kubescape` binary against a **live Kubernetes cluster** via kubeconfig context. Module id `"kubescape-cloud"`; `CloudCategory::Kubernetes` (the dedicated K8s category — not `Compliance` like Prowler/Scoutsuite); `CloudProvider::Kubernetes`.
+
+- **Argv layout:** `scan --format json --kube-context <ctx>`
+- **Target validation:** Only `KubeContext(_)` and `All` (with `kube_context` set in config) accepted. `Account` / `Project` / `Subscription` rejected with cross-pipeline pointers to `prowler-cloud` / `scoutsuite-cloud`.
+- **Target-overrides-config semantics:** explicit `CloudTarget::KubeContext(ctx)` value wins over `creds.kube_context`.
+- **Findings:** `module_id = "kubescape-cloud"`, OWASP A05, CWE-1188, confidence 0.9 (matches `sast_tools::kubescape` SAST wrapper). Evidence carries `provider:kubernetes | controlID:<id> | score:<n> | target:<label>`.
+- **Severity mapping at parity** with `sast_tools::kubescape`: `scoreFactor >= 7.0` → High, `>= 4.0` → Medium, else Low.
+- **Coexists** with `sast_tools::kubescape` (id `"kubescape"`, scans on-disk manifests).
+
+Operator docs: `docs/modules/cloud-kubescape.md`.
+
 ### `scoutsuite-cloud` (WORK-152) — multi-cloud audit
 
 Second `CloudModule`. Wraps the `scout` binary across **AWS / GCP / Azure** with provider-aware argv layouts. Module id `"scoutsuite-cloud"`; `CloudCategory::Compliance` × `CloudProvider::{Aws, Gcp, Azure}`.
@@ -200,7 +213,6 @@ Operator docs: `docs/modules/cloud-prowler.md`.
 
 ## Future work
 
-- **WORK-153**: Kubescape as `CloudModule` (cluster posture)
 - **WORK-154**: Finding-shape normalization + cross-wrapper CPE/compliance tagging + per-check CWE mapping
 - **Deferred**: Generic `Orchestrator<M, C, T>` refactor — unify `Orchestrator` / `CodeOrchestrator` / `InfraOrchestrator` / `CloudOrchestrator` once the pattern has more signal
 - **v2.3+ polish**: Native Rust AWS/GCP/Azure SDK clients replacing the Prowler subprocess path for hot-path checks
