@@ -13,6 +13,7 @@ pub mod cloud_target;
 pub mod code_context;
 pub mod code_module;
 pub mod compliance;
+pub mod compliance_framework;
 pub mod cve;
 pub mod error;
 pub mod events;
