@@ -173,6 +173,19 @@ Prowler, Scoutsuite, Kubescape, and Dockle already ship as `CodeModule` wrappers
 
 ## Concrete modules
 
+### `scoutsuite-cloud` (WORK-152) — multi-cloud audit
+
+Second `CloudModule`. Wraps the `scout` binary across **AWS / GCP / Azure** with provider-aware argv layouts. Module id `"scoutsuite-cloud"`; `CloudCategory::Compliance` × `CloudProvider::{Aws, Gcp, Azure}`.
+
+- **Provider selection:** `select_providers(target, creds)` resolves `CloudTarget` against `CloudCredentials` — `Account` → AWS, `Project` → GCP (errors if `gcp_service_account_path` missing), `Subscription` → Azure, `KubeContext` → rejected with WORK-153 pointer, `All` → list of providers with at least one configured cred.
+- **Per-provider argv layouts:** `scout aws [--profile P] --report-dir D --no-browser`, `scout gcp --service-account PATH [--project-id ID] --report-dir D --no-browser`, `scout azure [--subscription-id ID] --cli --report-dir D --no-browser`.
+- **Multi-cloud fan-out for `All`:** runs Scout sequentially per configured provider (concurrent execution risks rate-limit trips); merges findings; per-provider failures logged at `warn` and skipped, only failing the module when every provider errors.
+- **Findings:** tagged `module_id = "scoutsuite-cloud"`, OWASP A05, CWE-1188, confidence 0.85, evidence `provider:<x> | service:<y> | rule:<z> | flagged:<n>`.
+- **JSON parser duplication intentional** — ~50 lines mirror `sast_tools::scoutsuite::parse_scoutsuite_output`. Cloud findings carry the `provider:<x>` evidence tag SAST findings don't, so a shared parser would force a generic finding-builder closure parameter.
+- **Coexists** with `sast_tools::scoutsuite` (id `"scoutsuite"`, AWS-only).
+
+Operator docs: `docs/modules/cloud-scoutsuite.md`.
+
 ### `prowler-cloud` (WORK-151) — AWS posture audit
 
 First concrete populator of the cloud registry. Wraps the `prowler` binary for AWS-account posture audits — CIS AWS Foundations plus 400+ checks across IAM, S3, EC2, CloudTrail, KMS, VPC. Module id `"prowler-cloud"` (distinct from the existing DAST `tools::prowler` wrapper's `"prowler"`); `CloudCategory::Compliance` × `CloudProvider::Aws`.
@@ -187,7 +200,6 @@ Operator docs: `docs/modules/cloud-prowler.md`.
 
 ## Future work
 
-- **WORK-152**: Scoutsuite as `CloudModule` (multi-cloud) — also the trigger point for extracting a shared OCSF parser
 - **WORK-153**: Kubescape as `CloudModule` (cluster posture)
 - **WORK-154**: Finding-shape normalization + cross-wrapper CPE/compliance tagging + per-check CWE mapping
 - **Deferred**: Generic `Orchestrator<M, C, T>` refactor — unify `Orchestrator` / `CodeOrchestrator` / `InfraOrchestrator` / `CloudOrchestrator` once the pattern has more signal
