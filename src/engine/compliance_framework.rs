@@ -364,6 +364,218 @@ impl ComplianceFramework for HipaaFramework {
 }
 
 // ---------------------------------------------------------------
+// CIS Benchmark frameworks (WORK-132)
+// ---------------------------------------------------------------
+
+/// CIS Docker Benchmark compliance framework.
+#[derive(Debug)]
+pub struct CisDockerFramework {
+    controls: Vec<Control>,
+}
+
+impl Default for CisDockerFramework {
+    fn default() -> Self {
+        Self {
+            controls: vec![
+                ctrl("1.1", "Host Configuration — Kernel", "cis-docker"),
+                ctrl("1.2", "Host Configuration — Docker Daemon", "cis-docker"),
+                ctrl("2.1", "Docker Daemon — Restrict Network Traffic", "cis-docker"),
+                ctrl("2.2", "Docker Daemon — Logging Level", "cis-docker"),
+                ctrl("2.3", "Docker Daemon — Allow Iptables", "cis-docker"),
+                ctrl("2.5", "Docker Daemon — TLS Authentication", "cis-docker"),
+                ctrl("2.14", "Docker Daemon — Live Restore", "cis-docker"),
+                ctrl("3.1", "Docker Daemon Files — Ownership", "cis-docker"),
+                ctrl("4.1", "Container Images — Use Trusted Base", "cis-docker"),
+                ctrl("4.5", "Container Images — Content Trust", "cis-docker"),
+                ctrl("4.6", "Container Images — HEALTHCHECK", "cis-docker"),
+                ctrl("5.1", "Container Runtime — AppArmor Profile", "cis-docker"),
+                ctrl("5.2", "Container Runtime — SELinux Security", "cis-docker"),
+                ctrl("5.3", "Container Runtime — Linux Capabilities", "cis-docker"),
+                ctrl("5.4", "Container Runtime — Privileged Containers", "cis-docker"),
+                ctrl("5.7", "Container Runtime — Open Ports", "cis-docker"),
+                ctrl("5.10", "Container Runtime — Memory Limit", "cis-docker"),
+                ctrl("5.12", "Container Runtime — Root Filesystem Read-Only", "cis-docker"),
+                ctrl("5.25", "Container Runtime — PID cgroup Limit", "cis-docker"),
+            ],
+        }
+    }
+}
+
+impl ComplianceFramework for CisDockerFramework {
+    fn id(&self) -> &'static str {
+        "cis-docker"
+    }
+    fn name(&self) -> &'static str {
+        "CIS Docker Benchmark"
+    }
+    fn controls(&self) -> &[Control] {
+        &self.controls
+    }
+    fn match_finding(&self, finding: &Finding) -> Vec<String> {
+        match_by_tag_prefix(finding, "CIS-Docker")
+    }
+}
+
+/// CIS Kubernetes Benchmark compliance framework.
+#[derive(Debug)]
+pub struct CisKubernetesFramework {
+    controls: Vec<Control>,
+}
+
+impl Default for CisKubernetesFramework {
+    fn default() -> Self {
+        Self {
+            controls: vec![
+                ctrl("1.1.1", "API Server — Anonymous Auth", "cis-kubernetes"),
+                ctrl("1.1.2", "API Server — Basic Auth", "cis-kubernetes"),
+                ctrl("1.2.1", "API Server — Audit Logging", "cis-kubernetes"),
+                ctrl("2.1", "etcd — Client Certificate Auth", "cis-kubernetes"),
+                ctrl("2.2", "etcd — Peer Certificate Auth", "cis-kubernetes"),
+                ctrl("3.1", "Controller Manager — Service Account Keys", "cis-kubernetes"),
+                ctrl("4.1.1", "Worker Node — Kubelet Auth", "cis-kubernetes"),
+                ctrl("4.2.1", "Worker Node — Kubelet TLS", "cis-kubernetes"),
+                ctrl("5.1.1", "RBAC — Cluster Admin Usage", "cis-kubernetes"),
+                ctrl("5.1.3", "RBAC — Wildcard Permissions", "cis-kubernetes"),
+                ctrl("5.2.1", "Pod Security — Privileged Containers", "cis-kubernetes"),
+                ctrl("5.2.2", "Pod Security — Host PID", "cis-kubernetes"),
+                ctrl("5.2.3", "Pod Security — Host Network", "cis-kubernetes"),
+                ctrl("5.3.1", "Network Policies — Default Deny", "cis-kubernetes"),
+                ctrl("5.4.1", "Secrets — Encryption at Rest", "cis-kubernetes"),
+                ctrl("5.7.1", "General — Namespace Usage", "cis-kubernetes"),
+            ],
+        }
+    }
+}
+
+impl ComplianceFramework for CisKubernetesFramework {
+    fn id(&self) -> &'static str {
+        "cis-kubernetes"
+    }
+    fn name(&self) -> &'static str {
+        "CIS Kubernetes Benchmark"
+    }
+    fn controls(&self) -> &[Control] {
+        &self.controls
+    }
+    fn match_finding(&self, finding: &Finding) -> Vec<String> {
+        match_by_tag_prefix(finding, "CIS-K8s")
+    }
+}
+
+/// CIS AWS Foundations Benchmark compliance framework.
+#[derive(Debug)]
+pub struct CisAwsFramework {
+    controls: Vec<Control>,
+}
+
+impl Default for CisAwsFramework {
+    fn default() -> Self {
+        Self {
+            controls: vec![
+                ctrl("1.1", "IAM — Root Account Usage", "cis-aws"),
+                ctrl("1.4", "IAM — Root MFA", "cis-aws"),
+                ctrl("1.5", "IAM — Hardware MFA for Root", "cis-aws"),
+                ctrl("1.8", "IAM — Password Policy Length", "cis-aws"),
+                ctrl("1.14", "IAM — Access Key Rotation", "cis-aws"),
+                ctrl("1.16", "IAM — No Policies Attached to Users", "cis-aws"),
+                ctrl("2.1.1", "S3 — Deny HTTP Requests", "cis-aws"),
+                ctrl("2.1.2", "S3 — MFA Delete", "cis-aws"),
+                ctrl("2.1.4", "S3 — Public Access Block", "cis-aws"),
+                ctrl("2.2.1", "EBS — Default Encryption", "cis-aws"),
+                ctrl("2.3.1", "RDS — Encryption at Rest", "cis-aws"),
+                ctrl("3.1", "CloudTrail — Multi-Region", "cis-aws"),
+                ctrl("3.2", "CloudTrail — Log File Validation", "cis-aws"),
+                ctrl("3.4", "CloudTrail — Integration with CloudWatch", "cis-aws"),
+                ctrl("3.7", "CloudTrail — S3 Bucket Logging", "cis-aws"),
+                ctrl("4.1", "Monitoring — Unauthorized API Calls", "cis-aws"),
+                ctrl("4.3", "Monitoring — Root Account Usage", "cis-aws"),
+                ctrl("5.1", "Networking — No NACL Default Allow All", "cis-aws"),
+                ctrl("5.2", "Networking — SG Restrict SSH", "cis-aws"),
+                ctrl("5.3", "Networking — SG Restrict RDP", "cis-aws"),
+                ctrl("5.4", "Networking — Default SG Restrict All", "cis-aws"),
+            ],
+        }
+    }
+}
+
+impl ComplianceFramework for CisAwsFramework {
+    fn id(&self) -> &'static str {
+        "cis-aws"
+    }
+    fn name(&self) -> &'static str {
+        "CIS AWS Foundations Benchmark"
+    }
+    fn controls(&self) -> &[Control] {
+        &self.controls
+    }
+    fn match_finding(&self, finding: &Finding) -> Vec<String> {
+        // Match CIS- prefixed tags and also Prowler-native CIS control IDs
+        match_by_tag_prefix(finding, "CIS")
+    }
+}
+
+// ---------------------------------------------------------------
+// Compliance reporter (WORK-135)
+// ---------------------------------------------------------------
+
+/// Format a [`ComplianceReport`] as a human-readable summary string.
+///
+/// Produces a per-framework table with control status, compliance
+/// percentage, and a summary line. Suitable for terminal output or
+/// inclusion in reports.
+#[must_use]
+pub fn format_compliance_report(report: &ComplianceReport) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "=== Compliance Assessment ({} findings assessed) ===\n",
+        report.total_findings
+    );
+
+    for fw in &report.frameworks {
+        let _ = writeln!(out, "--- {} ({}) ---", fw.framework_name, fw.framework_id);
+        let _ = writeln!(
+            out,
+            "Compliance: {:.1}% ({} pass / {} fail / {} total)\n",
+            fw.compliance_pct, fw.pass_count, fw.fail_count, fw.total_controls
+        );
+
+        let failures: Vec<_> =
+            fw.controls.iter().filter(|c| c.status == ControlStatus::Fail).collect();
+
+        if failures.is_empty() {
+            let _ = writeln!(out, "  All controls passing.");
+        } else {
+            for cm in &failures {
+                let _ = writeln!(
+                    out,
+                    "  [FAIL] {} — {} ({} finding{})",
+                    cm.control.id,
+                    cm.control.name,
+                    cm.finding_count,
+                    if cm.finding_count == 1 { "" } else { "s" }
+                );
+            }
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
+/// Format a [`ComplianceReport`] as a JSON string.
+///
+/// # Errors
+///
+/// Returns `Err` if serialization fails (should not happen for
+/// well-formed reports).
+pub fn compliance_report_to_json(report: &ComplianceReport) -> serde_json::Result<String> {
+    serde_json::to_string_pretty(report)
+}
+
+// ---------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------
 
@@ -381,14 +593,19 @@ fn match_by_tag_prefix(finding: &Finding, prefix: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Create a [`ComplianceRegistry`] with all 4 built-in frameworks.
+/// Create a [`ComplianceRegistry`] with all 7 built-in frameworks.
 #[must_use]
 pub fn default_registry() -> ComplianceRegistry {
     let mut registry = ComplianceRegistry::new();
+    // Core frameworks (WORK-131)
     registry.register(Box::new(Nist80053Framework::default()));
     registry.register(Box::new(PciDss4Framework::default()));
     registry.register(Box::new(Soc2TscFramework::default()));
     registry.register(Box::new(HipaaFramework::default()));
+    // CIS benchmarks (WORK-132)
+    registry.register(Box::new(CisDockerFramework::default()));
+    registry.register(Box::new(CisKubernetesFramework::default()));
+    registry.register(Box::new(CisAwsFramework::default()));
     registry
 }
 
@@ -397,15 +614,18 @@ mod tests {
     use super::*;
     use crate::engine::severity::Severity;
 
-    /// Default registry has 4 frameworks.
+    /// Default registry has 7 frameworks (4 core + 3 CIS).
     #[test]
-    fn test_default_registry_has_four_frameworks() {
+    fn test_default_registry_has_seven_frameworks() {
         let reg = default_registry();
-        assert_eq!(reg.frameworks().len(), 4);
+        assert_eq!(reg.frameworks().len(), 7);
         assert_eq!(reg.frameworks()[0].id(), "nist-800-53");
         assert_eq!(reg.frameworks()[1].id(), "pci-dss-4");
         assert_eq!(reg.frameworks()[2].id(), "soc2-tsc");
         assert_eq!(reg.frameworks()[3].id(), "hipaa");
+        assert_eq!(reg.frameworks()[4].id(), "cis-docker");
+        assert_eq!(reg.frameworks()[5].id(), "cis-kubernetes");
+        assert_eq!(reg.frameworks()[6].id(), "cis-aws");
     }
 
     /// NIST framework has expected controls.
@@ -439,7 +659,7 @@ mod tests {
             ])];
         let report = assess_compliance(&findings, &reg);
         assert_eq!(report.total_findings, 1);
-        assert_eq!(report.frameworks.len(), 4);
+        assert_eq!(report.frameworks.len(), 7);
 
         // NIST: AC-3 should fail, others pass
         let nist = &report.frameworks[0];
@@ -489,5 +709,85 @@ mod tests {
         let json = serde_json::to_string(&report).expect("serialize");
         assert!(json.contains("nist-800-53"));
         assert!(json.contains("compliance_pct"));
+    }
+
+    // -----------------------------------------------------------------
+    // CIS frameworks (WORK-132)
+    // -----------------------------------------------------------------
+
+    /// CIS Docker framework has expected controls.
+    #[test]
+    fn test_cis_docker_framework() {
+        let fw = CisDockerFramework::default();
+        assert!(fw.controls().len() >= 15);
+        assert!(fw.controls().iter().any(|c| c.id == "5.4"));
+        assert_eq!(fw.id(), "cis-docker");
+    }
+
+    /// CIS Kubernetes framework has expected controls.
+    #[test]
+    fn test_cis_kubernetes_framework() {
+        let fw = CisKubernetesFramework::default();
+        assert!(fw.controls().len() >= 10);
+        assert!(fw.controls().iter().any(|c| c.id == "5.1.1"));
+        assert_eq!(fw.id(), "cis-kubernetes");
+    }
+
+    /// CIS AWS framework has expected controls.
+    #[test]
+    fn test_cis_aws_framework() {
+        let fw = CisAwsFramework::default();
+        assert!(fw.controls().len() >= 15);
+        assert!(fw.controls().iter().any(|c| c.id == "1.4"));
+        assert!(fw.controls().iter().any(|c| c.id == "3.1"));
+        assert_eq!(fw.id(), "cis-aws");
+    }
+
+    /// CIS AWS matches CIS-prefixed compliance tags from Prowler.
+    #[test]
+    fn test_cis_aws_matches_prowler_tags() {
+        let fw = CisAwsFramework::default();
+        let finding = Finding::new("test", Severity::High, "T", "D", "url")
+            .with_compliance(vec!["CIS-1.4".into()]);
+        let matches = fw.match_finding(&finding);
+        assert!(!matches.is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // Reporter (WORK-135)
+    // -----------------------------------------------------------------
+
+    /// Format produces readable output with framework summaries.
+    #[test]
+    fn test_format_compliance_report() {
+        let reg = default_registry();
+        let findings = vec![Finding::new("test", Severity::High, "T", "D", "url")
+            .with_compliance(vec!["NIST AC-3 (Access Enforcement)".into()])];
+        let report = assess_compliance(&findings, &reg);
+        let formatted = format_compliance_report(&report);
+        assert!(formatted.contains("Compliance Assessment"));
+        assert!(formatted.contains("NIST 800-53"));
+        assert!(formatted.contains("[FAIL] AC-3"));
+        assert!(formatted.contains("All controls passing")); // other frameworks pass
+    }
+
+    /// Format with no findings shows all passing.
+    #[test]
+    fn test_format_compliance_report_all_passing() {
+        let reg = default_registry();
+        let report = assess_compliance(&[], &reg);
+        let formatted = format_compliance_report(&report);
+        assert!(formatted.contains("100.0%"));
+    }
+
+    /// JSON reporter produces valid JSON.
+    #[test]
+    fn test_compliance_report_json() {
+        let reg = default_registry();
+        let report = assess_compliance(&[], &reg);
+        let json = compliance_report_to_json(&report).expect("json");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert!(parsed["frameworks"].is_array());
+        assert_eq!(parsed["frameworks"].as_array().map(Vec::len), Some(7));
     }
 }
