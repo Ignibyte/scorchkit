@@ -5,6 +5,8 @@ pub mod cloud_context;
 #[cfg(feature = "cloud")]
 pub mod cloud_credentials;
 #[cfg(feature = "cloud")]
+pub mod cloud_evidence;
+#[cfg(feature = "cloud")]
 pub mod cloud_module;
 #[cfg(feature = "cloud")]
 pub mod cloud_target;
