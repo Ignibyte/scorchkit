@@ -211,8 +211,22 @@ First concrete populator of the cloud registry. Wraps the `prowler` binary for A
 
 Operator docs: `docs/modules/cloud-prowler.md`.
 
+## Finding normalization (WORK-154)
+
+All three cloud modules now use structured evidence and per-service compliance mapping instead of blanket `A05:2021 / CWE-1188`:
+
+- **`CloudEvidence`** (`engine::cloud_evidence`) — typed builder with `provider`, `service`, `check_id`, `resource`, `detail` fields. `Display` impl serializes to the existing pipe-delimited format (`"provider:aws | service:s3 | check_id:... | ..."`) for backward compatibility.
+- **`enrich_cloud_finding()`** — maps cloud service names to per-service OWASP/CWE pairs:
+  - IAM / RBAC → A01 (Broken Access Control) / CWE-287
+  - Storage (S3, GCS, Blob) → A01 / CWE-200
+  - Compute / K8s workloads / Database → A05 (Security Misconfiguration) / CWE-16
+  - Network / K8s network policies → A05 / CWE-284
+  - Logging / Monitoring → A09 (Security Logging Failures) / CWE-778
+  - Encryption / KMS → A02 (Cryptographic Failures) / CWE-311
+  - Unknown → A05 / CWE-1188 (fallback preserves pre-WORK-154 behavior)
+- Auto-populates `Finding.compliance` via existing `compliance_for_owasp()` / `compliance_for_cwe()` lookups (NIST 800-53, PCI-DSS 4.0, SOC2 TSC, HIPAA).
+
 ## Future work
 
-- **WORK-154**: Finding-shape normalization + cross-wrapper CPE/compliance tagging + per-check CWE mapping
 - **Deferred**: Generic `Orchestrator<M, C, T>` refactor — unify `Orchestrator` / `CodeOrchestrator` / `InfraOrchestrator` / `CloudOrchestrator` once the pattern has more signal
 - **v2.3+ polish**: Native Rust AWS/GCP/Azure SDK clients replacing the Prowler subprocess path for hot-path checks

@@ -41,6 +41,7 @@ use async_trait::async_trait;
 
 use crate::engine::cloud_context::CloudContext;
 use crate::engine::cloud_credentials::CloudCredentials;
+use crate::engine::cloud_evidence::{enrich_cloud_finding, CloudEvidence};
 use crate::engine::cloud_module::{CloudCategory, CloudModule, CloudProvider};
 use crate::engine::cloud_target::CloudTarget;
 use crate::engine::error::{Result, ScorchError};
@@ -245,23 +246,24 @@ fn finding_from_ocsf_value(item: &serde_json::Value, target_label: &str) -> Opti
         .and_then(|r| r["group"]["name"].as_str())
         .unwrap_or("unknown");
 
+    let evidence = CloudEvidence::new(CloudProvider::Aws, service)
+        .with_check_id(check_title)
+        .with_detail("severity", severity_str)
+        .with_detail("target", target_label);
+
     let affected = format!("cloud://{target_label}");
-    Some(
-        Finding::new(
-            "prowler-cloud",
-            map_prowler_severity(severity_str),
-            format!("Prowler: {check_title}"),
-            format!("{description} (Service: {service})"),
-            affected,
-        )
-        .with_evidence(format!(
-            "provider:aws | service:{service} | severity:{severity_str} | target:{target_label}"
-        ))
-        .with_remediation("Review the Prowler check documentation for remediation steps.")
-        .with_owasp("A05:2021 Security Misconfiguration")
-        .with_cwe(1188)
-        .with_confidence(0.8),
+    let finding = Finding::new(
+        "prowler-cloud",
+        map_prowler_severity(severity_str),
+        format!("Prowler: {check_title}"),
+        format!("{description} (Service: {service})"),
+        affected,
     )
+    .with_evidence(evidence.to_string())
+    .with_remediation("Review the Prowler check documentation for remediation steps.")
+    .with_confidence(0.8);
+
+    Some(enrich_cloud_finding(finding, service))
 }
 
 /// Map Prowler's OCSF severity strings to `ScorchKit`'s [`Severity`].
@@ -508,18 +510,19 @@ mod tests {
         assert_eq!(findings[3].severity, Severity::Low);
         assert_eq!(findings[4].severity, Severity::Info);
 
-        // Finding shape pin (first item)
+        // Finding shape pin (first item — S3 service → A01/CWE-200)
         let f = &findings[0];
         assert_eq!(f.module_id, "prowler-cloud");
         assert!(f.title.contains("S3 Bucket Public Access"));
-        assert_eq!(f.owasp_category.as_deref(), Some("A05:2021 Security Misconfiguration"));
-        assert_eq!(f.cwe_id, Some(1188));
+        assert_eq!(f.owasp_category.as_deref(), Some("A01:2021 Broken Access Control"));
+        assert_eq!(f.cwe_id, Some(200));
         assert!(
             f.evidence.as_deref().unwrap_or("").contains("provider:aws"),
             "evidence must carry provider:aws tag for downstream filtering"
         );
         assert!(f.evidence.as_deref().unwrap_or("").contains("service:s3"));
         assert_eq!(f.affected_target, "cloud://aws:123456789012");
+        assert!(f.compliance.is_some(), "compliance must be populated via enrich_cloud_finding");
     }
 
     /// JSON-lines fallback: one object per line, mixed PASS / FAIL,

@@ -31,6 +31,7 @@ use async_trait::async_trait;
 
 use crate::engine::cloud_context::CloudContext;
 use crate::engine::cloud_credentials::CloudCredentials;
+use crate::engine::cloud_evidence::{enrich_cloud_finding, CloudEvidence};
 use crate::engine::cloud_module::{CloudCategory, CloudModule, CloudProvider};
 use crate::engine::cloud_target::CloudTarget;
 use crate::engine::error::{Result, ScorchError};
@@ -190,24 +191,23 @@ fn parse_kubescape_json(stdout: &str, target_label: &str) -> Vec<Finding> {
             } else {
                 Severity::Low
             };
-            Some(
-                Finding::new(
-                    "kubescape-cloud",
-                    severity,
-                    format!("kubescape {id}: {name}"),
-                    format!("Control {id} ({name}) failed against the live cluster"),
-                    format!("cloud://{target_label}"),
-                )
-                .with_evidence(format!(
-                    "provider:kubernetes | controlID:{id} | score:{score} | target:{target_label}"
-                ))
-                .with_remediation(
-                    "Review the Kubescape control documentation for remediation steps.",
-                )
-                .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(1188)
-                .with_confidence(0.9),
+            let evidence = CloudEvidence::new(CloudProvider::Kubernetes, "workload")
+                .with_check_id(id)
+                .with_detail("score", score.to_string())
+                .with_detail("target", target_label);
+
+            let finding = Finding::new(
+                "kubescape-cloud",
+                severity,
+                format!("kubescape {id}: {name}"),
+                format!("Control {id} ({name}) failed against the live cluster"),
+                format!("cloud://{target_label}"),
             )
+            .with_evidence(evidence.to_string())
+            .with_remediation("Review the Kubescape control documentation for remediation steps.")
+            .with_confidence(0.9);
+
+            Some(enrich_cloud_finding(finding, "workload"))
         })
         .collect()
 }
@@ -317,17 +317,18 @@ mod tests {
         assert_eq!(findings[1].severity, Severity::Medium, "scoreFactor 5.0 → Medium");
         assert_eq!(findings[2].severity, Severity::Low, "scoreFactor 2.0 → Low");
 
-        // Finding shape pin
+        // Finding shape pin — workload service → A05/CWE-16
         let f = &findings[0];
         assert_eq!(f.module_id, "kubescape-cloud");
         assert!(f.title.contains("C-0001"));
         assert_eq!(f.owasp_category.as_deref(), Some("A05:2021 Security Misconfiguration"));
-        assert_eq!(f.cwe_id, Some(1188));
+        assert_eq!(f.cwe_id, Some(16));
         let evidence = f.evidence.as_deref().unwrap_or("");
         assert!(evidence.contains("provider:kubernetes"), "evidence: {evidence}");
-        assert!(evidence.contains("controlID:C-0001"), "evidence: {evidence}");
+        assert!(evidence.contains("check_id:C-0001"), "evidence: {evidence}");
         assert!(evidence.contains("target:k8s:prod-cluster"), "evidence: {evidence}");
         assert_eq!(f.affected_target, "cloud://k8s:prod-cluster");
+        assert!(f.compliance.is_some(), "compliance must be populated via enrich_cloud_finding");
     }
 
     #[test]

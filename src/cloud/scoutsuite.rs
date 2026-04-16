@@ -42,6 +42,7 @@ use async_trait::async_trait;
 
 use crate::engine::cloud_context::CloudContext;
 use crate::engine::cloud_credentials::CloudCredentials;
+use crate::engine::cloud_evidence::{enrich_cloud_finding, CloudEvidence};
 use crate::engine::cloud_module::{CloudCategory, CloudModule, CloudProvider};
 use crate::engine::cloud_target::CloudTarget;
 use crate::engine::error::{Result, ScorchError};
@@ -141,14 +142,6 @@ enum ScoutProvider {
 
 impl ScoutProvider {
     const fn cli_name(self) -> &'static str {
-        match self {
-            Self::Aws => "aws",
-            Self::Gcp => "gcp",
-            Self::Azure => "azure",
-        }
-    }
-
-    const fn evidence_tag(self) -> &'static str {
         match self {
             Self::Aws => "aws",
             Self::Gcp => "gcp",
@@ -347,24 +340,27 @@ fn parse_scoutsuite_json(json: &str, provider: ScoutProvider, target_label: &str
                 _ => Severity::Low,
             };
             let description = rule["description"].as_str().unwrap_or("");
-            let provider_tag = provider.evidence_tag();
-            findings.push(
-                Finding::new(
-                    "scoutsuite-cloud",
-                    severity,
-                    format!("Scout {svc_name}: {rule_id}"),
-                    description.to_string(),
-                    format!("cloud://{target_label}"),
-                )
-                .with_evidence(format!(
-                    "provider:{provider_tag} | service:{svc_name} | rule:{rule_id} | \
-                     flagged:{flagged}"
-                ))
-                .with_remediation("Review Scout Suite check documentation for remediation steps.")
-                .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(1188)
-                .with_confidence(0.85),
-            );
+            let cloud_provider = match provider {
+                ScoutProvider::Aws => CloudProvider::Aws,
+                ScoutProvider::Gcp => CloudProvider::Gcp,
+                ScoutProvider::Azure => CloudProvider::Azure,
+            };
+            let evidence = CloudEvidence::new(cloud_provider, svc_name.as_str())
+                .with_check_id(rule_id.as_str())
+                .with_detail("flagged", flagged.to_string());
+
+            let finding = Finding::new(
+                "scoutsuite-cloud",
+                severity,
+                format!("Scout {svc_name}: {rule_id}"),
+                description.to_string(),
+                format!("cloud://{target_label}"),
+            )
+            .with_evidence(evidence.to_string())
+            .with_remediation("Review Scout Suite check documentation for remediation steps.")
+            .with_confidence(0.85);
+
+            findings.push(enrich_cloud_finding(finding, svc_name));
         }
     }
     findings
@@ -568,15 +564,16 @@ mod tests {
         assert_eq!(high, 2, "danger-level rules → High");
         assert_eq!(medium, 1, "warning-level rules → Medium");
 
-        // Finding shape pin
+        // Finding shape pin — ec2 service → A05/CWE-16
         let f = &findings[0];
         assert_eq!(f.module_id, "scoutsuite-cloud");
         assert!(f.title.starts_with("Scout "));
         assert_eq!(f.owasp_category.as_deref(), Some("A05:2021 Security Misconfiguration"));
-        assert_eq!(f.cwe_id, Some(1188));
+        assert_eq!(f.cwe_id, Some(16));
         let evidence = f.evidence.as_deref().unwrap_or("");
         assert!(evidence.contains("provider:aws"), "evidence missing provider tag: {evidence}");
         assert!(evidence.contains("flagged:"), "evidence missing flagged count: {evidence}");
+        assert!(f.compliance.is_some(), "compliance must be populated via enrich_cloud_finding");
     }
 
     #[test]
