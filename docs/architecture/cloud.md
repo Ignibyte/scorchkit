@@ -226,7 +226,18 @@ All three cloud modules now use structured evidence and per-service compliance m
   - Unknown → A05 / CWE-1188 (fallback preserves pre-WORK-154 behavior)
 - Auto-populates `Finding.compliance` via existing `compliance_for_owasp()` / `compliance_for_cwe()` lookups (NIST 800-53, PCI-DSS 4.0, SOC2 TSC, HIPAA).
 
+## Native AWS checks (WORK-126)
+
+Behind `feature = "aws-native"` (depends on `cloud`). 4 modules using `aws-sdk-rust`:
+
+- **`aws-iam`** (`cloud::aws::iam::IamCloudModule`) — `CloudCategory::Iam`. Root access keys, root MFA, password policy strength.
+- **`aws-s3`** (`cloud::aws::s3::S3CloudModule`) — `CloudCategory::Storage`. Per-bucket: public access block, SSE encryption, versioning, access logging.
+- **`aws-sg`** (`cloud::aws::sg::SecurityGroupCloudModule`) — `CloudCategory::Network`. 0.0.0.0/0 and ::/0 ingress on 11 sensitive ports (SSH, RDP, MySQL, PostgreSQL, MSSQL, MongoDB, Redis, Elasticsearch, Kibana, HTTP-alt, HTTPS-alt).
+- **`aws-cloudtrail`** (`cloud::aws::cloudtrail::CloudTrailCloudModule`) — `CloudCategory::Compliance`. Multi-region, KMS encryption, log file validation, active logging.
+
+**Architecture:** Two-layer design. Thin async `run()` builds `SdkConfig` from `CloudCredentials`, calls AWS SDK, converts to intermediate types (`AwsIamSummary`, `S3BucketPosture`, `SecurityGroupRule`, `TrailStatus`). Pure check functions take intermediates and return findings — testable without mocking AWS HTTP. `AccessDenied` → Info finding (graceful degrade). Credentials resolved via standard AWS chain with optional ScorchKit overrides.
+
 ## Future work
 
 - **Deferred**: Generic `Orchestrator<M, C, T>` refactor — unify `Orchestrator` / `CodeOrchestrator` / `InfraOrchestrator` / `CloudOrchestrator` once the pattern has more signal
-- **v2.3+ polish**: Native Rust AWS/GCP/Azure SDK clients replacing the Prowler subprocess path for hot-path checks
+- **GCP / Azure native checks** (WORK-127 / WORK-128): same intermediate-type pattern with `google-cloud-rust` / `azure-sdk-for-rust`
