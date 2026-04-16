@@ -29,9 +29,12 @@
 pub mod aws;
 #[cfg(feature = "azure-native")]
 pub mod azure;
+pub mod cloudsplaining;
+pub mod cnspec;
 #[cfg(feature = "gcp-native")]
 pub mod gcp;
 pub mod kubescape;
+pub mod pacu;
 pub mod prowler;
 pub mod scoutsuite;
 
@@ -42,6 +45,9 @@ use crate::engine::cloud_module::CloudModule;
 /// Order is lexicographic by module id so default scans have a stable
 /// module sequence across builds. With `feature = "aws-native"`,
 /// the 4 AWS modules are prepended (their ids sort before `kubescape-cloud`).
+// JUSTIFICATION: conditional #[cfg] feature gates between the extend()
+// calls and the push() calls make a single vec![] macro impossible.
+#[allow(clippy::vec_init_then_push)]
 #[must_use]
 pub fn register_modules() -> Vec<Box<dyn CloudModule>> {
     let mut modules: Vec<Box<dyn CloudModule>> = Vec::new();
@@ -55,7 +61,11 @@ pub fn register_modules() -> Vec<Box<dyn CloudModule>> {
     #[cfg(feature = "gcp-native")]
     modules.extend(gcp::register_gcp_modules());
 
+    // Tool wrappers — lex order: cloudsplaining, cnspec, kubescape, pacu, prowler, scoutsuite
+    modules.push(Box::new(cloudsplaining::CloudsplainingCloudModule));
+    modules.push(Box::new(cnspec::CnspecCloudModule));
     modules.push(Box::new(kubescape::KubescapeCloudModule));
+    modules.push(Box::new(pacu::PacuCloudModule));
     modules.push(Box::new(prowler::ProwlerCloudModule));
     modules.push(Box::new(scoutsuite::ScoutsuiteCloudModule));
 
@@ -73,8 +83,8 @@ mod tests {
     fn test_cloud_register_modules() {
         let modules = register_modules();
 
-        // Count expected modules: 3 base + 4 per native feature
-        let mut expected = 3;
+        // Count expected modules: 6 base tool wrappers + 4 per native feature
+        let mut expected = 6;
         if cfg!(feature = "aws-native") {
             expected += 4;
         }
