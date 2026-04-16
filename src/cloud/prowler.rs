@@ -228,6 +228,12 @@ fn parse_prowler_ocsf(stdout: &str, target_label: &str) -> Vec<Finding> {
 
 /// Extract a single `Finding` from one `OCSF` object, or `None` if the
 /// entry is a PASS (`status_id == 1`).
+///
+/// Prowler's OCSF output includes a `compliance` object with
+/// `requirements` containing framework-specific control IDs (CIS,
+/// PCI-DSS, NIST, etc.). When present, these are extracted and
+/// merged with the WORK-154 `enrich_cloud_finding` compliance
+/// controls for richer compliance tagging.
 fn finding_from_ocsf_value(item: &serde_json::Value, target_label: &str) -> Option<Finding> {
     if item["status_id"].as_i64().unwrap_or(0) == 1 {
         return None;
@@ -252,7 +258,7 @@ fn finding_from_ocsf_value(item: &serde_json::Value, target_label: &str) -> Opti
         .with_detail("target", target_label);
 
     let affected = format!("cloud://{target_label}");
-    let finding = Finding::new(
+    let mut finding = Finding::new(
         "prowler-cloud",
         map_prowler_severity(severity_str),
         format!("Prowler: {check_title}"),
@@ -263,7 +269,84 @@ fn finding_from_ocsf_value(item: &serde_json::Value, target_label: &str) -> Opti
     .with_remediation("Review the Prowler check documentation for remediation steps.")
     .with_confidence(0.8);
 
-    Some(enrich_cloud_finding(finding, service))
+    // Enrich with per-service OWASP/CWE/compliance from WORK-154
+    finding = enrich_cloud_finding(finding, service);
+
+    // Extract Prowler-native compliance control IDs from the OCSF
+    // compliance field and merge with the WORK-154 controls.
+    let prowler_controls = extract_prowler_compliance(item);
+    if !prowler_controls.is_empty() {
+        let mut controls = finding.compliance.take().unwrap_or_default();
+        for ctrl in prowler_controls {
+            if !controls.contains(&ctrl) {
+                controls.push(ctrl);
+            }
+        }
+        finding.compliance = Some(controls);
+    }
+
+    Some(finding)
+}
+
+/// Extract compliance control IDs from Prowler's OCSF `compliance`
+/// field.
+///
+/// Prowler 4.x OCSF output includes compliance mappings like:
+/// ```json
+/// {
+///   "compliance": {
+///     "requirements": ["CIS-1.4", "PCI-3.4", "NIST-AC-2"],
+///     "status": "FAIL"
+///   }
+/// }
+/// ```
+///
+/// Also handles the array-of-objects form:
+/// ```json
+/// {
+///   "compliance": [
+///     {"framework": "CIS", "requirement": "1.4"},
+///     {"framework": "PCI", "requirement": "3.4"}
+///   ]
+/// }
+/// ```
+fn extract_prowler_compliance(item: &serde_json::Value) -> Vec<String> {
+    let mut controls = Vec::new();
+
+    // Form 1: compliance.requirements as string array
+    if let Some(reqs) = item["compliance"]["requirements"].as_array() {
+        for req in reqs {
+            if let Some(s) = req.as_str() {
+                if !s.is_empty() {
+                    controls.push(s.to_string());
+                }
+            }
+        }
+    }
+
+    // Form 2: compliance as array of {framework, requirement} objects
+    if let Some(arr) = item["compliance"].as_array() {
+        for entry in arr {
+            let framework = entry["framework"].as_str().unwrap_or("");
+            let requirement = entry["requirement"].as_str().unwrap_or("");
+            if !framework.is_empty() && !requirement.is_empty() {
+                controls.push(format!("{framework}-{requirement}"));
+            }
+        }
+    }
+
+    // Form 3: unmapped_compliance or finding_info.compliance
+    if let Some(reqs) = item["finding_info"]["compliance"].as_array() {
+        for req in reqs {
+            if let Some(s) = req.as_str() {
+                if !s.is_empty() && !controls.contains(&s.to_string()) {
+                    controls.push(s.to_string());
+                }
+            }
+        }
+    }
+
+    controls
 }
 
 /// Map Prowler's OCSF severity strings to `ScorchKit`'s [`Severity`].
@@ -543,6 +626,66 @@ mod tests {
         assert_eq!(findings.len(), 2, "PASS + malformed line are both filtered");
         assert!(findings[0].title.contains("A"));
         assert!(findings[1].title.contains("C"));
+    }
+
+    // -----------------------------------------------------------------
+    // Compliance extraction (WORK-129)
+    // -----------------------------------------------------------------
+
+    /// Prowler OCSF with compliance.requirements array → controls extracted.
+    #[test]
+    fn test_prowler_compliance_requirements_form() {
+        let item = serde_json::json!({
+            "status_id": 2,
+            "finding_info": {"title": "S3 Check"},
+            "message": "test",
+            "severity": "high",
+            "resources": [{"group": {"name": "s3"}}],
+            "compliance": {
+                "requirements": ["CIS-1.4", "PCI-3.4", "NIST-AC-2"],
+                "status": "FAIL"
+            }
+        });
+        let finding = finding_from_ocsf_value(&item, "aws:123").expect("finding");
+        let controls = finding.compliance.as_ref().expect("compliance");
+        assert!(controls.iter().any(|c| c.contains("CIS-1.4")));
+        assert!(controls.iter().any(|c| c.contains("PCI-3.4")));
+        assert!(controls.iter().any(|c| c.contains("NIST-AC-2")));
+    }
+
+    /// Prowler OCSF with compliance as array of framework/requirement objects.
+    #[test]
+    fn test_prowler_compliance_framework_form() {
+        let item = serde_json::json!({
+            "status_id": 2,
+            "finding_info": {"title": "IAM Check"},
+            "message": "test",
+            "severity": "medium",
+            "resources": [{"group": {"name": "iam"}}],
+            "compliance": [
+                {"framework": "CIS", "requirement": "1.14"},
+                {"framework": "PCI", "requirement": "8.2.1"}
+            ]
+        });
+        let finding = finding_from_ocsf_value(&item, "aws:123").expect("finding");
+        let controls = finding.compliance.as_ref().expect("compliance");
+        assert!(controls.iter().any(|c| c.contains("CIS-1.14")));
+        assert!(controls.iter().any(|c| c.contains("PCI-8.2.1")));
+    }
+
+    /// No compliance field → still gets WORK-154 enrichment controls.
+    #[test]
+    fn test_prowler_no_compliance_field_still_enriched() {
+        let item = serde_json::json!({
+            "status_id": 2,
+            "finding_info": {"title": "Check"},
+            "message": "test",
+            "severity": "low",
+            "resources": [{"group": {"name": "ec2"}}]
+        });
+        let finding = finding_from_ocsf_value(&item, "aws:123").expect("finding");
+        // enrich_cloud_finding still populates compliance from OWASP/CWE mapping
+        assert!(finding.compliance.is_some());
     }
 
     // -----------------------------------------------------------------
