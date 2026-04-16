@@ -88,6 +88,10 @@ infra = ["dep:ipnet", "dep:sha2", "dep:hickory-resolver"]
 cloud = []
 # WORK-126: native AWS posture checks via aws-sdk-rust.
 aws-native = ["cloud", "dep:aws-config", "dep:aws-sdk-iam", "dep:aws-sdk-s3", "dep:aws-sdk-ec2", "dep:aws-sdk-cloudtrail"]
+# WORK-127: native GCP posture checks via google-cloud-auth + reqwest REST.
+gcp-native = ["cloud", "dep:google-cloud-auth"]
+# WORK-128: native Azure posture checks via azure_identity + reqwest REST.
+azure-native = ["cloud", "dep:azure_identity", "dep:azure_core"]
 
 [dependencies.sqlx]
 version = "0.8"
@@ -145,6 +149,20 @@ optional = true
 
 [dependencies.aws-sdk-cloudtrail]
 version = "1"
+optional = true
+
+# WORK-127: GCP auth for native posture checks.
+[dependencies.google-cloud-auth]
+version = "1"
+optional = true
+
+# WORK-128: Azure auth for native posture checks.
+[dependencies.azure_identity]
+version = "0.22"
+optional = true
+
+[dependencies.azure_core]
+version = "0.22"
 optional = true
 
 [dev-dependencies]
