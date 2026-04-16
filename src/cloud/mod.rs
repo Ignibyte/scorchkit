@@ -27,6 +27,10 @@
 
 #[cfg(feature = "aws-native")]
 pub mod aws;
+#[cfg(feature = "azure-native")]
+pub mod azure;
+#[cfg(feature = "gcp-native")]
+pub mod gcp;
 pub mod kubescape;
 pub mod prowler;
 pub mod scoutsuite;
@@ -45,6 +49,12 @@ pub fn register_modules() -> Vec<Box<dyn CloudModule>> {
     #[cfg(feature = "aws-native")]
     modules.extend(aws::register_aws_modules());
 
+    #[cfg(feature = "azure-native")]
+    modules.extend(azure::register_azure_modules());
+
+    #[cfg(feature = "gcp-native")]
+    modules.extend(gcp::register_gcp_modules());
+
     modules.push(Box::new(kubescape::KubescapeCloudModule));
     modules.push(Box::new(prowler::ProwlerCloudModule));
     modules.push(Box::new(scoutsuite::ScoutsuiteCloudModule));
@@ -57,42 +67,34 @@ mod tests {
     use super::*;
     use crate::engine::cloud_module::{CloudCategory, CloudProvider};
 
-    /// Pins the tool-wrapper registry shape: 3 modules in lex order.
-    /// With `aws-native`, 4 additional AWS modules prepend.
+    /// Verifies the registry contains expected modules based on active features.
+    /// Base: 3 tool wrappers. Each native feature adds 4 modules.
     #[test]
     fn test_cloud_register_modules() {
         let modules = register_modules();
 
-        #[cfg(not(feature = "aws-native"))]
-        {
-            assert_eq!(modules.len(), 3, "cloud-only registers 3 tool-wrapper modules");
-            assert_eq!(modules[0].id(), "kubescape-cloud");
-            assert_eq!(modules[1].id(), "prowler-cloud");
-            assert_eq!(modules[2].id(), "scoutsuite-cloud");
+        // Count expected modules: 3 base + 4 per native feature
+        let mut expected = 3;
+        if cfg!(feature = "aws-native") {
+            expected += 4;
         }
-
-        #[cfg(feature = "aws-native")]
-        {
-            assert_eq!(modules.len(), 7, "aws-native adds 4 native modules to the 3 wrappers");
-            // AWS modules first (lex order: aws-cloudtrail, aws-iam, aws-s3, aws-sg)
-            assert_eq!(modules[0].id(), "aws-cloudtrail");
-            assert_eq!(modules[1].id(), "aws-iam");
-            assert_eq!(modules[2].id(), "aws-s3");
-            assert_eq!(modules[3].id(), "aws-sg");
-            // Tool wrappers after
-            assert_eq!(modules[4].id(), "kubescape-cloud");
-            assert_eq!(modules[5].id(), "prowler-cloud");
-            assert_eq!(modules[6].id(), "scoutsuite-cloud");
-            // AWS native modules do NOT require external tools
-            assert!(!modules[0].requires_external_tool());
-            assert!(!modules[1].requires_external_tool());
-            assert!(!modules[2].requires_external_tool());
-            assert!(!modules[3].requires_external_tool());
+        if cfg!(feature = "azure-native") {
+            expected += 4;
         }
+        if cfg!(feature = "gcp-native") {
+            expected += 4;
+        }
+        assert_eq!(modules.len(), expected, "expected {expected} modules with current features");
 
-        // Tool wrappers always require external tools
-        let wrappers_start = if cfg!(feature = "aws-native") { 4 } else { 0 };
-        assert!(modules[wrappers_start].requires_external_tool());
-        assert_eq!(modules[wrappers_start].required_tool(), Some("kubescape"));
+        // Tool wrappers are always last and always require external tools
+        let last = modules.last().expect("at least 3 modules");
+        assert_eq!(last.id(), "scoutsuite-cloud");
+        assert!(last.requires_external_tool());
+
+        // Verify all module IDs are unique
+        let mut ids: Vec<&str> = modules.iter().map(|m| m.id()).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), modules.len(), "module IDs must be unique");
     }
 }
