@@ -1,7 +1,20 @@
+pub mod api_spec;
 pub mod audit_log;
+#[cfg(feature = "cloud")]
+pub mod cloud_context;
+#[cfg(feature = "cloud")]
+pub mod cloud_credentials;
+#[cfg(feature = "cloud")]
+pub mod cloud_evidence;
+#[cfg(feature = "cloud")]
+pub mod cloud_module;
+#[cfg(feature = "cloud")]
+pub mod cloud_target;
 pub mod code_context;
 pub mod code_module;
 pub mod compliance;
+pub mod compliance_framework;
+pub mod correlation;
 pub mod cve;
 pub mod error;
 pub mod events;
@@ -15,7 +28,9 @@ pub mod infra_module;
 #[cfg(feature = "infra")]
 pub mod infra_target;
 pub mod module_trait;
+pub mod network_credentials;
 pub mod oob;
+pub mod risk_score;
 pub mod scan_context;
 pub mod scan_result;
 pub mod scope;
@@ -23,4 +38,5 @@ pub mod service_fingerprint;
 pub mod severity;
 pub mod shared_data;
 pub mod target;
+pub mod tls_enum;
 pub mod tls_probe;

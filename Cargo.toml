@@ -1,6 +1,6 @@
 [package]
 name = "scorchkit"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2021"
 description = "Web application security testing toolkit and orchestrator"
 license = "MIT"
@@ -74,12 +74,24 @@ base64 = "0.22"
 regex = { version = "1.12.3", default-features = false, features = ["std", "perf"] }
 serde_yaml = "0.9.34"
 
+# Temporary files (used by tool wrappers that need to materialise
+# wordlists / community lists for external CLIs).
+tempfile = "3"
+
 [features]
 default = []
 storage = ["dep:sqlx", "dep:sha2", "dep:croner"]
 mcp = ["storage", "dep:rmcp", "dep:schemars"]
 infra = ["dep:ipnet", "dep:sha2", "dep:hickory-resolver"]
 # Note: sha2 under `infra` powers content-addressed CVE cache filenames.
+# WORK-150: cloud family seam — trait + orchestrator + CLI wiring only.
+cloud = []
+# WORK-126: native AWS posture checks via aws-sdk-rust.
+aws-native = ["cloud", "dep:aws-config", "dep:aws-sdk-iam", "dep:aws-sdk-s3", "dep:aws-sdk-ec2", "dep:aws-sdk-cloudtrail"]
+# WORK-127: native GCP posture checks via google-cloud-auth + reqwest REST.
+gcp-native = ["cloud", "dep:google-cloud-auth"]
+# WORK-128: native Azure posture checks via azure_identity + reqwest REST.
+azure-native = ["cloud", "dep:azure_identity", "dep:azure_core"]
 
 [dependencies.sqlx]
 version = "0.8"
@@ -110,8 +122,48 @@ optional = true
 [dependencies.hickory-resolver]
 version = "0.25"
 optional = true
+features = ["dnssec-aws-lc-rs"]
 # Uses default features (`system-config` + `tokio`) — we need both for
 # `TokioResolver::builder_tokio()` to resolve from `/etc/resolv.conf`.
+# `dnssec-aws-lc-rs` enables full DNSSEC chain validation via
+# `ResolverOpts::validate = true` (WORK-145). aws-lc-rs matches the
+# crypto provider rustls already uses (WORK-143) — single crypto
+# backend across the binary.
+
+# WORK-126: AWS SDK crates for native cloud posture checks.
+[dependencies.aws-config]
+version = "1"
+optional = true
+
+[dependencies.aws-sdk-iam]
+version = "1"
+optional = true
+
+[dependencies.aws-sdk-s3]
+version = "1"
+optional = true
+
+[dependencies.aws-sdk-ec2]
+version = "1"
+optional = true
+
+[dependencies.aws-sdk-cloudtrail]
+version = "1"
+optional = true
+
+# WORK-127: GCP auth for native posture checks.
+[dependencies.google-cloud-auth]
+version = "1"
+optional = true
+
+# WORK-128: Azure auth for native posture checks.
+[dependencies.azure_identity]
+version = "0.22"
+optional = true
+
+[dependencies.azure_core]
+version = "0.22"
+optional = true
 
 [dev-dependencies]
 assert_cmd = "2"

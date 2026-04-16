@@ -275,9 +275,22 @@ pub async fn execute(cli: Cli) -> Result<()> {
         }
 
         #[cfg(feature = "infra")]
-        Commands::Assess { url, code, infra, profile, quiet } => {
-            run_assess(&config, url.as_deref(), code.as_deref(), infra.as_deref(), &profile, quiet)
-                .await
+        Commands::Assess { url, code, infra, cloud, profile, quiet } => {
+            run_assess(
+                &config,
+                url.as_deref(),
+                code.as_deref(),
+                infra.as_deref(),
+                cloud.as_deref(),
+                &profile,
+                quiet,
+            )
+            .await
+        }
+
+        #[cfg(feature = "cloud")]
+        Commands::Cloud { target, profile, modules, skip, quiet } => {
+            run_cloud(&config, &target, &profile, modules.as_deref(), skip.as_deref(), quiet).await
         }
     }
 }
@@ -300,14 +313,15 @@ pub async fn run_assess(
     url: Option<&str>,
     code: Option<&std::path::Path>,
     infra: Option<&str>,
+    cloud: Option<&str>,
     profile: &str,
     quiet: bool,
 ) -> crate::engine::error::Result<()> {
     use crate::engine::error::ScorchError;
 
-    if url.is_none() && code.is_none() && infra.is_none() {
+    if url.is_none() && code.is_none() && infra.is_none() && cloud.is_none() {
         return Err(ScorchError::Config(
-            "assess requires at least one of --url, --code, or --infra".to_string(),
+            "assess requires at least one of --url, --code, --infra, or --cloud".to_string(),
         ));
     }
 
@@ -318,7 +332,7 @@ pub async fn run_assess(
     // callers who need per-domain profile tuning should use `run --code` directly.
     let _ = profile;
 
-    let result = engine.full_assessment(url, code, infra).await?;
+    let result = engine.full_assessment(url, code, infra, cloud).await?;
     if !quiet {
         crate::report::terminal::print_report(&result);
     }
@@ -353,6 +367,53 @@ pub async fn run_infra(
     let http_client = build_http_client(config)?;
     let ctx = InfraContext::new(infra_target, std::sync::Arc::clone(config), http_client);
     let mut orch = InfraOrchestrator::new(ctx);
+    orch.register_default_modules();
+    orch.apply_profile(profile);
+
+    if let Some(ids) = modules {
+        let list: Vec<String> = ids.split(',').map(|s| s.trim().to_string()).collect();
+        orch.filter_by_ids(&list);
+    }
+    if let Some(ids) = skip {
+        let list: Vec<String> = ids.split(',').map(|s| s.trim().to_string()).collect();
+        orch.exclude_by_ids(&list);
+    }
+
+    let result = orch.run(quiet).await?;
+    crate::report::terminal::print_report(&result);
+    Ok(())
+}
+
+/// Execute a cloud-posture scan against `target` (WORK-150).
+///
+/// Parses the target via [`crate::engine::cloud_target::CloudTarget::parse`],
+/// constructs a [`crate::engine::cloud_context::CloudContext`], applies
+/// the profile and module filters, runs the orchestrator, and prints
+/// the resulting [`crate::engine::scan_result::ScanResult`].
+///
+/// At WORK-150 the registry is empty so any scan returns zero
+/// findings. WORK-151+ will populate it.
+///
+/// # Errors
+///
+/// Returns [`crate::engine::error::ScorchError::InvalidTarget`] for
+/// unparseable targets and propagates any orchestrator failure.
+#[cfg(feature = "cloud")]
+pub async fn run_cloud(
+    config: &std::sync::Arc<crate::config::AppConfig>,
+    target: &str,
+    profile: &str,
+    modules: Option<&str>,
+    skip: Option<&str>,
+    quiet: bool,
+) -> crate::engine::error::Result<()> {
+    use crate::engine::cloud_context::CloudContext;
+    use crate::engine::cloud_target::CloudTarget;
+    use crate::runner::cloud_orchestrator::CloudOrchestrator;
+
+    let cloud_target = CloudTarget::parse(target)?;
+    let ctx = CloudContext::new(cloud_target, std::sync::Arc::clone(config));
+    let mut orch = CloudOrchestrator::new(ctx);
     orch.register_default_modules();
     orch.apply_profile(profile);
 

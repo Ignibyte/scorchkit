@@ -1,3 +1,5 @@
+pub mod attack_chain;
+pub mod dashboard;
 pub mod diff;
 pub mod html;
 pub mod json;

@@ -1,5 +1,6 @@
-//! Shared TLS probe — certificate inspection used by both DAST
-//! ([`crate::scanner::ssl`]) and infra ([`crate::infra::tls_probe`]).
+//! Shared TLS probe — certificate inspection used by both the DAST
+//! `scanner::ssl` module and the infra [`crate::infra::tls_probe`]
+//! module.
 //!
 //! Extracts the parts that don't depend on "is this an HTTPS URL or an
 //! IP + port?" so DAST and infra can both analyse a peer certificate
@@ -14,6 +15,11 @@
 //!   greeting, send a protocol-specific `STARTTLS`-equivalent command,
 //!   read the positive response, then upgrade the same stream to TLS.
 //!   Used for SMTP (25/587), IMAP (143), POP3 (110).
+//! - [`TlsMode::RdpTls`] — plain TCP connect, drive the RDP X.224
+//!   Connection Request / Connection Confirm dance (MS-RDPBCGR)
+//!   requesting `PROTOCOL_SSL`, then upgrade to TLS. Used for RDP
+//!   (3389). NLA-only hosts respond with `RDP_NEG_FAILURE`; the probe
+//!   surfaces that as an Info finding rather than failing the scan.
 //!
 //! ## Cert-check helpers
 //!
@@ -24,9 +30,10 @@
 //!
 //! ## What's out of scope
 //!
-//! - TLS protocol-version enumeration (forced min/max handshakes).
-//! - Cipher-suite enumeration (one handshake per cipher).
-//! - RDP-TLS (requires X.224 Connection Request negotiation).
+//! - **TLS protocol-version enumeration** and **cipher-suite
+//!   enumeration** now live in [`crate::engine::tls_enum`]. That module
+//!   answers "which versions / ciphers will the server accept?" while
+//!   this one answers "is the peer certificate valid?".
 
 use std::io::{self};
 use std::sync::Arc;
@@ -84,6 +91,10 @@ pub enum TlsMode {
     Implicit,
     /// Plain connect → protocol-specific upgrade → TLS.
     Starttls(StarttlsProtocol),
+    /// Plain connect → RDP X.224 Connection Request / Connection
+    /// Confirm negotiation (MS-RDPBCGR, requesting `PROTOCOL_SSL`) →
+    /// TLS. Used for RDP on port 3389.
+    RdpTls,
 }
 
 /// Protocols that carry their own STARTTLS-equivalent command.
@@ -127,6 +138,9 @@ pub async fn probe_tls(
         TlsMode::Starttls(protocol) => run_starttls_preamble(tcp, protocol)
             .await
             .map_err(|e| format!("STARTTLS preamble failed ({protocol:?}): {e}"))?,
+        TlsMode::RdpTls => run_rdp_x224_preamble(tcp)
+            .await
+            .map_err(|e| format!("RDP-TLS X.224 preamble failed: {e}"))?,
     };
 
     // Install a default crypto provider lazily; `install_default`
@@ -157,7 +171,17 @@ pub async fn probe_tls(
 
 /// Drive the STARTTLS-equivalent command dance for the given
 /// protocol, returning the same `TcpStream` ready for TLS upgrade.
-async fn run_starttls_preamble(
+///
+/// Exposed at crate scope so [`crate::engine::tls_enum`] can reuse the
+/// STARTTLS preamble without duplicating the wire protocol.
+///
+/// # Errors
+///
+/// Returns an I/O error if the TCP read/write fails, if the peer
+/// closes before sending a positive STARTTLS response, or if the
+/// protocol-specific negative response (e.g. SMTP not-220, IMAP
+/// not-OK, POP3 not-`+OK`) is received.
+pub(crate) async fn run_starttls_preamble(
     mut tcp: TcpStream,
     protocol: StarttlsProtocol,
 ) -> io::Result<TcpStream> {
@@ -202,6 +226,171 @@ async fn run_starttls_preamble(
         }
     }
     Ok(tcp)
+}
+
+// -------------------------------------------------------------------
+// RDP-TLS (X.224 / TPKT / MS-RDPBCGR) preamble
+// -------------------------------------------------------------------
+
+/// TPKT (RFC 1006) protocol version.
+const TPKT_VERSION: u8 = 0x03;
+/// X.224 Connection Request TPDU type (low nibble = CDT credit = 0).
+const X224_CR_TPDU: u8 = 0xE0;
+/// X.224 Connection Confirm TPDU type.
+const X224_CC_TPDU: u8 = 0xD0;
+/// MS-RDPBCGR 2.2.1.2.1 — `RDP_NEG_RSP` success.
+const RDP_NEG_RSP_TYPE: u8 = 0x02;
+/// MS-RDPBCGR 2.2.1.2.2 — `RDP_NEG_FAILURE`.
+const RDP_NEG_FAILURE_TYPE: u8 = 0x03;
+/// MS-RDPBCGR negotiation protocol identifier: `PROTOCOL_SSL`.
+const RDP_PROTOCOL_SSL: u32 = 0x0000_0001;
+/// Upper bound on a Connection Confirm TPKT we will accept. Real CCs
+/// are ~19 bytes; anything past this is either garbage or a misbehaving
+/// peer and we refuse to allocate room for it.
+const RDP_CC_MAX_LEN: usize = 256;
+/// Minimum valid Connection Confirm TPKT length — 4 (TPKT header) + 7
+/// (X.224 CC fixed) + 8 (`RDP_NEG_RSP` or `RDP_NEG_FAILURE`).
+const RDP_CC_MIN_LEN: usize = 19;
+
+/// Fixed 38-byte X.224 Connection Request we send to negotiate
+/// RDP-TLS. Deterministic — no runtime branching, no per-host
+/// variation.
+///
+/// Layout (offsets in bytes):
+///
+/// | Offset | Bytes | Meaning |
+/// |--------|-------|---------|
+/// | 0      | `03 00` | TPKT version 3 + reserved |
+/// | 2      | `00 26` | TPKT total length = 38 (big-endian u16) |
+/// | 4      | `21` | X.224 LI = 33 (= TPKT length − 5; FreeRDP/rdesktop convention covers the entire TPDU including user data) |
+/// | 5      | `E0` | X.224 CR-TPDU type (CDT = 0) |
+/// | 6-9    | `00 00 00 00` | DST-REF / SRC-REF |
+/// | 10     | `00` | Class 0 / no options |
+/// | 11-29  | `"Cookie: mstshash=\r\n"` | MS-RDPBCGR 2.2.1.1 cookie — empty username (19 bytes, matches rdesktop/FreeRDP defaults) |
+/// | 30     | `01` | `RDP_NEG_REQ` type |
+/// | 31     | `00` | `RDP_NEG_REQ` flags (no `CORRELATION_INFO`) |
+/// | 32-33  | `08 00` | `RDP_NEG_REQ` length = 8 (little-endian u16, fixed) |
+/// | 34-37  | `01 00 00 00` | requestedProtocols = `PROTOCOL_SSL` (little-endian u32) |
+const RDP_CR_PACKET: [u8; 38] = [
+    // TPKT header (4 bytes, big-endian length)
+    0x03,
+    0x00,
+    0x00,
+    0x26, //
+    // X.224 CR TPDU header (7 bytes)
+    0x21,
+    X224_CR_TPDU,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00, //
+    // Cookie: 19 bytes — "Cookie: mstshash=\r\n"
+    b'C',
+    b'o',
+    b'o',
+    b'k',
+    b'i',
+    b'e',
+    b':',
+    b' ', //
+    b'm',
+    b's',
+    b't',
+    b's',
+    b'h',
+    b'a',
+    b's',
+    b'h',
+    b'=',
+    b'\r',
+    b'\n', //
+    // RDP_NEG_REQ (8 bytes, little-endian length + requestedProtocols)
+    0x01,
+    0x00,
+    0x08,
+    0x00,
+    0x01,
+    0x00,
+    0x00,
+    0x00,
+];
+
+/// Drive the RDP-TLS X.224 Connection Request → Connection Confirm
+/// handshake on a freshly-connected [`TcpStream`] and return the same
+/// stream, ready for a rustls upgrade.
+///
+/// Sends the fixed 38-byte [`RDP_CR_PACKET`] asking for `PROTOCOL_SSL`,
+/// then reads and validates the server's Connection Confirm. Hosts that
+/// require CredSSP/NLA respond with `RDP_NEG_FAILURE`; that becomes an
+/// `Err` here (and later an Info finding in the caller) — never a
+/// panic.
+///
+/// All network I/O is bounded by [`DEFAULT_PHASE_TIMEOUT`].
+async fn run_rdp_x224_preamble(mut tcp: TcpStream) -> io::Result<TcpStream> {
+    // --- Send CR ---------------------------------------------------
+    timeout(DEFAULT_PHASE_TIMEOUT, tcp.write_all(&RDP_CR_PACKET))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "timed out writing X.224 CR"))??;
+
+    // --- Read CC TPKT header (first 4 bytes) to discover length ---
+    let mut tpkt = [0u8; 4];
+    read_exact_with_timeout(&mut tcp, &mut tpkt).await?;
+    if tpkt[0] != TPKT_VERSION {
+        return Err(io::Error::other(format!("bad TPKT version in CC: 0x{:02x}", tpkt[0])));
+    }
+    let tpkt_len = usize::from(u16::from_be_bytes([tpkt[2], tpkt[3]]));
+    if !(RDP_CC_MIN_LEN..=RDP_CC_MAX_LEN).contains(&tpkt_len) {
+        return Err(io::Error::other(format!(
+            "implausible TPKT length in CC: {tpkt_len} (expected {RDP_CC_MIN_LEN}..={RDP_CC_MAX_LEN})"
+        )));
+    }
+
+    // --- Read the rest of the CC TPDU ------------------------------
+    let mut body = vec![0u8; tpkt_len - 4];
+    read_exact_with_timeout(&mut tcp, &mut body).await?;
+
+    // body[0] = LI, body[1] = TPDU type. Validate type is CC.
+    if body[1] != X224_CC_TPDU {
+        return Err(io::Error::other(format!(
+            "expected X.224 CC (0x{X224_CC_TPDU:02x}), got 0x{:02x}",
+            body[1]
+        )));
+    }
+
+    // The RDP_NEG_RSP / RDP_NEG_FAILURE is always the trailing 8 bytes
+    // of the CC TPDU — independent of X.224 variable-part length.
+    // Length sanity guaranteed by the TPKT lower bound check above.
+    let neg_start = body.len() - 8;
+    let neg = &body[neg_start..];
+    let selected_or_code = u32::from_le_bytes([neg[4], neg[5], neg[6], neg[7]]);
+    match neg[0] {
+        RDP_NEG_RSP_TYPE => {
+            if selected_or_code != RDP_PROTOCOL_SSL {
+                return Err(io::Error::other(format!(
+                    "server selected non-SSL protocol: 0x{selected_or_code:08x}"
+                )));
+            }
+            Ok(tcp)
+        }
+        RDP_NEG_FAILURE_TYPE => Err(io::Error::other(format!(
+            "RDP negotiation refused: failureCode=0x{selected_or_code:08x}"
+        ))),
+        other => {
+            Err(io::Error::other(format!("unexpected RDP_NEG_* response type: 0x{other:02x}")))
+        }
+    }
+}
+
+/// Read exactly `buf.len()` bytes from `tcp`, bounded by
+/// [`DEFAULT_PHASE_TIMEOUT`]. Mirrors the timeout discipline of
+/// [`read_line_with_budget`] but for fixed-size binary reads (RDP
+/// frames).
+async fn read_exact_with_timeout(tcp: &mut TcpStream, buf: &mut [u8]) -> io::Result<()> {
+    timeout(DEFAULT_PHASE_TIMEOUT, tcp.read_exact(buf))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "timed out reading X.224 phase"))??;
+    Ok(())
 }
 
 /// Read until `\n`, capped at [`STARTTLS_READ_BUDGET`] and
@@ -502,8 +691,6 @@ mod tests {
     //! (scanner/ssl.rs and infra/tls_probe.rs).
 
     use super::*;
-    use tokio::io::AsyncReadExt as _;
-    use tokio::io::AsyncWriteExt as _;
     use tokio::net::TcpListener;
 
     fn fixture_cert(
@@ -674,6 +861,207 @@ mod tests {
 
         let tcp = TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
         let _ = run_starttls_preamble(tcp, StarttlsProtocol::Imap).await.expect("preamble");
+        server.await.expect("server task");
+    }
+
+    /// Golden-byte layout: `RDP_CR_PACKET` matches the hand-computed
+    /// MS-RDPBCGR wire format byte-for-byte. Pins the endianness split
+    /// (TPKT is big-endian; `RDP_NEG_REQ` length + protocol mask are
+    /// little-endian) — easy to get wrong during refactors.
+    #[test]
+    fn rdp_cr_packet_layout_golden_bytes() {
+        let expected: [u8; 38] = [
+            // TPKT header (big-endian length = 38)
+            0x03,
+            0x00,
+            0x00,
+            0x26, //
+            // X.224 CR TPDU
+            0x21,
+            X224_CR_TPDU,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00, //
+            // Cookie: mstshash=\r\n
+            b'C',
+            b'o',
+            b'o',
+            b'k',
+            b'i',
+            b'e',
+            b':',
+            b' ', //
+            b'm',
+            b's',
+            b't',
+            b's',
+            b'h',
+            b'a',
+            b's',
+            b'h',
+            b'=',
+            b'\r',
+            b'\n', //
+            // RDP_NEG_REQ — type, flags, length (LE u16), protocol mask (LE u32)
+            0x01,
+            0x00,
+            0x08,
+            0x00,
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+        ];
+        assert_eq!(RDP_CR_PACKET, expected, "canonical CR packet layout changed");
+        assert_eq!(RDP_CR_PACKET.len(), 38);
+
+        // Spot checks — when this test fails, the message tells you
+        // WHICH field is wrong rather than just "big byte array diff".
+        assert_eq!(
+            u16::from_be_bytes([RDP_CR_PACKET[2], RDP_CR_PACKET[3]]),
+            38,
+            "TPKT length (big-endian) must equal total packet length"
+        );
+        assert_eq!(
+            RDP_CR_PACKET[4],
+            38 - 5,
+            "X.224 LI must equal TPKT length − 5 (FreeRDP/rdesktop convention)"
+        );
+        assert_eq!(RDP_CR_PACKET[5], X224_CR_TPDU, "X.224 TPDU type must be CR (0xE0)");
+        assert_eq!(&RDP_CR_PACKET[11..30], b"Cookie: mstshash=\r\n", "cookie stub mismatch");
+        assert_eq!(RDP_CR_PACKET[30], 0x01, "RDP_NEG_REQ type = 1");
+        assert_eq!(
+            u16::from_le_bytes([RDP_CR_PACKET[32], RDP_CR_PACKET[33]]),
+            8,
+            "RDP_NEG_REQ length (little-endian) must equal 8"
+        );
+        assert_eq!(
+            u32::from_le_bytes([
+                RDP_CR_PACKET[34],
+                RDP_CR_PACKET[35],
+                RDP_CR_PACKET[36],
+                RDP_CR_PACKET[37],
+            ]),
+            RDP_PROTOCOL_SSL,
+            "requestedProtocols (little-endian) must be PROTOCOL_SSL (0x00000001)"
+        );
+    }
+
+    /// Ephemeral-listener integration: server asserts it received the
+    /// canonical CR, replies with a well-formed CC selecting
+    /// `PROTOCOL_SSL`, and [`run_rdp_x224_preamble`] returns `Ok`.
+    #[tokio::test]
+    async fn rdp_x224_preamble_success_unlocks_stream() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.expect("accept");
+            let mut got = [0u8; 38];
+            sock.read_exact(&mut got).await.expect("read CR");
+            assert_eq!(got, RDP_CR_PACKET, "client must send canonical CR");
+            // Canonical 19-byte CC: TPKT len 19, X.224 LI 14, RDP_NEG_RSP
+            // with selectedProtocol = PROTOCOL_SSL.
+            let cc: [u8; 19] = [
+                0x03,
+                0x00,
+                0x00,
+                0x13, // TPKT
+                0x0E,
+                X224_CC_TPDU,
+                0x00,
+                0x00,
+                0x12,
+                0x34,
+                0x00, // X.224 CC
+                RDP_NEG_RSP_TYPE,
+                0x00,
+                0x08,
+                0x00, // RDP_NEG_RSP header
+                0x01,
+                0x00,
+                0x00,
+                0x00, // selectedProtocol = PROTOCOL_SSL (LE)
+            ];
+            sock.write_all(&cc).await.expect("write CC");
+        });
+
+        let tcp = TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
+        let _ready = run_rdp_x224_preamble(tcp).await.expect("preamble should succeed");
+        server.await.expect("server task");
+    }
+
+    /// Server replies with `RDP_NEG_FAILURE` (e.g. NLA-only host):
+    /// preamble returns an `Err` whose message names the failure code.
+    /// Verifies that CredSSP-required hosts surface as Info findings,
+    /// not crashes.
+    #[tokio::test]
+    async fn rdp_x224_preamble_neg_failure_yields_err() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.expect("accept");
+            let mut discard = [0u8; 38];
+            sock.read_exact(&mut discard).await.expect("read CR");
+            // RDP_NEG_FAILURE with failureCode = SSL_REQUIRED_BY_SERVER (0x00000001).
+            let cc: [u8; 19] = [
+                0x03,
+                0x00,
+                0x00,
+                0x13, //
+                0x0E,
+                X224_CC_TPDU,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00, //
+                RDP_NEG_FAILURE_TYPE,
+                0x00,
+                0x08,
+                0x00, //
+                0x01,
+                0x00,
+                0x00,
+                0x00, // failureCode (LE)
+            ];
+            sock.write_all(&cc).await.expect("write CC");
+        });
+
+        let tcp = TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
+        let err = run_rdp_x224_preamble(tcp).await.expect_err("preamble should Err");
+        let msg = err.to_string();
+        assert!(msg.contains("RDP negotiation refused"), "got: {msg}");
+        assert!(msg.contains("0x00000001"), "got: {msg}");
+        server.await.expect("server task");
+    }
+
+    /// Peer accepts the TCP connection, reads the CR, then closes
+    /// without responding. Preamble returns an `Err` — no panic, no
+    /// unwrap explosion. Guards against the read-end of a broken pipe.
+    #[tokio::test]
+    async fn rdp_x224_preamble_peer_close_yields_err_no_panic() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.expect("accept");
+            // Drain the CR so the client's write_all completes, then
+            // drop the socket. Client will get EOF on the CC read.
+            let mut discard = [0u8; 38];
+            let _ = sock.read_exact(&mut discard).await;
+            drop(sock);
+        });
+
+        let tcp = TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
+        let err = run_rdp_x224_preamble(tcp).await.expect_err("preamble must Err on peer close");
+        // The specific io::Error variant depends on kernel timing
+        // (UnexpectedEof vs ConnectionReset); only the no-panic +
+        // non-empty message contract matters.
+        assert!(!err.to_string().is_empty());
         server.await.expect("server task");
     }
 }

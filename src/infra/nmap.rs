@@ -1,5 +1,5 @@
 //! nmap-based port scan + service fingerprinting as an
-//! [`InfraModule`](crate::engine::infra_module::InfraModule).
+//! [`crate::engine::infra_module::InfraModule`].
 //!
 //! Runs `nmap -sV --top-ports 1000 -oX - <target>`, parses the XML output
 //! via the shared [`crate::engine::service_fingerprint::parse_nmap_xml_fingerprints`]

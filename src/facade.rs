@@ -222,6 +222,46 @@ impl Engine {
         orchestrator.run(true).await
     }
 
+    /// Run a cloud-posture scan against a cloud target.
+    ///
+    /// Accepted target forms: `aws:123456789012`, `gcp:my-project`,
+    /// `azure:abcd-1234`, `k8s:prod-cluster`, or `all`. WORK-150
+    /// ships an empty module registry — the scan emits the
+    /// `ScanStarted` then `ScanCompleted` events with zero findings
+    /// until WORK-151+ populate [`crate::cloud::register_modules`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target cannot be parsed or the
+    /// orchestrator fails.
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use scorchkit::config::AppConfig;
+    /// use scorchkit::facade::Engine;
+    ///
+    /// # async fn example() -> scorchkit::engine::error::Result<()> {
+    /// let engine = Engine::new(Arc::new(AppConfig::default()));
+    /// let result = engine.cloud_scan("aws:123456789012").await?;
+    /// println!("cloud findings: {}", result.findings.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "cloud")]
+    pub async fn cloud_scan(&self, target: &str) -> Result<ScanResult> {
+        use crate::engine::cloud_context::CloudContext;
+        use crate::engine::cloud_target::CloudTarget;
+        use crate::runner::cloud_orchestrator::CloudOrchestrator;
+
+        let cloud_target = CloudTarget::parse(target)?;
+        let ctx = CloudContext::new(cloud_target, Arc::clone(&self.config));
+
+        let mut orchestrator = CloudOrchestrator::new(ctx);
+        orchestrator.register_default_modules();
+
+        orchestrator.run(true).await
+    }
+
     /// Run a unified DAST + SAST + Infra assessment.
     ///
     /// At least one of `url`, `code_path`, or `infra_target` must be
@@ -250,24 +290,47 @@ impl Engine {
     ///         Some("https://example.com"),
     ///         Some(Path::new("./src")),
     ///         Some("127.0.0.1"),
+    ///         None,  // cloud target (optional; requires `cloud` feature)
     ///     )
     ///     .await?;
     /// println!("unified findings: {}", result.findings.len());
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// The `cloud_target` parameter is always present in the
+    /// signature (it is not `cfg`-gated) so callers don't need their
+    /// own `#[cfg(feature = "cloud")]` wrappers. Passing `Some(_)`
+    /// when the `cloud` feature is **off** returns
+    /// [`crate::engine::error::ScorchError::Config`] at call time.
     #[cfg(feature = "infra")]
     pub async fn full_assessment(
         &self,
         url: Option<&str>,
         code_path: Option<&Path>,
         infra_target: Option<&str>,
+        cloud_target: Option<&str>,
     ) -> Result<ScanResult> {
         use crate::engine::error::ScorchError;
 
-        if url.is_none() && code_path.is_none() && infra_target.is_none() {
+        if url.is_none() && code_path.is_none() && infra_target.is_none() && cloud_target.is_none()
+        {
             return Err(ScorchError::Config(
-                "full_assessment requires at least one of url, code_path, or infra_target".into(),
+                "full_assessment requires at least one of url, code_path, infra_target, or \
+                 cloud_target"
+                    .into(),
+            ));
+        }
+
+        // Reject cloud_target when the cloud feature is disabled — the
+        // parameter is always-present in the signature, but the
+        // orchestrator + SDKs live behind the feature flag.
+        #[cfg(not(feature = "cloud"))]
+        if cloud_target.is_some() {
+            return Err(ScorchError::Config(
+                "cloud_target provided but the `cloud` feature is not enabled — rebuild with \
+                 `--features cloud`"
+                    .into(),
             ));
         }
 
@@ -289,17 +352,29 @@ impl Engine {
                 None => None,
             }
         };
+        #[cfg(feature = "cloud")]
+        let cloud_future = async {
+            match cloud_target {
+                Some(t) => Some(self.cloud_scan(t).await),
+                None => None,
+            }
+        };
+        #[cfg(not(feature = "cloud"))]
+        let cloud_future = async { None::<Result<ScanResult>> };
 
-        let (dast, sast, infra) = tokio::join!(dast_future, sast_future, infra_future);
+        let (dast, sast, infra, cloud) =
+            tokio::join!(dast_future, sast_future, infra_future, cloud_future);
 
         // Pick the first available Ok as the base, merge the others into it.
-        // Priority: DAST > SAST > Infra (matches full_scan precedent).
+        // Priority: DAST > SAST > Infra > Cloud (matches full_scan precedent;
+        // cloud last as it is the newest family).
         let mut base: Option<ScanResult> = None;
         let mut first_err: Option<ScorchError> = None;
 
         absorb_outcome(dast, &mut base, &mut first_err);
         absorb_outcome(sast, &mut base, &mut first_err);
         absorb_outcome(infra, &mut base, &mut first_err);
+        absorb_outcome(cloud, &mut base, &mut first_err);
 
         base.ok_or_else(|| {
             first_err.unwrap_or_else(|| ScorchError::Config("assess: no results".into()))

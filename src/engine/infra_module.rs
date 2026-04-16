@@ -31,6 +31,12 @@ pub enum InfraCategory {
     TlsInfra,
     /// DNS infrastructure checks — zone transfer, DNSSEC, wildcard detection.
     Dns,
+    /// Cloud-posture category (WORK-150). Modules implementing this
+    /// category live under [`crate::engine::cloud_module::CloudModule`]
+    /// and run through [`crate::runner::cloud_orchestrator::CloudOrchestrator`].
+    /// The variant exists here for unified `--category` CLI filtering
+    /// across the module families.
+    Cloud,
 }
 
 impl std::fmt::Display for InfraCategory {
@@ -41,6 +47,7 @@ impl std::fmt::Display for InfraCategory {
             Self::CveMatch => f.write_str("cvematch"),
             Self::TlsInfra => f.write_str("tlsinfra"),
             Self::Dns => f.write_str("dns"),
+            Self::Cloud => f.write_str("cloud"),
         }
     }
 }
@@ -105,6 +112,7 @@ mod tests {
         assert_eq!(InfraCategory::CveMatch.to_string(), "cvematch");
         assert_eq!(InfraCategory::TlsInfra.to_string(), "tlsinfra");
         assert_eq!(InfraCategory::Dns.to_string(), "dns");
+        assert_eq!(InfraCategory::Cloud.to_string(), "cloud");
     }
 
     /// `InfraCategory` round-trips through JSON.
@@ -116,6 +124,7 @@ mod tests {
             InfraCategory::CveMatch,
             InfraCategory::TlsInfra,
             InfraCategory::Dns,
+            InfraCategory::Cloud,
         ] {
             let json = serde_json::to_string(&cat).expect("serialize");
             let back: InfraCategory = serde_json::from_str(&json).expect("deserialize");

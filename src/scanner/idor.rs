@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use url::Url;
 
+use crate::engine::api_spec::read_api_spec;
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
@@ -33,8 +34,55 @@ impl ScanModule for IdorModule {
         test_url_params_idor(ctx, url, &mut findings).await?;
         test_path_segments_idor(ctx, url, &mut findings).await?;
 
+        // WORK-108b: surface ID-shaped parameters from spec-discovered
+        // endpoints. Pure declarative — flags review candidates
+        // without burning the rate budget on full IDOR probes (the
+        // caller can re-target them via `--modules idor` against the
+        // generated OpenAPI spec for deeper testing).
+        if let Some(spec) = read_api_spec(&ctx.shared_data) {
+            for endpoint in &spec.endpoints {
+                let id_params: Vec<&String> =
+                    endpoint.parameters.iter().filter(|p| param_looks_like_id(p)).collect();
+                if id_params.is_empty() {
+                    continue;
+                }
+                let names = id_params.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+                findings.push(
+                    Finding::new(
+                        "idor",
+                        Severity::Info,
+                        format!(
+                            "Discovered endpoint with ID-shaped parameter(s): {} {}",
+                            endpoint.method, endpoint.url
+                        ),
+                        format!(
+                            "Endpoint exposes ID-shaped parameter(s) ({names}) per the \
+                             discovered API spec. Verify access control: ensure each ID \
+                             belongs to (or is authorised for) the requesting user."
+                        ),
+                        endpoint.url.clone(),
+                    )
+                    .with_evidence(format!("method={} parameters=[{names}]", endpoint.method))
+                    .with_remediation(
+                        "Enforce per-record authorisation checks; never trust client-supplied IDs.",
+                    )
+                    .with_owasp("A01:2021 Broken Access Control")
+                    .with_cwe(639)
+                    .with_confidence(0.5),
+                );
+            }
+        }
+
         Ok(findings)
     }
+}
+
+/// True when a parameter name looks like it carries an identifier.
+/// Pure helper — no value needed since the spec-discovery path
+/// doesn't have a sample value at scan time.
+fn param_looks_like_id(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower == "id" || lower.ends_with("_id") || lower.ends_with("id") && lower.len() > 2
 }
 
 async fn test_url_params_idor(

@@ -8,6 +8,7 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use crate::engine::api_spec::read_api_spec;
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
@@ -52,6 +53,25 @@ impl ScanModule for GraphQLModule {
             let url = format!("{base}{path}");
             if probe_graphql(ctx, &url).await {
                 endpoints.push(GqlEndpoint { url, path: path.to_string() });
+            }
+        }
+
+        // WORK-108b: also probe URLs from the published API spec
+        // that look like GraphQL endpoints (URL path contains
+        // `graphql` or `gql`, case-insensitive). Avoids re-probing
+        // anything we already discovered above.
+        if let Some(spec) = read_api_spec(&ctx.shared_data) {
+            for ep in &spec.endpoints {
+                let lower = ep.url.to_lowercase();
+                if !(lower.contains("graphql") || lower.contains("gql")) {
+                    continue;
+                }
+                if endpoints.iter().any(|e| e.url == ep.url) {
+                    continue;
+                }
+                if probe_graphql(ctx, &ep.url).await {
+                    endpoints.push(GqlEndpoint { url: ep.url.clone(), path: ep.url.clone() });
+                }
             }
         }
 

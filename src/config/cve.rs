@@ -26,6 +26,11 @@ pub struct CveConfig {
     pub nvd: NvdConfig,
     /// OSV-specific configuration. Read only when `backend == Osv`.
     pub osv: OsvConfig,
+    /// Composite-backend configuration. Read only when
+    /// `backend == Composite`. Lists the sub-backends to fan out to;
+    /// each sub-backend reads its own `[cve.nvd]` / `[cve.osv]`
+    /// sub-block at construction time.
+    pub composite: CompositeConfig,
 }
 
 // (`OsvConfig` documented at its definition below.)
@@ -36,7 +41,9 @@ pub struct CveConfig {
 /// the `cve_match` module is not present in the orchestrator. `Mock`
 /// returns a fixture-backed [`crate::infra::cve_mock::MockCveLookup`]
 /// (useful for examples and demos). `Nvd` returns a live
-/// [`crate::infra::cve_nvd::NvdCveLookup`].
+/// [`crate::infra::cve_nvd::NvdCveLookup`]. `Composite` returns a
+/// [`crate::infra::cve_multi::MultiCveLookup`] wrapping the
+/// sub-backends listed in [`CompositeConfig::sources`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CveBackendKind {
@@ -51,6 +58,36 @@ pub enum CveBackendKind {
     /// `PyPI`, `Maven`, ...). Requires CPE → ecosystem translation;
     /// system-software CPEs are skipped.
     Osv,
+    /// Fan-out aggregator across multiple sub-backends with dedup by
+    /// canonical CVE ID. Consults the `[cve.composite]` sub-block.
+    Composite,
+}
+
+/// A single sub-backend selected inside [`CompositeConfig::sources`].
+///
+/// This enum is intentionally **flat** — there is no `Composite`
+/// variant, which makes nested Composite construction structurally
+/// impossible and removes the need for a runtime nesting check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CompositeSource {
+    /// Include an [`crate::infra::cve_nvd::NvdCveLookup`] built from `[cve.nvd]`.
+    Nvd,
+    /// Include an [`crate::infra::cve_osv::OsvCveLookup`] built from `[cve.osv]`.
+    Osv,
+    /// Include an empty [`crate::infra::cve_mock::MockCveLookup`] (useful in tests).
+    Mock,
+}
+
+/// Configuration for the Composite backend.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CompositeConfig {
+    /// Sub-backends to fan out to. Order is preserved in the dedup
+    /// pass — ties on canonical CVE ID + CVSS score go to whichever
+    /// source appears first. Must be non-empty when
+    /// `backend == Composite` (the factory enforces this).
+    pub sources: Vec<CompositeSource>,
 }
 
 /// NVD-specific configuration.
@@ -73,11 +110,23 @@ pub struct NvdConfig {
     /// Cache TTL in seconds. Default: 86400 (24h). Negative caching uses
     /// the same TTL — empty result sets are persisted.
     pub cache_ttl_secs: u64,
+    /// Enable delta-sync mode. When `true` and a cache entry exists
+    /// for a CPE, subsequent queries fetch only records modified since
+    /// the cache was written (`lastModStartDate = fetched_at − 1h`) and
+    /// merge them with the cached set. Reduces NVD load + scan latency
+    /// for operators running frequent scans. Default: `false`.
+    pub delta_sync: bool,
 }
 
 impl Default for NvdConfig {
     fn default() -> Self {
-        Self { api_key: None, base_url: None, cache_dir: None, cache_ttl_secs: 86_400 }
+        Self {
+            api_key: None,
+            base_url: None,
+            cache_dir: None,
+            cache_ttl_secs: 86_400,
+            delta_sync: false,
+        }
     }
 }
 
@@ -137,6 +186,22 @@ mod tests {
         assert!(cfg.nvd.base_url.is_none());
         assert!(cfg.nvd.cache_dir.is_none());
         assert_eq!(cfg.nvd.cache_ttl_secs, 86_400);
+        assert!(!cfg.nvd.delta_sync, "delta_sync defaults to false (safe-by-default)");
+    }
+
+    /// `delta_sync` round-trips through `[cve.nvd]` TOML.
+    #[test]
+    fn nvd_config_delta_sync_toml_round_trip() {
+        let toml_str = r#"
+backend = "nvd"
+
+[nvd]
+delta_sync = true
+cache_ttl_secs = 3600
+"#;
+        let cfg: CveConfig = toml::from_str(toml_str).expect("parse TOML");
+        assert!(cfg.nvd.delta_sync);
+        assert_eq!(cfg.nvd.cache_ttl_secs, 3600);
     }
 
     /// A `[cve]` + `[cve.nvd]` TOML block round-trips through serde. This
@@ -163,7 +228,7 @@ cache_ttl_secs = 3600
 
     /// `CveBackendKind` serialises lowercase. Pins the user-facing string
     /// values that `config.toml` uses (`"disabled"`, `"mock"`, `"nvd"`,
-    /// `"osv"`).
+    /// `"osv"`, `"composite"`).
     #[test]
     fn cve_backend_kind_serde_lowercase() {
         for (kind, expected) in [
@@ -171,12 +236,54 @@ cache_ttl_secs = 3600
             (CveBackendKind::Mock, "\"mock\""),
             (CveBackendKind::Nvd, "\"nvd\""),
             (CveBackendKind::Osv, "\"osv\""),
+            (CveBackendKind::Composite, "\"composite\""),
         ] {
             let s = serde_json::to_string(&kind).expect("serialize");
             assert_eq!(s, expected);
             let back: CveBackendKind = serde_json::from_str(&s).expect("deserialize");
             assert_eq!(back, kind);
         }
+    }
+
+    /// `CompositeSource` serialises lowercase (`"nvd"` / `"osv"` /
+    /// `"mock"`) — the operator-facing TOML vocabulary matches
+    /// `CveBackendKind`, minus the `Composite` value (flat by design).
+    #[test]
+    fn composite_source_serde_lowercase() {
+        for (kind, expected) in [
+            (CompositeSource::Nvd, "\"nvd\""),
+            (CompositeSource::Osv, "\"osv\""),
+            (CompositeSource::Mock, "\"mock\""),
+        ] {
+            let s = serde_json::to_string(&kind).expect("serialize");
+            assert_eq!(s, expected);
+            let back: CompositeSource = serde_json::from_str(&s).expect("deserialize");
+            assert_eq!(back, kind);
+        }
+    }
+
+    /// `CompositeConfig::default` has no sources. Pins the contract
+    /// `build_cve_lookup` relies on when rejecting
+    /// `backend = "composite"` without a populated sources list.
+    #[test]
+    fn composite_config_default_empty_sources() {
+        let cfg = CompositeConfig::default();
+        assert!(cfg.sources.is_empty());
+    }
+
+    /// `[cve] backend = "composite"` + `[cve.composite] sources = [...]`
+    /// round-trips through serde. User-facing schema contract.
+    #[test]
+    fn composite_config_toml_round_trip() {
+        let toml_str = r#"
+backend = "composite"
+
+[composite]
+sources = ["nvd", "osv"]
+"#;
+        let cfg: CveConfig = toml::from_str(toml_str).expect("parse");
+        assert_eq!(cfg.backend, CveBackendKind::Composite);
+        assert_eq!(cfg.composite.sources, vec![CompositeSource::Nvd, CompositeSource::Osv]);
     }
 
     /// Default `OsvConfig` matches the documented contract: 24h TTL,

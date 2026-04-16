@@ -470,6 +470,205 @@ fn tool_specs() -> Vec<ToolSpec> {
             min_version: Some("8.0.0"),
             remediation: "Install: go install github.com/gitleaks/gitleaks/v8@latest",
         },
+        // WORK-111: network/infra tool batch
+        ToolSpec {
+            binary: "masscan",
+            name: "masscan",
+            category: "Network",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: apt install masscan (Debian/Ubuntu) or build from \
+                          https://github.com/robertdavidgraham/masscan",
+        },
+        ToolSpec {
+            binary: "naabu",
+            name: "naabu",
+            category: "Network",
+            version_flag: Some("-version"),
+            min_version: None,
+            remediation: "Install: go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest",
+        },
+        ToolSpec {
+            binary: "smbmap",
+            name: "smbmap",
+            category: "Network",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install smbmap (or pip install smbmap)",
+        },
+        ToolSpec {
+            binary: "nxc",
+            name: "NetExec (nxc)",
+            category: "Network",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install git+https://github.com/Pennyw0rth/NetExec",
+        },
+        ToolSpec {
+            binary: "kerbrute",
+            name: "kerbrute",
+            category: "Network",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: go install github.com/ropnop/kerbrute@latest",
+        },
+        ToolSpec {
+            binary: "ssh-audit",
+            name: "ssh-audit",
+            category: "Network",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install ssh-audit (or pip install ssh-audit)",
+        },
+        ToolSpec {
+            binary: "onesixtyone",
+            name: "onesixtyone",
+            category: "Network",
+            version_flag: None,
+            min_version: None,
+            remediation: "Install: apt install onesixtyone (Debian/Ubuntu) or build from \
+                          https://github.com/trailofbits/onesixtyone",
+        },
+        // WORK-107: Vespasian API endpoint discovery
+        ToolSpec {
+            binary: "vespasian",
+            name: "Vespasian",
+            category: "API Discovery",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: go install github.com/praetorian-inc/vespasian/cmd/vespasian@latest",
+        },
+        // WORK-113: SAST expansion batch
+        ToolSpec {
+            binary: "cargo-audit",
+            name: "cargo-audit",
+            category: "SCA",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: cargo install cargo-audit",
+        },
+        ToolSpec {
+            binary: "cargo-deny",
+            name: "cargo-deny",
+            category: "SCA",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: cargo install cargo-deny",
+        },
+        ToolSpec {
+            binary: "tflint",
+            name: "tflint",
+            category: "IaC",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: brew install tflint or curl-pipe-bash from \
+                          https://github.com/terraform-linters/tflint",
+        },
+        ToolSpec {
+            binary: "kics",
+            name: "KICS",
+            category: "IaC",
+            version_flag: Some("version"),
+            min_version: None,
+            remediation: "Install: brew install kics or download from \
+                          https://github.com/Checkmarx/kics/releases",
+        },
+        ToolSpec {
+            binary: "slither",
+            name: "slither",
+            category: "SAST",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install slither-analyzer",
+        },
+        ToolSpec {
+            binary: "brakeman",
+            name: "brakeman",
+            category: "SAST",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: gem install brakeman",
+        },
+        // WORK-112: DAST polish tool batch
+        ToolSpec {
+            binary: "commix",
+            name: "commix",
+            category: "Web",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install commix or git clone \
+                          https://github.com/commixproject/commix",
+        },
+        ToolSpec {
+            binary: "xsstrike",
+            name: "XSStrike",
+            category: "Web",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install xsstrike or git clone \
+                          https://github.com/s0md3v/XSStrike",
+        },
+        ToolSpec {
+            binary: "whatweb",
+            name: "WhatWeb",
+            category: "Recon",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: apt install whatweb (Debian/Ubuntu) or git clone \
+                          https://github.com/urbanadventurer/WhatWeb",
+        },
+        ToolSpec {
+            binary: "wapiti",
+            name: "Wapiti",
+            category: "Web",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install wapiti3",
+        },
+        ToolSpec {
+            binary: "linkfinder",
+            name: "LinkFinder",
+            category: "Recon",
+            version_flag: Some("--help"),
+            min_version: None,
+            remediation: "Install: pipx install linkfinder or git clone \
+                          https://github.com/GerbenJavado/LinkFinder",
+        },
+        ToolSpec {
+            binary: "eyewitness",
+            name: "EyeWitness",
+            category: "Recon",
+            version_flag: Some("--help"),
+            min_version: None,
+            remediation: "Install: apt install eyewitness or git clone \
+                          https://github.com/RedSiege/EyeWitness",
+        },
+        // WORK-114: container/cloud tool batch
+        ToolSpec {
+            binary: "dockle",
+            name: "dockle",
+            category: "Container",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: brew install goodwithtech/r/dockle or download from \
+                          https://github.com/goodwithtech/dockle/releases",
+        },
+        ToolSpec {
+            binary: "kubescape",
+            name: "kubescape",
+            category: "Cloud",
+            version_flag: Some("version"),
+            min_version: None,
+            remediation: "Install: curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | /bin/bash",
+        },
+        ToolSpec {
+            binary: "scout",
+            name: "Scout Suite",
+            category: "Cloud",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: pipx install scoutsuite",
+        },
     ]
 }
 

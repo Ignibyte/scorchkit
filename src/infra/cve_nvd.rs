@@ -2,7 +2,8 @@
 //!
 //! [`NvdCveLookup`] queries `services.nvd.nist.gov/rest/json/cves/2.0`
 //! with a `cpeName` parameter, parses the response into [`CveRecord`]s,
-//! caches them on disk via [`crate::infra::cve_cache::FsCache`], and
+//! caches them on disk via the crate-internal filesystem cache
+//! (`crate::infra::cve_cache::FsCache`), and
 //! rate-limits outbound requests via [`governor`] to NVD's published
 //! quotas (5 req/30s without API key, 50 req/30s with key).
 //!
@@ -22,16 +23,27 @@
 //! - **Negative caching.** Empty result sets are persisted (see
 //!   [`crate::infra::cve_cache`]). Re-querying every empty CPE on
 //!   every scan is the most expensive way to use the rate budget.
-//! - **No pagination.** NVD pages cap at 2000 results per call; the
-//!   typical CPE returns <50. We take the first page only and document
-//!   this as a limitation. A future enhancement can follow
-//!   `startIndex`.
+//! - **Pagination (WORK-147).** The query loop follows `startIndex`
+//!   until `records.len() >= totalResults` or the hard
+//!   [`MAX_PAGES`] cap trips. A zero-record page unconditionally
+//!   breaks the loop so a misbehaving mirror can't trap us. Fixes the
+//!   silent-truncation bug that cost records for CPEs matching more
+//!   than one NVD page (2000 results).
+//! - **Delta sync (WORK-147).** Opt-in via
+//!   [`NvdConfig::delta_sync`](crate::config::NvdConfig). When
+//!   enabled and a cache entry exists for a CPE, the query passes
+//!   `lastModStartDate = fetched_at − 1h safety margin` so only
+//!   records modified since the cache write are fetched; they're then
+//!   merged into the cached set keyed by CVE ID (delta wins on
+//!   collision — it's newer). The merged set is written back to the
+//!   cache so subsequent scans continue to benefit.
 //!
 //! ## Environment overrides
 //!
 //! - `SCORCHKIT_NVD_API_KEY` — wins over
 //!   [`crate::config::cve::NvdConfig::api_key`].
 
+use std::collections::HashMap;
 use std::env;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
@@ -40,13 +52,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use governor::{
     clock::DefaultClock,
     state::{InMemoryState, NotKeyed},
     Quota, RateLimiter,
 };
 use serde::Deserialize;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::config::cve::NvdConfig;
 use crate::engine::cve::{severity_from_cvss, CveLookup, CveRecord};
@@ -62,6 +75,27 @@ pub const DEFAULT_BASE_URL: &str = "https://services.nvd.nist.gov";
 
 /// CVE search path appended to `base_url`.
 const CVES_PATH: &str = "/rest/json/cves/2.0";
+
+/// Hard cap on pages fetched for a single CPE query.
+///
+/// At the NVD default of 2000 results per page this is 20,000 records
+/// — more than any real CPE returns today and plenty of headroom for
+/// the biggest: `nginx`, `openssh`, `apache_httpd`. The cap exists to
+/// contain damage if a misbehaving NVD mirror returns a bogus
+/// `totalResults` and never advances past `startIndex`.
+pub(crate) const MAX_PAGES: usize = 10;
+
+/// Safety margin subtracted from the cache's `fetched_at_unix` when
+/// building the `lastModStartDate` parameter for delta sync.
+///
+/// NVD returns records whose `lastModified` is at or after the
+/// supplied timestamp. A small overlap with the cached set means we
+/// may fetch a few records we already have — the merge path handles
+/// this via dedup by CVE ID. The alternative (requesting the exact
+/// cache write time) risks missing records written in the same second
+/// as our cache entry if the NVD server clock is slightly ahead of
+/// ours.
+pub(crate) const DELTA_SAFETY_MARGIN_SECS: u64 = 3600;
 
 /// NVD's anonymous quota — 5 requests per 30 seconds.
 // JUSTIFICATION: NonZeroU32::new(5) on a positive literal cannot return
@@ -104,6 +138,9 @@ pub struct NvdCveLookup {
     limiter: Arc<DirectLimiter>,
     /// On-disk TTL cache (or disabled cache).
     cache: FsCache,
+    /// Whether delta-sync is enabled. See
+    /// [`NvdConfig::delta_sync`](crate::config::NvdConfig).
+    delta_sync: bool,
 }
 
 impl std::fmt::Debug for NvdCveLookup {
@@ -158,6 +195,7 @@ impl NvdCveLookup {
             http,
             limiter,
             cache,
+            delta_sync: cfg.delta_sync,
         })
     }
 
@@ -174,15 +212,104 @@ impl NvdCveLookup {
 #[async_trait]
 impl CveLookup for NvdCveLookup {
     async fn query(&self, cpe: &str) -> Result<Vec<CveRecord>> {
-        if let Some(records) = self.cache.get(cpe) {
-            return Ok(records);
+        // Cache hit branch. With delta-sync disabled, serve straight
+        // from cache. With delta-sync enabled, fetch only records
+        // modified since the cache was written and merge.
+        if let Some((cached_records, fetched_at)) = self.cache.get_with_meta(cpe) {
+            if !self.delta_sync {
+                return Ok(cached_records);
+            }
+            let delta_start_ts = fetched_at.saturating_sub(DELTA_SAFETY_MARGIN_SECS);
+            let last_mod_start = format_last_mod_start(delta_start_ts);
+            debug!(
+                "nvd: delta-sync for {cpe} from lastModStartDate={last_mod_start} \
+                 (cache write {fetched_at}, margin {DELTA_SAFETY_MARGIN_SECS}s)"
+            );
+            match self.fetch_all_pages(cpe, Some(last_mod_start.as_str())).await {
+                Ok(delta) => {
+                    let merged = merge_records_by_cve_id(cached_records.clone(), delta);
+                    self.cache.put(cpe, &merged);
+                    return Ok(merged);
+                }
+                Err(e) => {
+                    warn!("nvd: delta-sync for {cpe} failed ({e}); serving cached records");
+                    return Ok(cached_records);
+                }
+            }
         }
 
-        // Block on the rate limiter only for actual network calls.
-        self.limiter.until_ready().await;
+        // Cache miss — full paginated query.
+        let records = self.fetch_all_pages(cpe, None).await?;
+        self.cache.put(cpe, &records);
+        Ok(records)
+    }
+}
 
+impl NvdCveLookup {
+    /// Fetch every page for `cpe`, optionally constrained to records
+    /// modified since `last_mod_start` (RFC 3339). Aggregates records
+    /// across pages up to [`MAX_PAGES`]; stops early on a zero-record
+    /// page or when the accumulated count reaches `totalResults`.
+    async fn fetch_all_pages(
+        &self,
+        cpe: &str,
+        last_mod_start: Option<&str>,
+    ) -> Result<Vec<CveRecord>> {
+        let mut all_records = Vec::new();
+        let mut start_index: usize = 0;
+        for page_num in 0..MAX_PAGES {
+            self.limiter.until_ready().await;
+            let page = self.fetch_page(cpe, start_index, last_mod_start).await?;
+            let page_len = page.records.len();
+            debug!(
+                "nvd: page {page_num} for {cpe} — {page_len} records, \
+                 totalResults={} startIndex={start_index}",
+                page.total_results
+            );
+            all_records.extend(page.records);
+            if page_len == 0 {
+                break;
+            }
+            if all_records.len() >= page.total_results {
+                break;
+            }
+            start_index = all_records.len();
+        }
+        if start_index > 0 && all_records.len() == MAX_PAGES * 2000 {
+            warn!(
+                "nvd: pagination for {cpe} hit MAX_PAGES={MAX_PAGES} cap; \
+                 {} records may be truncated",
+                all_records.len()
+            );
+        }
+        Ok(all_records)
+    }
+
+    /// Issue one HTTP call against the NVD CVE search endpoint and
+    /// parse the response into a [`NvdPage`]. Applies the configured
+    /// API key (if not disabled from a prior auth failure) and
+    /// enforces the response-size cap.
+    async fn fetch_page(
+        &self,
+        cpe: &str,
+        start_index: usize,
+        last_mod_start: Option<&str>,
+    ) -> Result<NvdPage> {
         let url = format!("{}{}", self.base_url, CVES_PATH);
-        let mut req = self.http.get(&url).query(&[("cpeName", cpe)]);
+        let start_str = start_index.to_string();
+        let mut query_pairs: Vec<(&str, &str)> = vec![("cpeName", cpe)];
+        if start_index > 0 {
+            query_pairs.push(("startIndex", &start_str));
+        }
+        let now_str;
+        if let Some(lms) = last_mod_start {
+            query_pairs.push(("lastModStartDate", lms));
+            // NVD requires both bounds when either is supplied.
+            now_str = format_last_mod_start(now_unix_secs());
+            query_pairs.push(("lastModEndDate", now_str.as_str()));
+        }
+
+        let mut req = self.http.get(&url).query(&query_pairs);
         if let Some(key) = self.effective_api_key() {
             req = req.header("apiKey", key);
         }
@@ -192,8 +319,6 @@ impl CveLookup for NvdCveLookup {
         let status = resp.status();
 
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            // Disable the key once and let subsequent calls fall back to
-            // the anonymous quota — don't burn the per-fingerprint loop.
             if self.api_key.is_some() {
                 self.api_key_disabled.store(true, Ordering::Relaxed);
                 warn!("nvd: API key rejected ({status}); disabling for this session");
@@ -213,9 +338,7 @@ impl CveLookup for NvdCveLookup {
             )));
         }
 
-        let records = parse_nvd_response(&bytes, cpe)?;
-        self.cache.put(cpe, &records);
-        Ok(records)
+        parse_nvd_page(&bytes, cpe)
     }
 }
 
@@ -262,10 +385,24 @@ fn default_cache_dir() -> PathBuf {
 
 // ---------- response parsing ----------
 
+/// One page of NVD response data.
+///
+/// Holds the parsed records plus the top-level `totalResults` so the
+/// caller's pagination loop knows when to stop.
+pub(crate) struct NvdPage {
+    pub(crate) records: Vec<CveRecord>,
+    pub(crate) total_results: usize,
+}
+
 #[derive(Debug, Deserialize)]
 struct NvdResponse {
     #[serde(default)]
     vulnerabilities: Vec<NvdVulnEntry>,
+    /// Total records matching the query across all pages. When
+    /// `vulnerabilities.len() < totalResults`, the caller should
+    /// advance `startIndex` and fetch the next page.
+    #[serde(rename = "totalResults", default)]
+    total_results: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -329,12 +466,65 @@ struct NvdReference {
 ///
 /// Returns [`ScorchError::Json`] if the body is not valid NVD JSON.
 pub fn parse_nvd_response(body: &[u8], cpe: &str) -> Result<Vec<CveRecord>> {
+    parse_nvd_page(body, cpe).map(|page| page.records)
+}
+
+/// Parse an NVD CVE-search response body into an [`NvdPage`] — records
+/// + the top-level `totalResults`.
+///
+/// # Errors
+///
+/// Returns [`ScorchError::Json`] if the body is not valid NVD JSON.
+pub(crate) fn parse_nvd_page(body: &[u8], cpe: &str) -> Result<NvdPage> {
     let resp: NvdResponse = serde_json::from_slice(body)?;
-    let mut out = Vec::with_capacity(resp.vulnerabilities.len());
+    let total_results = resp.total_results;
+    let mut records = Vec::with_capacity(resp.vulnerabilities.len());
     for entry in resp.vulnerabilities {
-        out.push(record_from(entry.cve, cpe));
+        records.push(record_from(entry.cve, cpe));
     }
-    Ok(out)
+    Ok(NvdPage { records, total_results })
+}
+
+/// Merge delta records into a cached set keyed by CVE ID. Delta wins
+/// on collision (it's newer). Pure function, unit-testable.
+///
+/// Used by the delta-sync cache-hit branch of [`NvdCveLookup::query`].
+#[must_use]
+pub(crate) fn merge_records_by_cve_id(
+    cached: Vec<CveRecord>,
+    delta: Vec<CveRecord>,
+) -> Vec<CveRecord> {
+    let mut by_id: HashMap<String, CveRecord> = HashMap::with_capacity(cached.len() + delta.len());
+    for rec in cached {
+        by_id.insert(rec.id.clone(), rec);
+    }
+    for rec in delta {
+        by_id.insert(rec.id.clone(), rec);
+    }
+    by_id.into_values().collect()
+}
+
+/// Format a Unix timestamp as ISO 8601 / RFC 3339 with millisecond
+/// precision, which is what NVD's `lastModStartDate` /
+/// `lastModEndDate` parameters expect.
+///
+/// Pure function. Uses `chrono` (already a direct dep via
+/// `Finding::timestamp`).
+#[must_use]
+pub(crate) fn format_last_mod_start(unix_ts: u64) -> String {
+    // `from_timestamp` takes i64; Unix timestamps fit until year 2262.
+    let ts_i64 = i64::try_from(unix_ts).unwrap_or(i64::MAX);
+    DateTime::<Utc>::from_timestamp(ts_i64, 0)
+        .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_default())
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
+}
+
+/// Current Unix time as seconds. Same idiom `cve_cache` uses — errors
+/// in `duration_since(UNIX_EPOCH)` (impossible on a sane clock) map to
+/// 0 rather than panicking.
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 /// Build a [`CveRecord`] from one parsed NVD CVE.
@@ -343,7 +533,15 @@ fn record_from(cve: NvdCve, cpe: &str) -> CveRecord {
     let cvss_score = pick_best_cvss(&cve.metrics);
     let severity = cvss_score.map_or(Severity::Info, severity_from_cvss);
     let references = cve.references.into_iter().map(|r| r.url).collect();
-    CveRecord { id: cve.id, cvss_score, severity, description, references, cpe: cpe.to_string() }
+    CveRecord {
+        id: cve.id,
+        cvss_score,
+        severity,
+        description,
+        references,
+        cpe: cpe.to_string(),
+        aliases: Vec::new(),
+    }
 }
 
 /// Prefer English description; fall back to the first available; empty
@@ -524,5 +722,99 @@ mod tests {
             None => env::remove_var("HOME"),
         }
         assert_eq!(dir, PathBuf::from("/tmp/xdg-test/scorchkit/cve"));
+    }
+
+    // =============================================================
+    // WORK-147: pagination + delta-sync helpers
+    // =============================================================
+
+    fn fixture_record(id: &str) -> CveRecord {
+        CveRecord {
+            id: id.to_string(),
+            cvss_score: Some(5.0),
+            severity: Severity::Medium,
+            description: format!("fixture {id}"),
+            references: Vec::new(),
+            cpe: "cpe:2.3:a:fixture:*:*:*:*:*:*:*:*:*".to_string(),
+            aliases: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn merge_records_by_cve_id_no_overlap() {
+        let cached = vec![fixture_record("CVE-2024-1")];
+        let delta = vec![fixture_record("CVE-2024-2")];
+        let merged = merge_records_by_cve_id(cached, delta);
+        assert_eq!(merged.len(), 2);
+        let ids: Vec<&str> = merged.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&"CVE-2024-1"));
+        assert!(ids.contains(&"CVE-2024-2"));
+    }
+
+    #[test]
+    fn merge_records_by_cve_id_delta_replaces_cached() {
+        let mut cached_rec = fixture_record("CVE-2024-1");
+        cached_rec.description = "old desc".to_string();
+        let mut delta_rec = fixture_record("CVE-2024-1");
+        delta_rec.description = "new desc".to_string();
+        let merged = merge_records_by_cve_id(vec![cached_rec], vec![delta_rec]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].description, "new desc");
+    }
+
+    #[test]
+    fn merge_records_by_cve_id_empty_delta_preserves_cached() {
+        let cached = vec![fixture_record("CVE-2024-1"), fixture_record("CVE-2024-2")];
+        let merged = merge_records_by_cve_id(cached.clone(), Vec::new());
+        assert_eq!(merged.len(), cached.len());
+    }
+
+    #[test]
+    fn merge_records_by_cve_id_empty_cached_returns_delta() {
+        let delta = vec![fixture_record("CVE-2024-9")];
+        let merged = merge_records_by_cve_id(Vec::new(), delta);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].id, "CVE-2024-9");
+    }
+
+    #[test]
+    fn format_last_mod_start_rfc3339_shape() {
+        // 2024-01-02T03:04:05Z = 1704164645
+        let out = format_last_mod_start(1_704_164_645);
+        assert!(out.ends_with('Z'), "must be UTC-suffixed: {out}");
+        assert!(out.starts_with("2024-01-02T03:04:05"), "unexpected shape: {out}");
+        // NVD requires millisecond precision; `.000` is the fractional part.
+        assert!(out.contains(".000"), "expected .000 fractional: {out}");
+    }
+
+    #[test]
+    fn format_last_mod_start_zero_timestamp() {
+        let out = format_last_mod_start(0);
+        assert_eq!(out, "1970-01-01T00:00:00.000Z");
+    }
+
+    #[test]
+    fn parse_nvd_page_extracts_total_results() {
+        let body = br#"{
+            "totalResults": 42,
+            "vulnerabilities": [
+                { "cve": {
+                    "id": "CVE-2024-1",
+                    "descriptions": [{"lang": "en", "value": "x"}]
+                }}
+            ]
+        }"#;
+        let page = parse_nvd_page(body, "cpe:2.3:a:x:y:1:*:*:*:*:*:*:*").expect("parse");
+        assert_eq!(page.total_results, 42);
+        assert_eq!(page.records.len(), 1);
+        assert_eq!(page.records[0].id, "CVE-2024-1");
+    }
+
+    #[test]
+    fn parse_nvd_page_missing_total_results_defaults_to_zero() {
+        let body = br#"{"vulnerabilities": []}"#;
+        let page = parse_nvd_page(body, "cpe:2.3:a:x:y:1:*:*:*:*:*:*:*").expect("parse");
+        assert_eq!(page.total_results, 0);
+        assert!(page.records.is_empty());
     }
 }

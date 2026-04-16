@@ -54,6 +54,7 @@ mod tests {
             description: format!("fixture {id}"),
             references: vec![],
             cpe: cpe.to_string(),
+            aliases: Vec::new(),
         }
     }
 

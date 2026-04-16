@@ -29,8 +29,20 @@ pub use crate::engine::events::{
 // Audit log
 pub use crate::engine::audit_log::AuditLogHandler;
 
+// Network credentials (WORK-146) — authenticated network scanning.
+pub use crate::engine::network_credentials::NetworkCredentials;
+
 // Service fingerprints (not feature-gated — useful wherever service data flows)
 pub use crate::engine::service_fingerprint::ServiceFingerprint;
+
+// TLS enumeration primitives (WORK-143) — published regardless of the
+// infra feature because they're useful for any TLS-aware scanner.
+pub use crate::engine::tls_enum::{CipherSuiteId, CipherWeakness, ProbeOutcome, TlsVersionId};
+
+// API spec shared-data primitive (WORK-108) — published by tools like
+// vespasian, consumed by injection / csrf / idor / graphql / auth /
+// ratelimit scanners
+pub use crate::engine::api_spec::{ApiEndpoint, ApiSpec};
 
 // CVE types (not feature-gated — useful across reporting and storage)
 pub use crate::engine::cve::{CveLookup, CveRecord};
@@ -45,13 +57,15 @@ pub use crate::infra::cve_match::CveMatchModule;
 #[cfg(feature = "infra")]
 pub use crate::infra::cve_mock::MockCveLookup;
 #[cfg(feature = "infra")]
+pub use crate::infra::cve_multi::MultiCveLookup;
+#[cfg(feature = "infra")]
 pub use crate::infra::cve_nvd::NvdCveLookup;
 #[cfg(feature = "infra")]
 pub use crate::infra::cve_osv::OsvCveLookup;
 
 // CVE configuration (always available — `CveConfig` is on `AppConfig`).
 pub use crate::config::cve::OsvConfig;
-pub use crate::config::{CveBackendKind, CveConfig, NvdConfig};
+pub use crate::config::{CompositeConfig, CompositeSource, CveBackendKind, CveConfig, NvdConfig};
 
 // Infra (feature-gated)
 #[cfg(feature = "infra")]
@@ -60,6 +74,16 @@ pub use crate::engine::infra_context::InfraContext;
 pub use crate::engine::infra_module::{InfraCategory, InfraModule};
 #[cfg(feature = "infra")]
 pub use crate::engine::infra_target::InfraTarget;
+
+// Cloud (feature-gated — WORK-150)
+#[cfg(feature = "cloud")]
+pub use crate::engine::cloud_context::CloudContext;
+#[cfg(feature = "cloud")]
+pub use crate::engine::cloud_credentials::CloudCredentials;
+#[cfg(feature = "cloud")]
+pub use crate::engine::cloud_module::{CloudCategory, CloudModule, CloudProvider};
+#[cfg(feature = "cloud")]
+pub use crate::engine::cloud_target::CloudTarget;
 
 // Configuration
 pub use crate::config::AppConfig;

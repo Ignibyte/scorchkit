@@ -34,6 +34,19 @@ pub struct CveRecord {
     pub references: Vec<String>,
     /// The CPE this record was matched against.
     pub cpe: String,
+    /// Alternate identifiers for the same underlying vulnerability.
+    ///
+    /// OSV's query API returns an `aliases[]` array — e.g. a `GHSA-`
+    /// record's `aliases` will commonly include the corresponding
+    /// `CVE-YYYY-NNNN` id. Populated by [`crate::infra::cve_osv::OsvCveLookup`];
+    /// empty for NVD and [`crate::infra::cve_mock::MockCveLookup`].
+    ///
+    /// Consumed by [`crate::infra::cve_multi::MultiCveLookup`] for
+    /// cross-backend deduplication: two records from NVD and OSV are
+    /// collapsed when one's `id` matches an entry in the other's
+    /// `aliases`.
+    #[serde(default)]
+    pub aliases: Vec<String>,
 }
 
 /// Map a CVSS v3.x base score onto [`Severity`] using the standard bands.
@@ -362,11 +375,61 @@ mod tests {
             description: "Buffer overflow in Acme widget".to_string(),
             references: vec!["https://nvd.nist.gov/vuln/detail/CVE-2024-1234".to_string()],
             cpe: "cpe:2.3:a:acme:widget:1.2.3:*:*:*:*:*:*:*".to_string(),
+            aliases: Vec::new(),
         };
         let json = serde_json::to_string(&rec).expect("serialize");
         let back: CveRecord = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.id, rec.id);
         assert_eq!(back.cvss_score, rec.cvss_score);
         assert_eq!(back.severity, rec.severity);
+    }
+
+    /// `CveRecord` constructed without setting `aliases` (via `..Default-`
+    /// style or direct init) has empty aliases. Verifies the additive
+    /// field doesn't break existing construction patterns.
+    #[test]
+    fn cve_record_aliases_default_empty() {
+        let rec = CveRecord {
+            id: "CVE-2024-1".to_string(),
+            cvss_score: None,
+            severity: Severity::Info,
+            description: String::new(),
+            references: Vec::new(),
+            cpe: String::new(),
+            aliases: Vec::new(),
+        };
+        assert!(rec.aliases.is_empty());
+    }
+
+    /// JSON missing the `aliases` field deserialises with empty
+    /// aliases — pins the `#[serde(default)]` contract so existing
+    /// storage JSON and MCP responses stay compatible.
+    #[test]
+    fn cve_record_aliases_serde_round_trip() {
+        // No aliases field in JSON — uses serde default.
+        let json_no_aliases = r#"{
+            "id": "CVE-2024-1",
+            "cvss_score": null,
+            "severity": "info",
+            "description": "",
+            "references": [],
+            "cpe": ""
+        }"#;
+        let rec: CveRecord = serde_json::from_str(json_no_aliases).expect("deserialize");
+        assert!(rec.aliases.is_empty());
+
+        // With populated aliases — round-trips.
+        let with = CveRecord {
+            id: "GHSA-abcd-efgh".to_string(),
+            cvss_score: Some(7.5),
+            severity: Severity::High,
+            description: String::new(),
+            references: Vec::new(),
+            cpe: "cpe:2.3:a:pkg:widget:1.0:*:*:*:*:*:*:*".to_string(),
+            aliases: vec!["CVE-2024-9999".to_string()],
+        };
+        let js = serde_json::to_string(&with).expect("serialize");
+        let back: CveRecord = serde_json::from_str(&js).expect("deserialize");
+        assert_eq!(back.aliases, vec!["CVE-2024-9999".to_string()]);
     }
 }

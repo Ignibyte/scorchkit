@@ -11,11 +11,12 @@
 //! ripple through the orchestrator or the assess command.
 
 use crate::config::AppConfig;
-use crate::config::CveBackendKind;
+use crate::config::{CompositeSource, CveBackendKind};
 use crate::engine::cve::CveLookup;
-use crate::engine::error::Result;
+use crate::engine::error::{Result, ScorchError};
 
 use crate::infra::cve_mock::MockCveLookup;
+use crate::infra::cve_multi::MultiCveLookup;
 use crate::infra::cve_nvd::NvdCveLookup;
 use crate::infra::cve_osv::OsvCveLookup;
 
@@ -44,6 +45,42 @@ pub fn build_cve_lookup(config: &AppConfig) -> Result<Option<Box<dyn CveLookup>>
             let lookup = OsvCveLookup::from_config(&config.cve.osv)?;
             Ok(Some(Box::new(lookup)))
         }
+        CveBackendKind::Composite => {
+            let sources = &config.cve.composite.sources;
+            if sources.is_empty() {
+                return Err(ScorchError::Config(
+                    "cve.composite.sources must not be empty when backend = \"composite\""
+                        .to_string(),
+                ));
+            }
+            let mut built: Vec<Box<dyn CveLookup>> = Vec::with_capacity(sources.len());
+            for source in sources {
+                built.push(build_composite_source(*source, config)?);
+            }
+            Ok(Some(Box::new(MultiCveLookup::new(built))))
+        }
+    }
+}
+
+/// Build one sub-backend for inclusion in a [`MultiCveLookup`].
+///
+/// The flat shape of [`CompositeSource`] (Nvd / Osv / Mock) means
+/// nested Composite construction is structurally impossible — there's
+/// no branch here that recurses.
+fn build_composite_source(
+    source: CompositeSource,
+    config: &AppConfig,
+) -> Result<Box<dyn CveLookup>> {
+    match source {
+        CompositeSource::Nvd => {
+            let lookup = NvdCveLookup::from_config(&config.cve.nvd)?;
+            Ok(Box::new(lookup))
+        }
+        CompositeSource::Osv => {
+            let lookup = OsvCveLookup::from_config(&config.cve.osv)?;
+            Ok(Box::new(lookup))
+        }
+        CompositeSource::Mock => Ok(Box::new(MockCveLookup::new())),
     }
 }
 
@@ -101,5 +138,42 @@ mod tests {
         cfg.cve.backend = CveBackendKind::Osv;
         let result = build_cve_lookup(&cfg).expect("ok");
         assert!(result.is_some(), "Osv backend should yield Some(Box<dyn CveLookup>)");
+    }
+
+    /// `Composite` with non-empty sources yields a real `MultiCveLookup`.
+    /// Construction is non-network (each sub-backend's `from_config`
+    /// is non-blocking) so this test runs in CI without hitting NVD
+    /// or OSV.
+    #[test]
+    fn build_cve_lookup_composite_returns_multi() {
+        let mut cfg = AppConfig::default();
+        cfg.cve.backend = CveBackendKind::Composite;
+        cfg.cve.composite.sources =
+            vec![crate::config::CompositeSource::Nvd, crate::config::CompositeSource::Mock];
+        let result = build_cve_lookup(&cfg).expect("ok");
+        assert!(result.is_some(), "Composite backend should yield Some(Box<dyn CveLookup>)");
+    }
+
+    /// `Composite` with an empty sources list errors at factory time
+    /// rather than silently producing a no-op lookup. Pins the
+    /// user-facing contract — misconfiguring fails loud.
+    #[test]
+    fn build_cve_lookup_composite_empty_sources_errors() {
+        let mut cfg = AppConfig::default();
+        cfg.cve.backend = CveBackendKind::Composite;
+        cfg.cve.composite.sources.clear();
+        // `expect_err` needs `Debug` on the Ok side, which
+        // `Box<dyn CveLookup>` doesn't implement; match on the Result
+        // directly instead.
+        match build_cve_lookup(&cfg) {
+            Err(crate::engine::error::ScorchError::Config(msg)) => {
+                assert!(
+                    msg.contains("composite.sources"),
+                    "message should mention the misconfigured field: {msg}"
+                );
+            }
+            Err(other) => panic!("expected Config error, got {other:?}"),
+            Ok(_) => panic!("expected Err, got Ok"),
+        }
     }
 }

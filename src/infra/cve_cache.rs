@@ -78,6 +78,20 @@ impl FsCache {
     /// file, unreadable file, corrupt JSON, or expired entry. Callers
     /// treat all of these the same — issue a fresh backend query.
     pub(crate) fn get(&self, cpe: &str) -> Option<Vec<CveRecord>> {
+        self.get_with_meta(cpe).map(|(records, _)| records)
+    }
+
+    /// Same as [`Self::get`] but also returns the Unix timestamp when
+    /// the entry was written.
+    ///
+    /// Used by [`crate::infra::cve_nvd::NvdCveLookup`]'s delta-sync
+    /// mode: a fresh query is issued with `lastModStartDate` set to
+    /// (cache write time − safety margin) so only records modified
+    /// since the cache entry are fetched, then merged with the cached
+    /// set. Returns `None` for every failure mode (cache disabled,
+    /// missing file, corrupt JSON, expired entry) — same contract as
+    /// [`Self::get`].
+    pub(crate) fn get_with_meta(&self, cpe: &str) -> Option<(Vec<CveRecord>, u64)> {
         let dir = self.dir.as_ref()?;
         let path = path_for_cpe(dir, cpe);
         let bytes = fs::read(&path).ok()?;
@@ -91,7 +105,7 @@ impl FsCache {
         if envelope_is_expired(&envelope, self.ttl) {
             return None;
         }
-        Some(envelope.records)
+        Some((envelope.records, envelope.fetched_at_unix))
     }
 
     /// Write records for `cpe`. Failures log at `warn` and no-op — the
@@ -184,6 +198,7 @@ mod tests {
             description: format!("fixture {id}"),
             references: vec!["https://example.test/adv".to_string()],
             cpe: cpe.to_string(),
+            aliases: Vec::new(),
         }
     }
 
@@ -199,6 +214,43 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].id, "CVE-2024-X");
         assert_eq!(got[0].severity, Severity::Critical);
+    }
+
+    /// `get_with_meta` round-trip returns the records AND the Unix
+    /// timestamp written by `put`. Used by the delta-sync path.
+    #[test]
+    fn fs_cache_get_with_meta_round_trip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_secs(3600));
+        let cpe = "cpe:2.3:a:nginx:nginx:1.25:*:*:*:*:*:*:*";
+        let before = now_unix();
+        cache.put(cpe, &[record("CVE-2024-X", cpe, 9.8)]);
+        let (records, fetched_at) = cache.get_with_meta(cpe).expect("hit");
+        assert_eq!(records.len(), 1);
+        assert!(fetched_at >= before, "fetched_at {fetched_at} < before {before}");
+        assert!(fetched_at <= now_unix(), "fetched_at in future");
+    }
+
+    /// `get_with_meta` returns `None` on a cache miss — matches the
+    /// contract of `get`.
+    #[test]
+    fn fs_cache_get_with_meta_miss_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_secs(3600));
+        let cpe = "cpe:2.3:a:nonexistent:*:*:*:*:*:*:*:*:*";
+        assert!(cache.get_with_meta(cpe).is_none());
+    }
+
+    /// Corrupt JSON on disk is treated as a miss — same contract as `get`.
+    #[test]
+    fn fs_cache_get_with_meta_corrupt_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_secs(3600));
+        let cpe = "cpe:2.3:a:corrupt:*:*:*:*:*:*:*:*:*";
+        // Write garbage to the cache file for this CPE.
+        let path = path_for_cpe(dir.path(), cpe);
+        std::fs::write(&path, b"not json").expect("write");
+        assert!(cache.get_with_meta(cpe).is_none());
     }
 
     /// A zero-length TTL forces every entry to be expired on the next

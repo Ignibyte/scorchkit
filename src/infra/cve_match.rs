@@ -136,6 +136,7 @@ mod tests {
             description: format!("fixture {id}"),
             references: vec!["https://example.test/adv".to_string()],
             cpe: cpe.to_string(),
+            aliases: Vec::new(),
         }
     }
 

@@ -29,6 +29,24 @@ pub struct AppConfig {
     /// CVE backend configuration (NVD or mock).
     #[serde(default)]
     pub cve: super::cve::CveConfig,
+    /// Credentials for authenticated network scanning (SSH, SMB, SNMP,
+    /// Kerberos). Defaults to all-`None` so scans run unauthenticated
+    /// unless opted in. See
+    /// [`crate::engine::network_credentials::NetworkCredentials`] for
+    /// the env-var precedence contract.
+    #[serde(default)]
+    pub network_credentials: crate::engine::network_credentials::NetworkCredentials,
+    /// Cloud-API credentials — AWS profile / role / region, GCP
+    /// service-account path and project, Azure subscription and
+    /// tenant, Kubernetes context. Defaults to all-`None` so cloud
+    /// scans use the underlying SDK / tool defaults (AWS CLI profile,
+    /// `gcloud` ADC, `kubectl` current context) unless explicitly
+    /// configured. See
+    /// [`crate::engine::cloud_credentials::CloudCredentials`] for the
+    /// env-var precedence contract. Shipped in WORK-150.
+    #[cfg(feature = "cloud")]
+    #[serde(default)]
+    pub cloud: crate::engine::cloud_credentials::CloudCredentials,
 }
 
 /// Configuration for the built-in JSONL audit-log event subscriber.

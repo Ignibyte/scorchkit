@@ -381,6 +381,19 @@ ScorchKit is a full-stack security platform spanning web, code, and infrastructu
 | **v2.3** | Compliance frameworks (CIS benchmarks, PCI-DSS, SOC 2, HIPAA) | Planned |
 | **v3.0** | AI attack-chain correlation across DAST + SAST + Infra; risk scoring engine; executive dashboard | Future |
 
+## Tutorials
+
+Step-by-step task-oriented guides at [`docs/tutorials/`](docs/tutorials/README.md):
+
+- **[01 — Your first scan](docs/tutorials/01-first-scan.md)** — install, doctor, single-target scan, read the report
+- **[02 — CVE correlation](docs/tutorials/02-cve-correlation.md)** — stand up NVD or OSV; tag findings with CVE IDs and CVSS scores
+- **[03 — Unified `assess`](docs/tutorials/03-unified-assess.md)** — DAST + SAST + Infra concurrently against the same target
+- **[04 — Claude Code workflow](docs/tutorials/04-claude-code-workflow.md)** — slash commands for conversational pentest
+- **[05 — TLS + DNS hygiene](docs/tutorials/05-tls-and-dns-hygiene.md)** — probe your own domain
+- **[06 — Custom modules](docs/tutorials/06-extending-with-custom-modules.md)** — implement a `ScanModule` from scratch
+- **[07 — CVE backends](docs/tutorials/07-extending-cve-backends.md)** — add a third `CveLookup` backend
+- **[08 — CI/CD integration](docs/tutorials/08-ci-cd-integration.md)** — GitHub Actions and GitLab CI recipes
+
 ## Documentation
 
 - [Architecture Overview](docs/architecture/overview.md)

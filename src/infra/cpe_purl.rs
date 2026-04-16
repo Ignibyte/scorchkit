@@ -10,7 +10,8 @@
 //!
 //! ## Coverage
 //!
-//! [`MAPPING`] covers the highest-value language-ecosystem CPEs across
+//! The internal mapping table covers the highest-value
+//! language-ecosystem CPEs across
 //! `npm`, `PyPI`, `Maven`, `Go` modules, `crates.io`, `RubyGems`,
 //! `NuGet`, and `Packagist` — vendors and products commonly surfaced
 //! by service fingerprinting that have application-level CVEs.
@@ -21,7 +22,7 @@
 //!
 //! ## Extending the table
 //!
-//! Add a tuple to [`MAPPING`] in the form
+//! Add a tuple to the internal mapping table (in `src/infra/cpe_purl.rs`) in the form
 //! `((vendor, product), (ecosystem, package_name))`. The `vendor` and
 //! `product` are matched case-insensitively against CPE 2.3 fields 3
 //! and 4. `ecosystem` must be a valid [OSV defined ecosystem][osv]
@@ -111,7 +112,7 @@ const MAPPING: &[CpeMapEntry] = &[
 ///
 /// - The CPE is malformed (not enough fields to extract vendor /
 ///   product / version, or wrong prefix).
-/// - The vendor/product pair is not in [`MAPPING`].
+/// - The vendor/product pair is not in the internal mapping table.
 /// - The version field is the CPE wildcard `"*"` or empty (OSV needs
 ///   an exact version to filter against `affected[]`).
 ///
@@ -157,7 +158,7 @@ pub fn cpe_to_package(cpe: &str) -> Option<PackageCoord> {
     None
 }
 
-/// Number of entries in [`MAPPING`]. Exposed for invariant tests.
+/// Number of entries in the internal mapping table. Exposed for invariant tests.
 #[must_use]
 pub const fn mapping_len() -> usize {
     MAPPING.len()

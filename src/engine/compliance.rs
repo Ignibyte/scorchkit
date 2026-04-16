@@ -102,6 +102,10 @@ pub fn compliance_for_cwe(cwe_id: u32) -> Vec<&'static str> {
         798 => vec!["NIST IA-5", "PCI-DSS 8.6", "HIPAA §164.312(d)"], // Hardcoded Credentials
         918 => vec!["NIST AC-4", "PCI-DSS 6.2.4"],                    // SSRF
         1104 => vec!["NIST SI-2", "PCI-DSS 6.3", "SOC2 CC7.1"],       // Outdated Components
+        // Cloud-specific CWEs (WORK-154)
+        16 => vec!["NIST CM-6", "PCI-DSS 2.2", "SOC2 CC6.1"], // Configuration
+        284 => vec!["NIST AC-3", "NIST AC-4", "PCI-DSS 7.2"], // Improper Access Control
+        778 => vec!["NIST AU-2", "NIST AU-6", "PCI-DSS 10.2", "HIPAA §164.312(b)"], // Insufficient Logging
         _ => Vec::new(),
     }
 }
@@ -136,5 +140,25 @@ mod tests {
 
         let controls = compliance_for_cwe(99999);
         assert!(controls.is_empty());
+    }
+
+    /// Verify cloud-specific CWE IDs (WORK-154) return controls.
+    #[test]
+    fn test_compliance_cwe_cloud_ids() {
+        // CWE-16: Configuration
+        let controls = compliance_for_cwe(16);
+        assert!(!controls.is_empty());
+        assert!(controls.iter().any(|c| c.contains("NIST CM-6")));
+
+        // CWE-284: Improper Access Control
+        let controls = compliance_for_cwe(284);
+        assert!(!controls.is_empty());
+        assert!(controls.iter().any(|c| c.contains("NIST AC-3")));
+
+        // CWE-778: Insufficient Logging
+        let controls = compliance_for_cwe(778);
+        assert!(!controls.is_empty());
+        assert!(controls.iter().any(|c| c.contains("NIST AU-2")));
+        assert!(controls.iter().any(|c| c.contains("HIPAA")));
     }
 }

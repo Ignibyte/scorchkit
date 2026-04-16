@@ -268,11 +268,12 @@ pub enum Commands {
     #[cfg(feature = "mcp")]
     Serve,
 
-    /// Run a unified assessment: DAST + SAST + Infra combined.
+    /// Run a unified assessment: DAST + SAST + Infra + Cloud combined.
     ///
-    /// At least one of `--url`, `--code`, or `--infra` is required.
-    /// The orchestrators run concurrently and results are merged into a
-    /// single report.
+    /// At least one of `--url`, `--code`, `--infra`, or `--cloud` is
+    /// required. The orchestrators run concurrently and results are
+    /// merged into a single report. `--cloud` requires the `cloud`
+    /// feature; without it, passing `--cloud` errors at runtime.
     #[cfg(feature = "infra")]
     Assess {
         /// DAST target URL (optional).
@@ -286,6 +287,10 @@ pub enum Commands {
         /// Infrastructure target — IP, CIDR, host, or `host:port` (optional).
         #[arg(long)]
         infra: Option<String>,
+
+        /// Cloud target — `aws:<account>`, `gcp:<project>`, `azure:<sub>`, `k8s:<ctx>`, or `all` (optional). Requires `cloud` feature.
+        #[arg(long)]
+        cloud: Option<String>,
 
         /// Scan profile applied to each applicable orchestrator.
         #[arg(long, default_value = "standard")]
@@ -303,6 +308,30 @@ pub enum Commands {
         target: String,
 
         /// Scan profile: `quick` (port scan only) or `standard` (default: all registered modules)
+        #[arg(long, default_value = "standard")]
+        profile: String,
+
+        /// Comma-separated module IDs to run (overrides the profile).
+        #[arg(long)]
+        modules: Option<String>,
+
+        /// Comma-separated module IDs to skip.
+        #[arg(long)]
+        skip: Option<String>,
+
+        /// Suppress progress output.
+        #[arg(long)]
+        quiet: bool,
+    },
+
+    /// Run a cloud-posture scan against an AWS account, GCP project,
+    /// Azure subscription, or Kubernetes cluster context (WORK-150).
+    #[cfg(feature = "cloud")]
+    Cloud {
+        /// Target: `aws:<account-id>`, `gcp:<project-id>`, `azure:<subscription>`, `k8s:<context>`, or `all`.
+        target: String,
+
+        /// Scan profile: `quick` (IAM only) or `standard` (default: all registered cloud modules).
         #[arg(long, default_value = "standard")]
         profile: String,
 
