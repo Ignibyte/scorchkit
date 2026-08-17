@@ -220,12 +220,16 @@ executes the CLI/MCP contract lane.
 ## Source layout
 
 ```text
+crates/scorchkit-mcp/src/
+  contract.rs      tool inventory, annotations, result envelope, and caller context types
+  types.rs         deserializable, JSON-schema input types
+  instructions.rs  host-neutral server instructions
 src/mcp/
-  contract.rs      output schema, result adapter, tool classes, annotations, caller context
+  contract.rs      rmcp router and structured-result adapter over package contracts
   server.rs        server state, handler implementation, stdio startup
   tools.rs         30 tool wrappers and do_* business methods
-  types.rs         deserializable, JSON-schema input types
+  types.rs         compatibility re-exports
   resources.rs     URI parser, listings, templates, and reads
   prompts.rs       five workflow prompts and correlation rules
-  instructions.rs  host-neutral server instructions
+  instructions.rs  compatibility re-exports
 ```

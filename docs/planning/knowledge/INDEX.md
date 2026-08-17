@@ -52,6 +52,10 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-attribution-not-authorization-001` | Keep transport principal and self-asserted client attribution separate from engagement grants; label trust explicitly and prove a privileged-looking client name cannot authorize an effect. | `AAR-006-mcp-contract-hardening` |
 | `PR-scorchkit-effect-contract-single-source-001` | Let one exhaustive inventory own every tool's strongest behavior class, annotations, and response provenance, and fail router construction when names or counts drift. | `AAR-006-mcp-contract-hardening` |
 | `PR-scorchkit-generated-metadata-exactness-001` | Pin generated titles and other presentation metadata with exact representative assertions in addition to semantic schema/flag tests. | `AAR-006-mcp-contract-hardening` |
+| `PR-scorchkit-workspace-gate-scope-001` | When code moves into packages, make tests, linting, Rustdoc, coverage, static analysis, dependency checks, and mutation inventory workspace-wide in the same ticket. | `AAR-007-workspace-crate-extraction` |
+| `PR-scorchkit-facade-visibility-preservation-001` | Use explicit compatibility re-exports and negative visibility contracts when extraction crosses a private seam. | `AAR-007-workspace-crate-extraction` |
+| `PR-scorchkit-package-metadata-lockstep-001` | Pin internal package versions to the root and make published CLI/schema metadata explicit when derive behavior depends on package ownership. | `AAR-007-workspace-crate-extraction` |
+| `PR-scorchkit-move-aware-mutation-scope-001` | Inventory a move-heavy DIFF before execution; if it becomes broad, run only the owner-approved repaired functions and seal both the input hash and exact function inventory. | `AAR-007-workspace-crate-extraction` |
 
 ## Register
 
@@ -85,3 +89,8 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-plugin-phase-verb-bypass-001` | test gap | `AAR-005-codex-first-plugin` |
 | `BF-scorchkit-rmcp-private-router-context-001` | verification-plan gap | `AAR-006-mcp-contract-hardening` |
 | `BF-scorchkit-generated-tool-title-gap-001` | test gap | `AAR-006-mcp-contract-hardening` |
+| `BF-scorchkit-workspace-gate-root-only-001` | verification gap | `AAR-007-workspace-crate-extraction` |
+| `BF-scorchkit-facade-glob-visibility-001` | public API bug | `AAR-007-workspace-crate-extraction` |
+| `BF-scorchkit-package-derived-metadata-drift-001` | compatibility bug | `AAR-007-workspace-crate-extraction` |
+| `BF-scorchkit-code-move-diff-inflation-001` | process failure | `AAR-007-workspace-crate-extraction` |
+| `BF-scorchkit-nextest-empty-workspace-suites-001` | verification-plan gap | `AAR-007-workspace-crate-extraction` |

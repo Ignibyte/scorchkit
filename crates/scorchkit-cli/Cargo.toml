@@ -1,0 +1,28 @@
+[package]
+name = "scorchkit-cli"
+version = "3.0.0"
+edition = "2021"
+description = "Stable command-line argument contracts for ScorchKit"
+license = "MIT"
+
+[features]
+default = []
+cloud = []
+infra = []
+mcp = []
+storage = []
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+module_name_repetitions = "allow"
+future_not_send = "allow"

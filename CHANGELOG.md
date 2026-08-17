@@ -5,6 +5,11 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Cargo workspace boundaries (TICKET-007 / SK-033)** — Extracted stable policy, domain,
+  configuration, bounded executor, subprocess, scanner-family, persistence-model, MCP, CLI, and
+  agent contracts into 13 internal packages. The root package remains the composition and
+  compatibility facade. Added exact dependency-edge, type-identity, registry-descriptor, and
+  workspace-wide quality-gate contracts without widening policy-sealed family context constructors.
 - **Typed MCP result and tool-safety contracts (TICKET-006 / SK-032)** — Added a versioned native
   `structuredContent` success/error envelope while preserving legacy text results; an exhaustive
   30-tool read/local-state/external-effect inventory; complete conservative MCP annotations and

@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** feature-readiness baseline and SK-028 through SK-032 complete
+**Status:** feature-readiness baseline and SK-028 through SK-033 complete
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-17
 **Direction:** agent-neutral security execution engine with Codex as the preferred host
@@ -119,6 +119,7 @@ file-mode observations while the index retains authoritative modes.
 | SK-030 | Replaced the raw AI prompt boundary with typed, versioned planning, analysis, correlation, and remediation contracts shared by Codex and Claude adapters. | External-provider bypass fixed; 79.63% line coverage; 1,432 Nextest cases; PostgreSQL and CLI/MCP contracts green; scoped DIFF caught 26/26 viable mutations with zero survivors. |
 | SK-031 | Packaged the Codex-first host adapter with local stdio MCP startup and focused preparation, planning, execution, reporting, and remediation-verification skills while keeping the engine agent-neutral. | Official package/skill validators and repository negative contracts green; registered-target denial and profile-narrowing tests green; 79.54% line coverage; 1,433 Nextest cases; scoped DIFF caught 2/2 viable mutations with zero survivors. |
 | SK-032 | Added versioned native MCP success/error results, an exhaustive 30-tool read/local-state/external-effect inventory, complete conservative annotations, and local-process principal context with explicitly untrusted client attribution. | Exact schema/inventory fixtures and router/duplex/spoofing tests green; 79.68% line coverage; 1,439 strict cases; one 54-mutant DIFF baseline plus an exact two-survivor `tool_title` recheck yields sealed 13/13 viable mutations caught with zero misses. |
+| SK-033 | Extracted stable policy, domain, configuration, executor, process, family, storage-model, MCP, CLI, and agent contracts into 13 internal packages while retaining `scorchkit` as the composition and compatibility facade. | Exact manifest-edge, type-identity, version, and visibility tests; 79.99% line coverage; 1,443 strict cases; PostgreSQL and CLI/MCP contracts green; 83/83 viable mutations caught across the 11 inspection-repaired functions. |
 
 The sealed Codex Security scan `efe30eaf-9b1b-4572-949a-0e8391d48247` reviewed 603 changed paths and
 closed 192/192 semantic rows. Its eight high-confidence findings have code fixes and regression
@@ -128,27 +129,27 @@ evidence.
 
 ## Current validation evidence
 
-Evidence produced through the TICKET-006 pre-completion worktree:
+Evidence produced through the TICKET-007 pre-completion worktree:
 
 | Signal | Last result | Final requirement |
 |---|---:|---:|
-| Compiler | all targets and all features passed | pass after final edits |
-| Strict Clippy | zero diagnostics across every derived feature state | pass after final edits and every feature state |
-| All-feature tests | 1,238 library cases passed with 4 reasoned live-network cases ignored; all integration and doctests green | pass after final edits with PostgreSQL |
-| Canonical line coverage | 79.68% | at least 62%; next ratchet target 80% |
-| SK-032 DIFF plus focused repair | 54 selected mutations: final 13/13 viable caught, 41 unviable, 0 missed/timeouts after an exact two-mutant `tool_title` recheck | retain the sealed broad baseline and exact recheck; do not repeat while mutation inputs are unchanged |
+| Compiler | all targets, workspace packages, and features passed | pass after final edits |
+| Strict Clippy | zero diagnostics across every derived feature state and workspace package | pass after final edits and every feature state |
+| All-feature tests | 1,031 root library cases passed with 4 reasoned live-network cases ignored; package, integration, and doctest suites green | pass after final edits with PostgreSQL |
+| Canonical line coverage | 79.99% | at least 62%; next ratchet target 80% |
+| SK-033 focused function scope | 90 selected mutations in 11 repaired functions: 83 caught, 7 unviable, 0 missed/timeouts, 100% MSI; the move-inflated 841-mutant DIFF was inspected but not executed | retain the exact sealed function inventory and input hash; do not repeat while mutation inputs are unchanged |
 | Interrupted full inventory | incomplete: status 1, 239 caught or timed out, 115 missed, no score | discovery evidence only; never report as green |
-| Nextest strictness | 19 nonempty suites; 1,439 executed cases passed and 6 live-network cases skipped by reason | pass |
+| Nextest strictness | 1,443 executed cases passed and 6 live-network cases skipped by reason; six exact contract-only library harnesses are explicitly allowlisted | pass |
 | PostgreSQL integration | 64 MCP, 11 storage, and 8 storage-integration tests passed | pass |
 | CLI/MCP contracts | 21 CLI, 2 code-scan, 64 MCP, and 12 scan-plan tests passed | pass |
-| Delivery receipt | TICKET-006 pre-completion focused-repair gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive focused-repair receipt bound to the sealed baseline and exact survivor recheck |
+| Delivery receipt | TICKET-007 pre-completion focused-repair gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive focused-repair receipt bound to the sealed 11-function inventory |
 
 The test count is historical evidence, not a promised final count. The gate output after all source and
 documentation edits is authoritative.
 
 ## Baseline blockers
 
-None. The feature-readiness baseline and SK-028 through SK-032 are closed above.
+None. The feature-readiness baseline and SK-028 through SK-033 are closed above.
 
 ## Accepted technical debt after baseline
 
@@ -157,16 +158,15 @@ the evidence required to close it.
 
 | Order | Batch | Debt and planned correction | Depends on | Exit evidence |
 |---:|---|---|---|---|
-| 1 | SK-033 | Extract stable core, policy, executor, family, storage, MCP, CLI, and agent crates now that the boundary contracts are fixed. | SK-028, SK-029, SK-030, SK-032 | Workspace dependency graph enforces the intended direction and all contract suites remain green. |
-| 2 | SK-034 | Reduce scanner duplication into request, response-diff, confidence, evidence, parser, and finding-mapping components. Version plugin definitions and bound temporary files. | SK-028, SK-033 | Each adapter has metadata, fixtures, policy class, bounded output, and parser property tests. |
-| 3 | SK-035 | Version observation, finding, evidence, correlation, SARIF, and report identity. Apply one redaction policy to every sink. | SK-029, SK-034 | Cross-format golden tests agree on identity, severity, confidence, provenance, and redaction. |
-| 4 | SK-036 | Reintroduce webhooks only through a policy-owned event-delivery service with retries bounded outside scan execution. | SK-028, SK-035 | Authorized loopback delivery tests, denial tests, redaction tests, and queue bounds. |
-| 5 | SK-037 | Add authenticated remote MCP transport with principal-to-engagement binding, host validation, and a TLS termination policy. | SK-032 | Remote startup fails without authentication and passes adversarial host/principal tests. |
-| 6 | SK-038 | Add a Windows Job Object process owner before enabling Windows builds. | SK-028 | Windows CI proves child and descendant cleanup for success, timeout, cancellation, output limit, and drop. |
-| 7 | SK-039 | Replace reachable unmaintained `fxhash` and `number_prefix` transitives and remove the time-bounded disabled-MySQL advisory exception. | upstream availability or dependency replacement | `cargo audit`/`cargo deny` without the reviewed exceptions. |
-| 8 | SK-040 | Ratchet line coverage from the 62% floor toward 80%, then raise mutation and coverage floors from measured green results. | SK-027 | Full database-backed `cargo llvm-cov` at the new proposed floor and a reviewed blind-file report. |
-| 9 | SK-041 | Add reproducible builds, SBOM, provenance, signing, upgrade tests, and performance/chaos budgets. | SK-033, SK-035 | Clean-checkout release gate, signed artifacts, SBOM/provenance verification, and tested rollback. |
-| 10 | SK-042 | Restore the 12 native AWS, GCP, and Azure modules through provider authentication and service transports owned by ScorchKit policy. | SK-028, SK-033 | Public registry census plus authorized-loopback and denial tests for auth endpoints, service endpoints, redirects, every DNS answer, metadata addresses, and credentials for all three providers. |
+| 1 | SK-034 | Reduce scanner duplication into request, response-diff, confidence, evidence, parser, and finding-mapping components. Version plugin definitions and bound temporary files. | SK-028, SK-033 | Each adapter has metadata, fixtures, policy class, bounded output, and parser property tests. |
+| 2 | SK-035 | Version observation, finding, evidence, correlation, SARIF, and report identity. Apply one redaction policy to every sink. | SK-029, SK-034 | Cross-format golden tests agree on identity, severity, confidence, provenance, and redaction. |
+| 3 | SK-036 | Reintroduce webhooks only through a policy-owned event-delivery service with retries bounded outside scan execution. | SK-028, SK-035 | Authorized loopback delivery tests, denial tests, redaction tests, and queue bounds. |
+| 4 | SK-037 | Add authenticated remote MCP transport with principal-to-engagement binding, host validation, and a TLS termination policy. | SK-032 | Remote startup fails without authentication and passes adversarial host/principal tests. |
+| 5 | SK-038 | Add a Windows Job Object process owner before enabling Windows builds. | SK-028 | Windows CI proves child and descendant cleanup for success, timeout, cancellation, output limit, and drop. |
+| 6 | SK-039 | Replace reachable unmaintained `fxhash` and `number_prefix` transitives and remove the time-bounded disabled-MySQL advisory exception. | upstream availability or dependency replacement | `cargo audit`/`cargo deny` without the reviewed exceptions. |
+| 7 | SK-040 | Ratchet line coverage from the 62% floor toward 80%, then raise mutation and coverage floors from measured green results. | SK-027 | Full database-backed `cargo llvm-cov` at the new proposed floor and a reviewed blind-file report. |
+| 8 | SK-041 | Add reproducible builds, SBOM, provenance, signing, upgrade tests, and performance/chaos budgets. | SK-033, SK-035 | Clean-checkout release gate, signed artifacts, SBOM/provenance verification, and tested rollback. |
+| 9 | SK-042 | Restore the 12 native AWS, GCP, and Azure modules through provider authentication and service transports owned by ScorchKit policy. | SK-028, SK-033 | Public registry census plus authorized-loopback and denial tests for auth endpoints, service endpoints, redirects, every DNS answer, metadata addresses, and credentials for all three providers. |
 
 ## Target architecture
 
@@ -186,26 +186,28 @@ Codex plugin / Claude adapter / other hosts
        storage, correlation, reports
 ```
 
-The intended workspace split is the SK-033 extraction destination:
+SK-033 implemented this workspace split:
 
 ```text
 crates/
   scorchkit-core/       targets, observations, findings, evidence, descriptors
   scorchkit-policy/     engagements, scope, capabilities, decisions, audit types
-  scorchkit-executor/   jobs, events, cancellation, process and resource limits
+  scorchkit-config/     configuration, credentials, provider and webhook shapes
+  scorchkit-executor/   scheduling, durable jobs, cancellation, resource limits
   scorchkit-web/        DAST and recon adapters
   scorchkit-code/       deterministic SAST and code-tool adapters
   scorchkit-infra/      network, TLS, DNS, and CVE adapters
   scorchkit-cloud/      cloud posture adapters
-  scorchkit-tools/      process contracts and parsers
-  scorchkit-storage/    storage trait and PostgreSQL implementation
-  scorchkit-mcp/        typed, policy-aware MCP server
-  scorchkit-cli/        human and CI interface
-  scorchkit-agent/      provider-neutral reasoning contracts and host adapters
+  scorchkit-tools/      process contracts, ownership, and bounded output
+  scorchkit-storage/    persistence record models
+  scorchkit-mcp/        typed MCP schemas, inventory, annotations, and results
+  scorchkit-cli/        human and CI argument contract
+  scorchkit-agent/      provider-neutral reasoning, manifest, and prompt contracts
 ```
 
-SK-033 begins with behavior-preserving extraction now that policy, executor, job, provider, and MCP
-contracts can detect moves that change behavior or reverse dependency direction.
+The root `scorchkit` package remains the composition and compatibility facade. Family packages own
+stable categories and descriptors while policy-sealed contexts and concrete adapters remain in the
+root package. Exact allowed dependency edges are executable in `tests/workspace_architecture.rs`.
 
 ## Quality system
 

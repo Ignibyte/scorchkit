@@ -22,6 +22,14 @@ The authoritative catalogs are [the module matrix](docs/guide/module-matrix.md) 
 registries under `src/recon`, `src/scanner`, `src/tools`, `src/sast_tools`, `src/infra`, and
 `src/cloud`.
 
+## Workspace architecture
+
+The root `scorchkit` package is the public library, binary, and composition layer. Thirteen internal
+packages under `crates/` own stable policy, domain, configuration, execution, subprocess, family,
+storage-model, MCP, CLI, and agent contracts. Existing `scorchkit::...` imports remain compatible,
+and lower packages cannot depend on the root composition package. See the
+[workspace boundary](docs/architecture/workspace.md).
+
 ## Supported hosts
 
 ScorchKit currently supports Unix process semantics on Linux and macOS. Windows builds are rejected
@@ -171,6 +179,7 @@ Read [CONSTITUTION.md](CONSTITUTION.md), [AGENTS.md](AGENTS.md), and the
 
 - [Getting started](docs/guide/getting-started.md)
 - [Architecture overview](docs/architecture/overview.md)
+- [Cargo workspace boundaries](docs/architecture/workspace.md)
 - [Agent integration](docs/architecture/agent.md)
 - [Codex plugin](docs/guide/codex-plugin.md)
 - [AI adapters](docs/architecture/ai.md)

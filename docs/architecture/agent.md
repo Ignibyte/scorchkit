@@ -17,11 +17,13 @@ authorization. The engine checks the canonical target, capability, and effect cl
 ## Source layout
 
 ```text
-src/agent/
+crates/scorchkit-agent/src/
   config.rs   host-facing operational hints
   prompt.rs   host-neutral PTES workflow instructions
+  lib.rs      manifest generation and typed reasoning payloads
+src/agent/
+  mod.rs      compatibility re-exports
   runner.rs   local recon → plan → scan → analyze → report adapter
-  mod.rs      JSON manifest generation
 ```
 
 ## Manifest

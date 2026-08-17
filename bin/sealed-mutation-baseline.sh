@@ -101,7 +101,8 @@ mutation_input_hash() {
 verify_evidence() {
     local evidence="$1" summary outcomes mutants
     local selected caught missed timeout unviable viable score required
-    local actual_files actual_functions baseline_count current_input inventory outcome_inventory
+    local actual_files actual_functions actual_function_names baseline_count current_input
+    local expected_function_names inventory mode outcome_inventory
     local reported_selected reported_caught reported_missed reported_timeout reported_unviable
 
     need_tool cmp || return 1
@@ -115,12 +116,20 @@ verify_evidence() {
         def nni: type == "number" and . >= 0 and . == floor;
         (.ticket | test("^TICKET-[0-9]+$"))
         and (.roadmap_item | test("^SK-[0-9]+$"))
-        and .mode == "sealed_green_diff"
+        and (
+            (.mode == "sealed_green_diff"
+                and (.source_mode == "diff" or .source_mode == "full")
+                and (.scope | has("function_names") | not))
+            or (.mode == "sealed_green_scope"
+                and .source_mode == "focused_functions"
+                and (.scope.function_names | type == "array" and length > 0
+                    and all(.[]; type == "string" and length > 0)
+                    and length == (unique | length)))
+        )
         and .completed == true
         and (.date | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
         and (.cargo_mutants_version | type == "string" and length > 0)
         and (.owner_approval | type == "string" and length > 0)
-        and (.source_mode == "diff" or .source_mode == "full")
         and .full_repository_mutation == "deferred_by_repository_owner"
         and (.mutation_input_sha256 | test("^[0-9a-f]{64}$"))
         and (.scope.files | nni and . > 0)
@@ -172,6 +181,7 @@ verify_evidence() {
     required="$(jq -r '.outcome.required_score_percent' "$summary")"
     actual_files="$(jq -r '[.[].file] | unique | length' "$mutants")"
     actual_functions="$(jq -r '[.[].function.function_name] | unique | length' "$mutants")"
+    mode="$(jq -r '.mode' "$summary")"
     reported_selected="$(jq -r '.scope.selected_mutations' "$summary")"
     reported_caught="$(jq -r '.outcome.caught' "$summary")"
     reported_missed="$(jq -r '.outcome.missed' "$summary")"
@@ -232,12 +242,32 @@ verify_evidence() {
     fi
     rm -f "$inventory" "$outcome_inventory"
 
+    if [ "$mode" = "sealed_green_scope" ]; then
+        actual_function_names="$(mktemp "${TMPDIR:-/tmp}/scorchkit-sealed-functions.XXXXXX")" \
+            || return 1
+        expected_function_names="$(mktemp \
+            "${TMPDIR:-/tmp}/scorchkit-sealed-expected-functions.XXXXXX")" || {
+            rm -f "$actual_function_names"
+            return 1
+        }
+        jq -r '[.[].function.function_name] | unique[]' "$mutants" \
+            | LC_ALL=C sort > "$actual_function_names"
+        jq -r '.scope.function_names[]' "$summary" \
+            | LC_ALL=C sort > "$expected_function_names"
+        if ! cmp -s "$actual_function_names" "$expected_function_names"; then
+            rm -f "$actual_function_names" "$expected_function_names"
+            echo "sealed mutation function scope does not match raw inventory" >&2
+            return 1
+        fi
+        rm -f "$actual_function_names" "$expected_function_names"
+    fi
+
     current_input="$(mutation_input_hash)" || return 1
     if [ "$current_input" != "$(jq -r '.mutation_input_sha256' "$summary")" ]; then
         echo "sealed mutation evidence does not match current mutation-relevant inputs" >&2
         return 1
     fi
-    echo "sealed green mutation baseline verified: $((caught + timeout))/$viable viable caught, ${score}% MSI"
+    echo "sealed green mutation evidence verified: $((caught + timeout))/$viable viable caught, ${score}% MSI"
     echo "mutation input: $current_input"
     echo "evidence digest: $(evidence_digest "$evidence")"
 }
@@ -288,6 +318,22 @@ selftest() {
         '}' > "$evidence/summary.json"
     ROOT_DIR="$fixture" verify_evidence "$evidence" >/dev/null || return 1
     summary_backup="$fixture/.git/sealed-summary-backup.json"
+    jq '.mode = "sealed_green_scope"
+        | .source_mode = "focused_functions"
+        | .scope.function_names = ["probe"]' \
+        "$evidence/summary.json" > "$summary_backup" || return 1
+    mv "$summary_backup" "$evidence/summary.json"
+    ROOT_DIR="$fixture" verify_evidence "$evidence" >/dev/null || return 1
+    jq '.scope.function_names = ["wrong_function"]' \
+        "$evidence/summary.json" > "$summary_backup" || return 1
+    mv "$summary_backup" "$evidence/summary.json"
+    if ROOT_DIR="$fixture" verify_evidence "$evidence" >/dev/null 2>&1; then
+        echo "sealed mutation selftest failed: a mismatched function scope was accepted" >&2
+        return 1
+    fi
+    jq '.scope.function_names = ["probe"]' \
+        "$evidence/summary.json" > "$summary_backup" || return 1
+    mv "$summary_backup" "$evidence/summary.json"
     jq '.outcome.missed = 1' "$evidence/summary.json" > "$summary_backup" || return 1
     mv "$summary_backup" "$evidence/summary.json"
     if ROOT_DIR="$fixture" verify_evidence "$evidence" >/dev/null 2>&1; then

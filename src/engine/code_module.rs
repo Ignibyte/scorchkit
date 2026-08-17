@@ -1,39 +1,11 @@
 //! Code scanning module trait and categories for SAST.
 
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-
 use super::code_context::CodeContext;
 use super::error::Result;
 use super::finding::Finding;
+use async_trait::async_trait;
 
-/// Categories for static analysis modules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CodeCategory {
-    /// Static application security testing (Semgrep, Bandit).
-    Sast,
-    /// Software composition analysis (OSV-Scanner, cargo-audit).
-    Sca,
-    /// Secret detection (Gitleaks, Trufflehog).
-    Secrets,
-    /// Infrastructure as Code scanning (Checkov, Hadolint).
-    Iac,
-    /// Container image scanning (Grype, Trivy).
-    Container,
-}
-
-impl std::fmt::Display for CodeCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Sast => write!(f, "sast"),
-            Self::Sca => write!(f, "sca"),
-            Self::Secrets => write!(f, "secrets"),
-            Self::Iac => write!(f, "iac"),
-            Self::Container => write!(f, "container"),
-        }
-    }
-}
+pub use scorchkit_code::{CodeCategory, CodeModuleDescriptor};
 
 /// Trait for static code analysis modules.
 ///
@@ -41,6 +13,19 @@ impl std::fmt::Display for CodeCategory {
 /// Every SAST tool wrapper implements this trait.
 #[async_trait]
 pub trait CodeModule: Send + Sync {
+    /// Return package-owned immutable module metadata.
+    fn descriptor(&self) -> CodeModuleDescriptor<'_> {
+        CodeModuleDescriptor {
+            name: self.name(),
+            id: self.id(),
+            category: self.category(),
+            description: self.description(),
+            languages: self.languages(),
+            requires_external_tool: self.requires_external_tool(),
+            required_tool: self.required_tool(),
+        }
+    }
+
     /// Human-readable name for display and reporting.
     fn name(&self) -> &str;
     /// Short identifier used in CLI flags and config keys.

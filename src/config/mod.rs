@@ -1,6 +1,3 @@
-mod types;
+//! Compatibility re-exports for the extracted configuration package.
 
-pub mod cve;
-
-pub use cve::{CompositeConfig, CompositeSource, CveBackendKind, CveConfig, NvdConfig};
-pub use types::*;
+pub use scorchkit_config::*;

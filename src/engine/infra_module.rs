@@ -5,52 +5,12 @@
 //! [`super::code_module::CodeModule`] (SAST, path-targeted). Infra modules
 //! run against hosts, IP addresses, and CIDR ranges via [`super::infra_target::InfraTarget`].
 
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-
 use super::error::Result;
 use super::finding::Finding;
 use super::infra_context::InfraContext;
+use async_trait::async_trait;
 
-/// Categories for organising infra modules.
-///
-/// More variants will be added in later pipelines (WORK-104 adds
-/// `NetworkAuth` and `ServiceEnum`). The current five cover the immediate
-/// v2.0 scope: port scanning, service fingerprinting, CVE correlation,
-/// TLS beyond HTTPS, and DNS infrastructure checks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum InfraCategory {
-    /// Port enumeration (nmap-family).
-    PortScan,
-    /// Service version detection — produces `(product, version, cpe)` tuples.
-    Fingerprint,
-    /// CVE correlation against detected versions.
-    CveMatch,
-    /// TLS beyond HTTPS — STARTTLS, LDAPS, SMTPS, RDP-TLS.
-    TlsInfra,
-    /// DNS infrastructure checks — zone transfer, DNSSEC, wildcard detection.
-    Dns,
-    /// Cloud-posture category (WORK-150). Modules implementing this
-    /// category live under [`crate::engine::cloud_module::CloudModule`]
-    /// and run through [`crate::runner::cloud_orchestrator::CloudOrchestrator`].
-    /// The variant exists here for unified `--category` CLI filtering
-    /// across the module families.
-    Cloud,
-}
-
-impl std::fmt::Display for InfraCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::PortScan => f.write_str("portscan"),
-            Self::Fingerprint => f.write_str("fingerprint"),
-            Self::CveMatch => f.write_str("cvematch"),
-            Self::TlsInfra => f.write_str("tlsinfra"),
-            Self::Dns => f.write_str("dns"),
-            Self::Cloud => f.write_str("cloud"),
-        }
-    }
-}
+pub use scorchkit_infra::{InfraCategory, InfraModuleDescriptor};
 
 /// Core abstraction for infra scanning modules.
 ///
@@ -59,6 +19,19 @@ impl std::fmt::Display for InfraCategory {
 /// [`super::infra_target::InfraTarget`] through [`InfraContext`].
 #[async_trait]
 pub trait InfraModule: Send + Sync {
+    /// Return package-owned immutable module metadata.
+    fn descriptor(&self) -> InfraModuleDescriptor<'_> {
+        InfraModuleDescriptor {
+            name: self.name(),
+            id: self.id(),
+            category: self.category(),
+            description: self.description(),
+            protocols: self.protocols(),
+            requires_external_tool: self.requires_external_tool(),
+            required_tool: self.required_tool(),
+        }
+    }
+
     /// Human-readable name for display and reporting.
     fn name(&self) -> &str;
 

@@ -132,7 +132,12 @@ impl CodeContext {
         }
         let target = PolicyTarget::Code(self.path.clone());
         if self.authorization.iter().any(|decision| {
-            decision.grants_exactly(&target, Capability::ExternalTool, EffectClass::Passive)
+            super::policy::decision_grants_exactly(
+                decision,
+                &target,
+                Capability::ExternalTool,
+                EffectClass::Passive,
+            )
         }) {
             return Ok(());
         }

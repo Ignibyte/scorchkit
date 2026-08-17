@@ -1,26 +1,9 @@
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-
 use super::error::Result;
 use super::finding::Finding;
 use super::scan_context::ScanContext;
+use async_trait::async_trait;
 
-/// Categories for organizing modules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ModuleCategory {
-    Recon,
-    Scanner,
-}
-
-impl std::fmt::Display for ModuleCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Recon => write!(f, "recon"),
-            Self::Scanner => write!(f, "scanner"),
-        }
-    }
-}
+pub use scorchkit_web::{ModuleCategory, WebModuleDescriptor};
 
 /// Core abstraction for all scanning modules.
 ///
@@ -29,6 +12,18 @@ impl std::fmt::Display for ModuleCategory {
 /// modules through this uniform interface.
 #[async_trait]
 pub trait ScanModule: Send + Sync {
+    /// Return package-owned immutable module metadata.
+    fn descriptor(&self) -> WebModuleDescriptor<'_> {
+        WebModuleDescriptor {
+            name: self.name(),
+            id: self.id(),
+            category: self.category(),
+            description: self.description(),
+            requires_external_tool: self.requires_external_tool(),
+            required_tool: self.required_tool(),
+        }
+    }
+
     /// Human-readable name for display and reporting.
     fn name(&self) -> &str;
 

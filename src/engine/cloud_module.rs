@@ -26,78 +26,12 @@
 //! WORK-152 (Scoutsuite), WORK-153 (Kubescape), and WORK-154
 //! (finding-shape normalization).
 
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-
 use super::cloud_context::CloudContext;
 use super::error::Result;
 use super::finding::Finding;
+use async_trait::async_trait;
 
-/// Posture-check category for a [`CloudModule`].
-///
-/// Orthogonal to [`CloudProvider`]. Exactly one per module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CloudCategory {
-    /// Identity & access management — users, roles, policies,
-    /// permission-boundary drift.
-    Iam,
-    /// Object/blob storage misconfiguration — public access, missing
-    /// encryption, missing lifecycle rules.
-    Storage,
-    /// Network posture — VPC / security-group / firewall-rule drift,
-    /// open-world ingress.
-    Network,
-    /// Compute-instance posture — EC2 / GCE VM / Azure VM
-    /// misconfigurations (default `IMDSv1`, missing patch baseline, etc.).
-    Compute,
-    /// Kubernetes cluster posture — `RBAC`, admission policies, pod
-    /// `SecurityContext`, network policies.
-    Kubernetes,
-    /// Cross-cutting compliance / benchmark modules (CIS, PCI-DSS,
-    /// SOC2, HIPAA). Bridges into the v2.2 compliance arc.
-    Compliance,
-}
-
-impl std::fmt::Display for CloudCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Iam => f.write_str("iam"),
-            Self::Storage => f.write_str("storage"),
-            Self::Network => f.write_str("network"),
-            Self::Compute => f.write_str("compute"),
-            Self::Kubernetes => f.write_str("kubernetes"),
-            Self::Compliance => f.write_str("compliance"),
-        }
-    }
-}
-
-/// Cloud provider a [`CloudModule`] targets.
-///
-/// Orthogonal to [`CloudCategory`]. Zero or more per module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CloudProvider {
-    /// Amazon Web Services.
-    Aws,
-    /// Google Cloud Platform.
-    Gcp,
-    /// Microsoft Azure.
-    Azure,
-    /// Kubernetes cluster (any distribution — EKS, GKE, AKS, on-prem).
-    Kubernetes,
-}
-
-impl std::fmt::Display for CloudProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Aws => f.write_str("aws"),
-            Self::Gcp => f.write_str("gcp"),
-            Self::Azure => f.write_str("azure"),
-            Self::Kubernetes => f.write_str("kubernetes"),
-        }
-    }
-}
+pub use scorchkit_cloud::{CloudCategory, CloudModuleDescriptor, CloudProvider};
 
 /// Core abstraction for cloud-posture scanning modules.
 ///
@@ -108,6 +42,19 @@ impl std::fmt::Display for CloudProvider {
 /// [`CloudContext`].
 #[async_trait]
 pub trait CloudModule: Send + Sync {
+    /// Return package-owned immutable module metadata.
+    fn descriptor(&self) -> CloudModuleDescriptor<'_> {
+        CloudModuleDescriptor {
+            name: self.name(),
+            id: self.id(),
+            category: self.category(),
+            description: self.description(),
+            providers: self.providers(),
+            requires_external_tool: self.requires_external_tool(),
+            required_tool: self.required_tool(),
+        }
+    }
+
     /// Human-readable name for display and reporting.
     fn name(&self) -> &str;
 

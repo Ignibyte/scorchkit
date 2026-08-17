@@ -1,546 +1,38 @@
-//! Durable, provider-neutral scan job lifecycle.
-//!
-//! Jobs own authorization snapshots, lifecycle state, progress, cancellation, and recovery. The
-//! storage contract is independent of `PostgreSQL` and host transports; MCP and CLI are adapters.
+//! Application-owned scan job service over package-owned lifecycle contracts.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, RwLock};
+use chrono::Utc;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
-use crate::engine::policy::Engagement;
 use crate::engine::scan_result::{ScanResult, ScanSummary};
 use crate::engine::target::Target;
 use crate::facade::Engine;
 use crate::runner::job_executor::CancellationToken;
 use crate::runner::orchestrator::Orchestrator;
 
+use scorchkit_executor::integration::{lease_deadline, normalize_job_progress, transition_job};
+#[cfg(test)]
+use scorchkit_executor::integration::{
+    validate_job_create, validate_job_replacement, validate_job_successor,
+};
+pub use scorchkit_executor::job::{
+    DastJobRequest, InMemoryJobStore, JobProgressSink, JobProgressUpdate, JobStore, ScanJob,
+    ScanJobAuditEvent, ScanJobProgress, ScanJobState,
+};
+
 const MAX_CAS_ATTEMPTS: usize = 32;
-const JOB_LIST_LIMIT: usize = 1_000;
 const PROGRESS_CHANNEL_CAPACITY: usize = 512;
+#[cfg(test)]
 const LEASE_SECONDS: i64 = 15;
 const HEARTBEAT_MILLISECONDS: u64 = 500;
 const LEASE_REFRESH_TICKS: u8 = 10;
-
-fn lease_deadline() -> DateTime<Utc> {
-    Utc::now() + chrono::Duration::seconds(LEASE_SECONDS)
-}
-
-/// Immutable DAST request captured by a scan job.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DastJobRequest {
-    /// Target URL authorized for this job.
-    pub target: String,
-    /// Named scan profile.
-    pub profile: String,
-    /// Optional explicit module allow-list.
-    pub modules: Option<Vec<String>>,
-    /// Explicit module deny-list.
-    pub skip: Vec<String>,
-    /// Exact engagement in force when the request was accepted.
-    pub engagement: Engagement,
-}
-
-impl DastJobRequest {
-    /// Create a DAST job request.
-    #[must_use]
-    pub fn new(
-        target: impl Into<String>,
-        profile: impl Into<String>,
-        engagement: Engagement,
-    ) -> Self {
-        Self {
-            target: target.into(),
-            profile: profile.into(),
-            modules: None,
-            skip: Vec::new(),
-            engagement,
-        }
-    }
-
-    /// Set the explicit module allow-list.
-    #[must_use]
-    pub fn with_modules(mut self, modules: Option<Vec<String>>) -> Self {
-        self.modules = modules;
-        self
-    }
-
-    /// Set the explicit module deny-list.
-    #[must_use]
-    pub fn with_skip(mut self, skip: Vec<String>) -> Self {
-        self.skip = skip;
-        self
-    }
-}
-
-/// Persisted scan job lifecycle state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ScanJobState {
-    /// Accepted and stored, but not yet running.
-    Queued,
-    /// Scanner work is active.
-    Running,
-    /// Cancellation is persisted and the active token has been signalled.
-    Cancelling,
-    /// Scanner work stopped because cancellation was requested.
-    Cancelled,
-    /// Scanner work and terminal persistence completed successfully.
-    Succeeded,
-    /// Scanner or lifecycle persistence failed.
-    Failed,
-    /// A prior process abandoned a nonterminal job.
-    Interrupted,
-}
-
-impl ScanJobState {
-    /// Return whether this state can no longer execute.
-    #[must_use]
-    pub const fn is_terminal(self) -> bool {
-        matches!(self, Self::Cancelled | Self::Succeeded | Self::Failed | Self::Interrupted)
-    }
-
-    /// Stable database and wire representation.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Running => "running",
-            Self::Cancelling => "cancelling",
-            Self::Cancelled => "cancelled",
-            Self::Succeeded => "succeeded",
-            Self::Failed => "failed",
-            Self::Interrupted => "interrupted",
-        }
-    }
-
-    const fn allows(self, next: Self) -> bool {
-        matches!(
-            (self, next),
-            (Self::Queued, Self::Running | Self::Cancelled | Self::Interrupted)
-                | (
-                    Self::Running,
-                    Self::Cancelling | Self::Succeeded | Self::Failed | Self::Interrupted
-                )
-                | (Self::Cancelling, Self::Cancelled | Self::Failed | Self::Interrupted)
-        )
-    }
-}
-
-/// Recoverable progress committed by module boundary.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ScanJobProgress {
-    /// Number of selected modules, including unavailable tools.
-    pub total_modules: usize,
-    /// Modules currently being polled.
-    pub active_modules: Vec<String>,
-    /// Modules whose findings were committed atomically with completion.
-    pub completed_modules: Vec<String>,
-    /// Modules skipped before execution.
-    pub skipped_modules: Vec<String>,
-    /// Modules that returned an error.
-    pub failed_modules: Vec<String>,
-    /// Findings produced by completed modules only.
-    pub findings: Vec<Finding>,
-}
-
-impl ScanJobProgress {
-    /// Number of modules with a durable outcome.
-    #[must_use]
-    pub const fn processed_modules(&self) -> usize {
-        self.completed_modules.len() + self.skipped_modules.len() + self.failed_modules.len()
-    }
-
-    fn normalize(&mut self) {
-        self.active_modules.sort();
-        self.active_modules.dedup();
-        self.completed_modules.sort();
-        self.completed_modules.dedup();
-        self.skipped_modules.sort();
-        self.skipped_modules.dedup();
-        self.failed_modules.sort();
-        self.failed_modules.dedup();
-    }
-}
-
-/// One persisted scan attempt.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScanJob {
-    /// Unique attempt identifier.
-    pub id: Uuid,
-    /// First attempt in this recovery chain.
-    pub root_job_id: Uuid,
-    /// Prior interrupted attempt, if this is a resume.
-    pub parent_job_id: Option<Uuid>,
-    /// One-based attempt number.
-    pub attempt: u32,
-    /// Immutable authorized request.
-    pub request: DastJobRequest,
-    /// Current lifecycle state.
-    pub state: ScanJobState,
-    /// Optimistic-lock revision.
-    pub revision: u64,
-    /// Process instance currently responsible for this attempt.
-    pub owner_id: Option<Uuid>,
-    /// Bounded ownership lease used to distinguish abandoned work from another live process.
-    pub lease_expires_at: Option<DateTime<Utc>>,
-    /// Durable module-level progress.
-    pub progress: ScanJobProgress,
-    /// Complete result, present only after success.
-    pub result: Option<ScanResult>,
-    /// Terminal or diagnostic error text.
-    pub error: Option<String>,
-    /// Creation timestamp.
-    pub created_at: DateTime<Utc>,
-    /// First running timestamp.
-    pub started_at: Option<DateTime<Utc>>,
-    /// Last mutation timestamp.
-    pub updated_at: DateTime<Utc>,
-    /// Terminal timestamp.
-    pub finished_at: Option<DateTime<Utc>>,
-}
-
-/// Append-only audit event recorded with a persisted job revision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScanJobAuditEvent {
-    /// Job whose state was committed.
-    pub job_id: Uuid,
-    /// Exact committed revision.
-    pub revision: u64,
-    /// Lifecycle state at that revision.
-    pub state: ScanJobState,
-    /// Timestamp of the committed job mutation.
-    pub occurred_at: DateTime<Utc>,
-}
-
-impl From<&ScanJob> for ScanJobAuditEvent {
-    fn from(job: &ScanJob) -> Self {
-        Self {
-            job_id: job.id,
-            revision: job.revision,
-            state: job.state,
-            occurred_at: job.updated_at,
-        }
-    }
-}
-
-impl ScanJob {
-    /// Create a queued first attempt.
-    #[must_use]
-    pub fn new(request: DastJobRequest, owner_id: Uuid) -> Self {
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-        Self {
-            id,
-            root_job_id: id,
-            parent_job_id: None,
-            attempt: 1,
-            request,
-            state: ScanJobState::Queued,
-            revision: 0,
-            owner_id: Some(owner_id),
-            lease_expires_at: Some(lease_deadline()),
-            progress: ScanJobProgress::default(),
-            result: None,
-            error: None,
-            created_at: now,
-            started_at: None,
-            updated_at: now,
-            finished_at: None,
-        }
-    }
-
-    /// Create a queued successor that retains only safely completed work.
-    #[must_use]
-    pub fn successor(interrupted: &Self, owner_id: Uuid) -> Self {
-        let mut successor = Self::new(interrupted.request.clone(), owner_id);
-        successor.root_job_id = interrupted.root_job_id;
-        successor.parent_job_id = Some(interrupted.id);
-        successor.attempt = interrupted.attempt.saturating_add(1);
-        successor.progress.total_modules = interrupted.progress.total_modules;
-        successor.progress.completed_modules.clone_from(&interrupted.progress.completed_modules);
-        successor.progress.findings.clone_from(&interrupted.progress.findings);
-        successor
-    }
-
-    fn transition(&mut self, next: ScanJobState, now: DateTime<Utc>) -> Result<()> {
-        if !self.state.allows(next) {
-            return Err(ScorchError::Job(format!(
-                "illegal scan job transition {} -> {}",
-                self.state.as_str(),
-                next.as_str()
-            )));
-        }
-        self.state = next;
-        if next == ScanJobState::Running {
-            self.started_at.get_or_insert(now);
-        }
-        if next.is_terminal() {
-            self.finished_at = Some(now);
-            self.progress.active_modules.clear();
-        }
-        Ok(())
-    }
-
-    pub(crate) fn validate_create(&self) -> Result<()> {
-        let valid_identity = if self.attempt == 1 {
-            self.root_job_id == self.id && self.parent_job_id.is_none()
-        } else {
-            self.parent_job_id.is_some()
-        };
-        let valid_queued_state = self.state == ScanJobState::Queued
-            && self.revision == 0
-            && self.owner_id.is_some()
-            && self.lease_expires_at.is_some()
-            && self.progress.active_modules.is_empty()
-            && self.progress.skipped_modules.is_empty()
-            && self.progress.failed_modules.is_empty()
-            && self.result.is_none()
-            && self.error.is_none()
-            && self.started_at.is_none()
-            && self.finished_at.is_none();
-        if !valid_queued_state || !valid_identity {
-            return Err(ScorchError::Job(format!(
-                "scan job {} is not a valid queued attempt",
-                self.id
-            )));
-        }
-        if self.attempt == 1
-            && (self.progress.total_modules != 0
-                || !self.progress.completed_modules.is_empty()
-                || !self.progress.findings.is_empty())
-        {
-            return Err(ScorchError::Job(format!(
-                "first scan job attempt {} cannot contain recovered progress",
-                self.id
-            )));
-        }
-        Ok(())
-    }
-
-    pub(crate) fn validate_successor(&self, parent: &Self) -> Result<()> {
-        let expected_attempt = parent
-            .attempt
-            .checked_add(1)
-            .ok_or_else(|| ScorchError::Job(format!("scan job {} attempt overflow", parent.id)))?;
-        let findings_match = serde_json::to_value(&self.progress.findings)?
-            == serde_json::to_value(&parent.progress.findings)?;
-        let valid_lineage = parent.state == ScanJobState::Interrupted
-            && self.parent_job_id == Some(parent.id)
-            && self.root_job_id == parent.root_job_id
-            && self.attempt == expected_attempt
-            && self.request == parent.request
-            && self.progress.total_modules == parent.progress.total_modules
-            && self.progress.completed_modules == parent.progress.completed_modules
-            && findings_match;
-        if !valid_lineage {
-            return Err(ScorchError::Job(format!(
-                "scan job {} is not a valid successor of {}",
-                self.id, parent.id
-            )));
-        }
-        Ok(())
-    }
-
-    pub(crate) fn validate_replacement(
-        &self,
-        existing: &Self,
-        expected_revision: u64,
-    ) -> Result<()> {
-        let immutable_changed = self.id != existing.id
-            || self.root_job_id != existing.root_job_id
-            || self.parent_job_id != existing.parent_job_id
-            || self.attempt != existing.attempt
-            || self.request != existing.request
-            || self.created_at != existing.created_at;
-        if immutable_changed {
-            return Err(ScorchError::Job(format!(
-                "scan job {} attempted to change immutable identity or request fields",
-                existing.id
-            )));
-        }
-        let next_revision = expected_revision.checked_add(1).ok_or_else(|| {
-            ScorchError::Job(format!("scan job {} revision overflow", existing.id))
-        })?;
-        if existing.revision != expected_revision || self.revision != next_revision {
-            return Err(ScorchError::Job(format!(
-                "scan job {} replacement revision is inconsistent",
-                existing.id
-            )));
-        }
-        let same_active_state = self.state == existing.state
-            && matches!(self.state, ScanJobState::Running | ScanJobState::Cancelling);
-        if existing.state.is_terminal()
-            || (!same_active_state && !existing.state.allows(self.state))
-        {
-            return Err(ScorchError::Job(format!(
-                "illegal scan job store transition {} -> {}",
-                existing.state.as_str(),
-                self.state.as_str()
-            )));
-        }
-        if self.updated_at < existing.updated_at {
-            return Err(ScorchError::Job(format!(
-                "scan job {} update timestamp moved backwards",
-                existing.id
-            )));
-        }
-        Ok(())
-    }
-}
-
-/// Reliable module-boundary update emitted by a DAST orchestrator.
-#[derive(Debug, Clone)]
-pub enum JobProgressUpdate {
-    /// A module began polling.
-    Started { module_id: String },
-    /// A module completed and its findings may now be recovered safely.
-    Completed { module_id: String, findings: Vec<Finding> },
-    /// A module was unavailable or excluded by a runtime prerequisite.
-    Skipped { module_id: String },
-    /// A module returned a nonfatal scan error.
-    Failed { module_id: String },
-}
-
-/// Reliable progress boundary used by family adapters.
-pub trait JobProgressSink: Send + Sync {
-    /// Publish one owned module update.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the lifecycle owner is no longer available to persist the update.
-    fn publish(&self, update: JobProgressUpdate) -> Result<()>;
-}
-
-/// Persistence contract for scan jobs.
-#[async_trait]
-pub trait JobStore: Send + Sync {
-    /// Insert a new job. Duplicate IDs are rejected.
-    async fn create(&self, job: &ScanJob) -> Result<()>;
-    /// Load one job.
-    async fn get(&self, id: Uuid) -> Result<Option<ScanJob>>;
-    /// List at most 1,000 jobs in deterministic creation order.
-    async fn list(&self) -> Result<Vec<ScanJob>>;
-    /// List one bounded batch of expired nonterminal jobs in deterministic order.
-    async fn list_recoverable(&self, now: DateTime<Utc>) -> Result<Vec<ScanJob>>;
-    /// Replace one job only if its current revision equals `expected_revision`.
-    async fn compare_and_swap(&self, expected_revision: u64, job: &ScanJob) -> Result<bool>;
-    /// Read the append-only revision audit trail for one job.
-    async fn audit_events(&self, id: Uuid) -> Result<Vec<ScanJobAuditEvent>>;
-}
-
-/// Process-local store used by stateless MCP sessions and library callers.
-#[derive(Debug, Default)]
-pub struct InMemoryJobStore {
-    state: RwLock<InMemoryJobState>,
-}
-
-#[derive(Debug, Default)]
-struct InMemoryJobState {
-    jobs: BTreeMap<(DateTime<Utc>, Uuid), ScanJob>,
-    audit_events: HashMap<Uuid, Vec<ScanJobAuditEvent>>,
-}
-
-impl InMemoryJobStore {
-    /// Create an empty in-memory store.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[async_trait]
-impl JobStore for InMemoryJobStore {
-    async fn create(&self, job: &ScanJob) -> Result<()> {
-        job.validate_create()?;
-        let mut state = self.state.write().await;
-        if state.jobs.values().any(|existing| existing.id == job.id) {
-            return Err(ScorchError::Job(format!("scan job {} already exists", job.id)));
-        }
-        if let Some(parent_id) = job.parent_job_id {
-            let parent =
-                state.jobs.values().find(|existing| existing.id == parent_id).ok_or_else(|| {
-                    ScorchError::Job(format!("scan job parent {parent_id} was not found"))
-                })?;
-            job.validate_successor(parent)?;
-            if state.jobs.values().any(|existing| existing.parent_job_id == Some(parent_id)) {
-                return Err(ScorchError::Job(format!(
-                    "scan job parent {parent_id} already has a successor"
-                )));
-            }
-        }
-        if state.jobs.values().any(|existing| {
-            existing.root_job_id == job.root_job_id && existing.attempt == job.attempt
-        }) {
-            return Err(ScorchError::Job(format!(
-                "scan job root {} already has attempt {}",
-                job.root_job_id, job.attempt
-            )));
-        }
-        state.jobs.insert((job.created_at, job.id), job.clone());
-        state.audit_events.entry(job.id).or_default().push(job.into());
-        drop(state);
-        Ok(())
-    }
-
-    async fn get(&self, id: Uuid) -> Result<Option<ScanJob>> {
-        Ok(self.state.read().await.jobs.values().find(|job| job.id == id).cloned())
-    }
-
-    async fn list(&self) -> Result<Vec<ScanJob>> {
-        Ok(self.state.read().await.jobs.values().take(JOB_LIST_LIMIT).cloned().collect())
-    }
-
-    async fn list_recoverable(&self, now: DateTime<Utc>) -> Result<Vec<ScanJob>> {
-        Ok(self
-            .state
-            .read()
-            .await
-            .jobs
-            .values()
-            .filter(|job| {
-                !job.state.is_terminal()
-                    && job.lease_expires_at.is_none_or(|deadline| deadline <= now)
-            })
-            .take(JOB_LIST_LIMIT)
-            .cloned()
-            .collect())
-    }
-
-    async fn compare_and_swap(&self, expected_revision: u64, job: &ScanJob) -> Result<bool> {
-        let mut state = self.state.write().await;
-        let updated = if let Some(existing) =
-            state.jobs.values_mut().find(|existing| existing.id == job.id)
-        {
-            if existing.revision == expected_revision {
-                job.validate_replacement(existing, expected_revision)?;
-                existing.clone_from(job);
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-        if updated {
-            state.audit_events.entry(job.id).or_default().push(job.into());
-        }
-        drop(state);
-        Ok(updated)
-    }
-
-    async fn audit_events(&self, id: Uuid) -> Result<Vec<ScanJobAuditEvent>> {
-        Ok(self.state.read().await.audit_events.get(&id).cloned().unwrap_or_default())
-    }
-}
 
 #[derive(Clone)]
 struct ChannelProgressSink {
@@ -698,7 +190,7 @@ impl ScanJobService {
         let mut run_guard = ActiveRunGuard::new(id, Arc::clone(&self.active), cancellation.clone());
 
         self.mutate(id, |job| {
-            job.transition(ScanJobState::Running, Utc::now())?;
+            transition_job(job, ScanJobState::Running, Utc::now())?;
             job.progress.total_modules = total_modules;
             job.lease_expires_at = Some(lease_deadline());
             Ok(())
@@ -837,10 +329,10 @@ impl ScanJobService {
                 result.summary = ScanSummary::from_findings(&result.findings);
                 self.mutate(id, |job| {
                     if job.state == ScanJobState::Cancelling {
-                        job.transition(ScanJobState::Cancelled, Utc::now())?;
+                        transition_job(job, ScanJobState::Cancelled, Utc::now())?;
                         job.error = Some("cancelled before successful job commit".to_string());
                     } else {
-                        job.transition(ScanJobState::Succeeded, Utc::now())?;
+                        transition_job(job, ScanJobState::Succeeded, Utc::now())?;
                         job.result = Some(result.clone());
                         job.error = None;
                     }
@@ -853,9 +345,9 @@ impl ScanJobService {
             Err(ScorchError::Cancelled { reason }) => {
                 self.mutate(id, |job| {
                     if job.state == ScanJobState::Running {
-                        job.transition(ScanJobState::Cancelling, Utc::now())?;
+                        transition_job(job, ScanJobState::Cancelling, Utc::now())?;
                     }
-                    job.transition(ScanJobState::Cancelled, Utc::now())?;
+                    transition_job(job, ScanJobState::Cancelled, Utc::now())?;
                     job.error = Some(reason.clone());
                     job.owner_id = None;
                     job.lease_expires_at = None;
@@ -926,7 +418,7 @@ impl ScanJobService {
                         }
                     }
                 }
-                job.progress.normalize();
+                normalize_job_progress(&mut job.progress);
                 Ok(())
             })
             .await?;
@@ -947,7 +439,7 @@ impl ScanJobService {
                 )));
             }
             let expected_revision = candidate.revision;
-            candidate.transition(ScanJobState::Failed, Utc::now())?;
+            transition_job(&mut candidate, ScanJobState::Failed, Utc::now())?;
             candidate.error = Some(error.clone());
             candidate.owner_id = None;
             candidate.lease_expires_at = None;
@@ -971,12 +463,12 @@ impl ScanJobService {
             match candidate.state {
                 ScanJobState::Cancelling | ScanJobState::Cancelled => return Ok(candidate),
                 ScanJobState::Queued => {
-                    candidate.transition(ScanJobState::Cancelled, Utc::now())?;
+                    transition_job(&mut candidate, ScanJobState::Cancelled, Utc::now())?;
                     candidate.owner_id = None;
                     candidate.lease_expires_at = None;
                 }
                 ScanJobState::Running => {
-                    candidate.transition(ScanJobState::Cancelling, Utc::now())?;
+                    transition_job(&mut candidate, ScanJobState::Cancelling, Utc::now())?;
                 }
                 state => {
                     return Err(ScorchError::Job(format!(
@@ -1009,7 +501,7 @@ impl ScanJobService {
                 return Ok(None);
             }
             let expected_revision = candidate.revision;
-            candidate.transition(ScanJobState::Interrupted, Utc::now())?;
+            transition_job(&mut candidate, ScanJobState::Interrupted, Utc::now())?;
             candidate.error = Some("job owner exited before terminal commit".to_string());
             candidate.owner_id = None;
             candidate.lease_expires_at = None;
@@ -1122,7 +614,7 @@ impl ScanJobService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::policy::{Capability, EffectClass, EngagementPolicy};
+    use crate::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
     use crate::engine::scope::ScopeRule;
     use crate::engine::target::Target;
 
@@ -1147,7 +639,7 @@ mod tests {
 
     fn assert_invalid_create(mut job: ScanJob, mutate: impl FnOnce(&mut ScanJob)) {
         mutate(&mut job);
-        assert!(job.validate_create().is_err(), "forged queued job must be rejected");
+        assert!(validate_job_create(&job).is_err(), "forged queued job must be rejected");
     }
 
     fn assert_invalid_replacement(
@@ -1158,7 +650,7 @@ mod tests {
     ) {
         mutate(&mut candidate);
         assert!(
-            candidate.validate_replacement(existing, expected_revision).is_err(),
+            validate_job_replacement(&candidate, existing, expected_revision).is_err(),
             "invalid replacement must be rejected"
         );
     }
@@ -1182,7 +674,7 @@ mod tests {
             ..ScanJobProgress::default()
         };
         assert_eq!(progress.processed_modules(), 9);
-        progress.normalize();
+        normalize_job_progress(&mut progress);
         assert_eq!(progress.active_modules, ["a", "z"]);
         assert_eq!(progress.completed_modules, ["a", "b"]);
         assert_eq!(progress.skipped_modules, ["c", "d"]);
@@ -1194,16 +686,16 @@ mod tests {
         let mut job = ScanJob::new(request(), Uuid::new_v4());
         job.progress.active_modules.push("headers".to_string());
         let started_at = Utc::now();
-        job.transition(ScanJobState::Running, started_at).expect("queued -> running");
+        transition_job(&mut job, ScanJobState::Running, started_at).expect("queued -> running");
         assert_eq!(job.started_at, Some(started_at));
         assert!(job.finished_at.is_none());
         let finished_at = Utc::now();
-        job.transition(ScanJobState::Succeeded, finished_at).expect("running -> succeeded");
+        transition_job(&mut job, ScanJobState::Succeeded, finished_at)
+            .expect("running -> succeeded");
         assert_eq!(job.started_at, Some(started_at));
         assert_eq!(job.finished_at, Some(finished_at));
         assert!(job.progress.active_modules.is_empty());
-        let error = job
-            .transition(ScanJobState::Running, Utc::now())
+        let error = transition_job(&mut job, ScanJobState::Running, Utc::now())
             .expect_err("terminal transition must fail");
         assert!(error.to_string().contains("illegal scan job transition"));
     }
@@ -1211,7 +703,7 @@ mod tests {
     #[test]
     fn create_validation_checks_every_identity_state_and_progress_field() {
         let pristine = ScanJob::new(request(), Uuid::new_v4());
-        pristine.validate_create().expect("new root is valid");
+        validate_job_create(&pristine).expect("new root is valid");
 
         assert_invalid_create(pristine.clone(), |job| job.root_job_id = Uuid::new_v4());
         assert_invalid_create(pristine.clone(), |job| job.parent_job_id = Some(Uuid::new_v4()));
@@ -1251,7 +743,7 @@ mod tests {
         interrupted.progress.total_modules = 1;
         interrupted.progress.completed_modules.push("headers".to_string());
         let successor = ScanJob::successor(&interrupted, Uuid::new_v4());
-        successor.validate_create().expect("successor may retain completed progress");
+        validate_job_create(&successor).expect("successor may retain completed progress");
         assert_invalid_create(successor, |job| job.parent_job_id = None);
     }
 
@@ -1285,11 +777,11 @@ mod tests {
         parent.progress.total_modules = 1;
         parent.progress.completed_modules.push("headers".to_string());
         let successor = ScanJob::successor(&parent, Uuid::new_v4());
-        successor.validate_successor(&parent).expect("successor lineage is valid");
+        validate_job_successor(&successor, &parent).expect("successor lineage is valid");
 
         let mut active_parent = parent.clone();
         active_parent.state = ScanJobState::Running;
-        assert!(successor.validate_successor(&active_parent).is_err());
+        assert!(validate_job_successor(&successor, &active_parent).is_err());
         for forged in [
             {
                 let mut job = successor.clone();
@@ -1333,7 +825,7 @@ mod tests {
                 job
             },
         ] {
-            assert!(forged.validate_successor(&parent).is_err());
+            assert!(validate_job_successor(&forged, &parent).is_err());
         }
     }
 
@@ -1344,7 +836,8 @@ mod tests {
         valid.state = ScanJobState::Running;
         valid.revision = 1;
         valid.started_at = Some(existing.updated_at);
-        valid.validate_replacement(&existing, 0).expect("queued -> running replacement is valid");
+        validate_job_replacement(&valid, &existing, 0)
+            .expect("queued -> running replacement is valid");
 
         assert_invalid_replacement(&existing, valid.clone(), 0, |job| job.id = Uuid::new_v4());
         assert_invalid_replacement(&existing, valid.clone(), 0, |job| {
@@ -1363,33 +856,33 @@ mod tests {
 
         let mut existing_revision_mismatch = valid.clone();
         existing_revision_mismatch.revision = 2;
-        assert!(existing_revision_mismatch.validate_replacement(&existing, 1).is_err());
+        assert!(validate_job_replacement(&existing_revision_mismatch, &existing, 1).is_err());
         let mut candidate_revision_mismatch = valid.clone();
         candidate_revision_mismatch.revision = 2;
-        assert!(candidate_revision_mismatch.validate_replacement(&existing, 0).is_err());
+        assert!(validate_job_replacement(&candidate_revision_mismatch, &existing, 0).is_err());
 
         let mut queued_reentry = existing.clone();
         queued_reentry.revision = 1;
-        assert!(queued_reentry.validate_replacement(&existing, 0).is_err());
+        assert!(validate_job_replacement(&queued_reentry, &existing, 0).is_err());
         let mut illegal_jump = valid.clone();
         illegal_jump.state = ScanJobState::Succeeded;
-        assert!(illegal_jump.validate_replacement(&existing, 0).is_err());
+        assert!(validate_job_replacement(&illegal_jump, &existing, 0).is_err());
 
         let mut active = valid;
         active.updated_at += chrono::Duration::seconds(1);
         let mut active_refresh = active.clone();
         active_refresh.revision = 2;
-        active_refresh.validate_replacement(&active, 1).expect("running refresh is valid");
+        validate_job_replacement(&active_refresh, &active, 1).expect("running refresh is valid");
         let mut backwards = active_refresh;
         backwards.updated_at = existing.updated_at;
-        assert!(backwards.validate_replacement(&active, 1).is_err());
+        assert!(validate_job_replacement(&backwards, &active, 1).is_err());
 
         let mut terminal = active;
         terminal.state = ScanJobState::Succeeded;
         terminal.finished_at = Some(terminal.updated_at);
         let mut terminal_reentry = terminal.clone();
         terminal_reentry.revision = 2;
-        assert!(terminal_reentry.validate_replacement(&terminal, 1).is_err());
+        assert!(validate_job_replacement(&terminal_reentry, &terminal, 1).is_err());
     }
 
     #[tokio::test]
@@ -1470,7 +963,7 @@ mod tests {
         );
 
         service
-            .mutate(first.id, |job| job.transition(ScanJobState::Running, Utc::now()))
+            .mutate(first.id, |job| transition_job(job, ScanJobState::Running, Utc::now()))
             .await
             .expect("start failure fixture");
         let failed = service

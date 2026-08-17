@@ -170,7 +170,8 @@ echo "mutation concurrency: $JOBS workers, $BUILD_JOBS build/test threads each"
 
 if [ "$MODE" = "inspect" ]; then
     INVENTORY="$RUN_ROOT/mutants.json"
-    if ! TMPDIR="$RUN_TMP" cargo mutants --list --json --all-features > "$INVENTORY"; then
+    if ! TMPDIR="$RUN_TMP" cargo mutants --list --json --workspace --all-features \
+        --test-workspace true > "$INVENTORY"; then
         echo "cargo-mutants could not inventory the configured targets" >&2
         exit 1
     fi
@@ -178,18 +179,21 @@ if [ "$MODE" = "inspect" ]; then
         echo "mutation inventory is empty or malformed" >&2
         exit 1
     }
-    jq -e 'all(.[]; (.file | startswith("src/")) and .file != "src/main.rs")' \
+    jq -e 'all(.[];
+        ((.file | startswith("src/")) or (.file | test("^crates/[^/]+/src/")))
+        and .file != "src/main.rs")' \
         "$INVENTORY" >/dev/null || {
-        echo "mutation inventory escaped src/ or included src/main.rs" >&2
+        echo "mutation inventory escaped workspace source roots or included src/main.rs" >&2
         exit 1
     }
-    jq -e 'any(.[]; .file == "src/engine/policy.rs")' "$INVENTORY" >/dev/null || {
+    jq -e 'any(.[]; .file == "crates/scorchkit-policy/src/policy.rs")' \
+        "$INVENTORY" >/dev/null || {
         echo "mutation inventory does not include the safety policy kernel" >&2
         exit 1
     }
     echo "configured mutants: $(jq 'length' "$INVENTORY")"
     echo "configured source files: $(jq '[.[].file] | unique | length' "$INVENTORY")"
-    echo "target checks: src-only, composition root excluded, policy kernel included"
+    echo "target checks: workspace sources only, composition binary excluded, policy kernel included"
     exit 0
 fi
 
@@ -215,7 +219,8 @@ if [ "$MODE" = "diff" ]; then
     done | sort -u)"
 fi
 
-COMMAND=(cargo mutants --all-features --jobs "$JOBS" --output "$RESULT_PARENT")
+COMMAND=(cargo mutants --workspace --all-features --test-workspace true \
+    --jobs "$JOBS" --output "$RESULT_PARENT")
 case "$MODE" in
     diff) COMMAND+=(--in-diff "$DIFF_FILE") ;;
     shard) COMMAND+=(--shard "$SHARD") ;;

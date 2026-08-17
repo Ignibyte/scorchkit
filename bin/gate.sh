@@ -132,11 +132,12 @@ clippy_matrix() {
     while IFS= read -r line; do
         if [ "$line" = '<default>' ]; then
             echo "clippy feature state: $line"
-            cargo clippy --all-targets -- -D warnings </dev/null || return 1
+            cargo clippy --workspace --all-targets -- -D warnings </dev/null || return 1
         else
             read -r -a flags <<< "$line"
             echo "clippy feature state: $line"
-            cargo clippy --all-targets "${flags[@]}" -- -D warnings </dev/null || return 1
+            cargo clippy --workspace --all-targets "${flags[@]}" -- -D warnings </dev/null \
+                || return 1
         fi
         count=$((count + 1))
     done <<< "$states"
@@ -145,7 +146,7 @@ clippy_matrix() {
 
 doc_gate() {
     local output
-    output="$(RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps 2>&1)"
+    output="$(RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps 2>&1)"
     local status=$?
     printf '%s\n' "$output"
     [ "$status" -eq 0 ] || return "$status"
@@ -194,7 +195,7 @@ no_suppressions_gate() {
     local hits ignored blanket
     # The awk program is literal; awk expands its own fields.
     # shellcheck disable=SC2016
-    hits="$(find src -type f -name '*.rs' -print0 | xargs -0 awk '
+    hits="$(find src crates -type f -name '*.rs' -print0 | xargs -0 awk '
         FNR == 1 { justified = 0 }
         /^[[:space:]]*\/\// {
             if ($0 ~ /JUSTIFICATION:/) justified = 1
@@ -218,7 +219,7 @@ no_suppressions_gate() {
     # Attribute checks are anchored so prose that merely documents `#[ignore]`
     # does not become a false positive.
     # shellcheck disable=SC2016
-    ignored="$(find src tests examples -type f -name '*.rs' -print0 | xargs -0 awk '
+    ignored="$(find src crates tests examples -type f -name '*.rs' -print0 | xargs -0 awk '
         /^[[:space:]]*#\[ignore([[:space:]]|\])/ &&
         $0 !~ /^[[:space:]]*#\[ignore[[:space:]]*=[[:space:]]*"[^"[:space:]][^"]*"\][[:space:]]*$/ {
             printf "%s:%d: %s\n", FILENAME, FNR, $0
@@ -230,7 +231,7 @@ no_suppressions_gate() {
         return 1
     fi
     # shellcheck disable=SC2016
-    blanket="$(find src tests examples -type f -name '*.rs' -print0 | xargs -0 awk '
+    blanket="$(find src crates tests examples -type f -name '*.rs' -print0 | xargs -0 awk '
         /^[[:space:]]*#!?\[(allow|expect)\([^]]*(clippy::(all|cargo|nursery|pedantic)|warnings|unused|dead_code)([[:space:],)]|$)/ {
             printf "%s:%d: %s\n", FILENAME, FNR, $0
         }
@@ -244,9 +245,9 @@ no_suppressions_gate() {
 
 source_bans_gate() {
     local unsafe_hits exit_hits transmute_hits
-    unsafe_hits="$(find src -type f -name '*.rs' -print0 | xargs -0 grep -nE '(^|[^[:alnum:]_])unsafe[[:space:]]*\{' 2>/dev/null || true)"
-    exit_hits="$(find src -type f -name '*.rs' ! -name 'main.rs' -print0 | xargs -0 grep -nE '(std::)?process::exit[[:space:]]*\(' 2>/dev/null || true)"
-    transmute_hits="$(find src -type f -name '*.rs' -print0 | xargs -0 grep -nE '(^|[^[:alnum:]_])(std::)?(mem::)?transmute([_:]|[[:space:]]*\()' 2>/dev/null || true)"
+    unsafe_hits="$(find src crates -type f -name '*.rs' -print0 | xargs -0 grep -nE '(^|[^[:alnum:]_])unsafe[[:space:]]*\{' 2>/dev/null || true)"
+    exit_hits="$(find src crates -type f -name '*.rs' ! -name 'main.rs' -print0 | xargs -0 grep -nE '(std::)?process::exit[[:space:]]*\(' 2>/dev/null || true)"
+    transmute_hits="$(find src crates -type f -name '*.rs' -print0 | xargs -0 grep -nE '(^|[^[:alnum:]_])(std::)?(mem::)?transmute([_:]|[[:space:]]*\()' 2>/dev/null || true)"
     if [ -n "$unsafe_hits$exit_hits$transmute_hits" ]; then
         [ -z "$unsafe_hits" ] || { echo "unsafe blocks are banned:" >&2; printf '%s\n' "$unsafe_hits" >&2; }
         [ -z "$exit_hits" ] || { echo "library process exits are banned:" >&2; printf '%s\n' "$exit_hits" >&2; }
@@ -258,7 +259,7 @@ source_bans_gate() {
 todo_gate() {
     local hits
     hits="$(
-        find src docs -type f \( -name '*.rs' -o -name '*.md' \) \
+        find src crates docs -type f \( -name '*.rs' -o -name '*.md' \) \
             ! -path 'docs/planning/*' -print0 \
             | xargs -0 grep -nE '(^|[[:space:]])(TODO|FIXME|XXX)([[:space:]]|:|\()' 2>/dev/null \
             || true
@@ -286,12 +287,12 @@ metadata_format_gate() {
 
 semgrep_gate() {
     need semgrep "pipx install semgrep" || return 1
-    semgrep --config .semgrep.yml --error --quiet src tests
+    semgrep --config .semgrep.yml --error --quiet src crates tests
 }
 
 coverage_gate() {
     need cargo-llvm-cov "cargo install cargo-llvm-cov --locked" || return 1
-    cargo llvm-cov --all-features \
+    cargo llvm-cov --workspace --all-features \
         --ignore-filename-regex '(^|/)main\.rs$' \
         --fail-under-lines "$COVERAGE_MIN"
 }
@@ -379,8 +380,9 @@ contract_gate() {
 nextest_gate() {
     need cargo-nextest "cargo install cargo-nextest --locked" || return 1
     need jq "brew install jq (macOS) or apt-get install jq (Linux)" || return 1
-    local listing empty
-    listing="$(cargo nextest list --all-features --message-format json 2>/dev/null)" || {
+    local listing empty allowlisted_empty_suites
+    listing="$(cargo nextest list --workspace --all-features --message-format json 2>/dev/null)" \
+        || {
         echo "nextest could not list test suites" >&2
         return 1
     }
@@ -392,13 +394,27 @@ nextest_gate() {
     empty="$(printf '%s' "$listing" \
         | jq -r '."rust-suites" | to_entries[]
             | select((.value.testcases | length) == 0) | .key' \
-        | grep -v '::bin/' || true)"
-    if [ -n "$empty" ]; then
-        echo "non-binary test suites with zero tests:" >&2
+        | grep -v '::bin/' | LC_ALL=C sort || true)"
+    # These boundary packages currently publish only types or parsing contracts. Their behavior is
+    # covered by the root integration and workspace-architecture suites. Keep the list exact so a
+    # newly empty package fails, and adding package-local tests forces removal of the stale entry.
+    allowlisted_empty_suites="$(printf '%s\n' \
+        scorchkit-cli \
+        scorchkit-cloud \
+        scorchkit-code \
+        scorchkit-executor \
+        scorchkit-infra \
+        scorchkit-web \
+        | LC_ALL=C sort)"
+    if [ "$empty" != "$allowlisted_empty_suites" ]; then
+        echo "non-binary zero-test suite inventory changed:" >&2
+        echo "actual:" >&2
         printf '%s\n' "$empty" >&2
+        echo "allowlisted:" >&2
+        printf '%s\n' "$allowlisted_empty_suites" >&2
         return 1
     fi
-    cargo nextest run --all-features
+    cargo nextest run --workspace --all-features
 }
 
 gate_selftest() {
@@ -412,6 +428,10 @@ gate_selftest() {
     }
     grep -q 'scorchkit_write_gate_receipt' bin/gate.sh || {
         echo "gate selftest failed: delivery receipt writer is not wired" >&2
+        return 1
+    }
+    grep -q 'allowlisted_empty_suites' bin/gate.sh || {
+        echo "gate selftest failed: zero-test workspace suite inventory is not explicit" >&2
         return 1
     }
     if ! grep -q -- '--focused-repair' bin/gate.sh \
@@ -436,7 +456,7 @@ fi
 
 run_gate "gate:1 rustfmt" cargo fmt --all -- --check
 run_gate "gate:2 clippy feature matrix" clippy_matrix
-run_gate "gate:3 all-feature tests" cargo test --all-features
+run_gate "gate:3 all-feature tests" cargo test --workspace --all-features
 run_gate "gate:4 rustdoc" doc_gate
 run_gate "gate:5 cargo-audit" audit_gate
 run_gate "gate:6 cargo-deny" deny_gate

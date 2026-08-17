@@ -1,0 +1,20 @@
+[package]
+name = "scorchkit-cloud"
+version = "3.0.0"
+edition = "2021"
+description = "Stable cloud scanner-family contracts for ScorchKit"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+module_name_repetitions = "allow"
+future_not_send = "allow"

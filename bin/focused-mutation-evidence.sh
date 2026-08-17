@@ -63,6 +63,7 @@ mutation_input_hash() {
         build.rs
         .cargo
         .config/nextest.toml
+        crates
         src
         tests
         examples

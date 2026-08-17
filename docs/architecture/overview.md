@@ -22,6 +22,17 @@ flowchart TB
 The host may propose work and interpret results. It cannot replace an engagement decision, create a
 policy-free execution context, or turn generated analysis into scanner evidence.
 
+## Workspace boundary
+
+Stable policy, domain, configuration, execution, process, family, storage-model, MCP-contract,
+CLI-argument, and agent-contract code lives in 13 internal packages under `crates/`. The root
+`scorchkit` package composes those contracts with policy-sealed contexts, concrete scanners,
+storage adapters, CLI/MCP handlers, reports, and the public binary. Lower packages never depend on
+the root package.
+
+See [workspace.md](workspace.md) for the exact package owners, allowed dependency graph, feature
+forwarding, and compatibility rules.
+
 ## Authorization flow
 
 Every effectful operation starts with an `Engagement`. Its policy contains target rules,
@@ -132,6 +143,7 @@ ticket/spec/notes/AAR files.
 ## Detailed documents
 
 - [engine.md](engine.md): facade and context contracts
+- [workspace.md](workspace.md): package ownership and dependency direction
 - [runner.md](runner.md): orchestration and process execution
 - [mcp.md](mcp.md): local agent interface
 - [ai.md](ai.md): provider-neutral analysis adapters

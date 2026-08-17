@@ -49,9 +49,17 @@ fn local_and_ci_gates_share_the_canonical_helpers() {
     let manifest = read("Cargo.toml");
 
     assert!(runner.contains("bash bin/feature-states.sh"));
+    assert!(runner.contains("cargo clippy --workspace --all-targets"));
+    assert!(runner.contains("cargo test --workspace --all-features"));
+    assert!(runner.contains("cargo doc --workspace --all-features"));
+    assert!(runner.contains("cargo llvm-cov --workspace --all-features"));
+    assert!(runner.contains("cargo nextest run --workspace --all-features"));
     assert!(runner.contains("COVERAGE_FLOOR=62"));
     assert!(runner.contains("bash bin/mutants.sh --diff"));
     assert!(runner.contains("scorchkit_write_gate_receipt"));
+    assert!(read("bin/gate-state.sh").contains("sealed_green_diff | sealed_green_scope"));
+    assert!(read("bin/sealed-mutation-baseline.sh")
+        .contains("sealed mutation function scope does not match raw inventory"));
     assert!(runner.contains("STATIC_FAILURES=\"$FAIL\""));
     assert!(runner.contains("\"static prerequisite failed\""));
     assert!(runner.contains("\"coverage prerequisite failed\""));
@@ -64,6 +72,9 @@ fn local_and_ci_gates_share_the_canonical_helpers() {
         mutation_runner.contains(concat!("SCORCHKIT_MUTATION_DATABASE_URL:-$", "{DATABASE_URL:-}"))
     );
     assert!(mutation_runner.contains("export DATABASE_URL=\"$MUTATION_DATABASE_URL\""));
+    assert!(mutation_runner.contains("cargo mutants --workspace"));
+    assert!(mutation_runner.contains("--test-workspace true"));
+    assert!(mutation_runner.contains("crates/scorchkit-policy/src/policy.rs"));
     assert!(!mutation_runner.contains("unset CARGO_TARGET_DIR DATABASE_URL"));
     assert!(
         !mutants.contains("exclude_re"),
@@ -87,7 +98,7 @@ fn local_and_ci_gates_share_the_canonical_helpers() {
     assert!(ci.contains("bash bin/mutants.sh --shard"));
     assert!(ci.contains("POSTGRES_DB: scorchkit_mutation"));
     assert!(ci.contains("SCORCHKIT_MUTATION_DATABASE_URL:"));
-    assert!(ci.contains("cargo nextest list --all-features --message-format json"));
+    assert!(ci.contains("cargo nextest list --workspace --all-features --message-format json"));
     assert!(!ci.contains("psql \"$DATABASE_URL\""), "SQLx owns the migration ledger");
 
     assert!(manifest.contains("unsafe_code = \"forbid\""));

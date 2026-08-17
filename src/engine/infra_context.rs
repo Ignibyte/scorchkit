@@ -148,7 +148,12 @@ impl InfraContext {
         }
         let target = PolicyTarget::network(self.target.display_raw());
         if self.authorization.iter().any(|decision| {
-            decision.grants_exactly(&target, Capability::ExternalTool, EffectClass::ActiveSafe)
+            super::policy::decision_grants_exactly(
+                decision,
+                &target,
+                Capability::ExternalTool,
+                EffectClass::ActiveSafe,
+            )
         }) {
             return Ok(());
         }

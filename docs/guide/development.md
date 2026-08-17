@@ -38,8 +38,19 @@ use the same scripts and repository state.
 ## Source layout
 
 ```text
+crates/
+  scorchkit-policy/    engagement and scope contracts
+  scorchkit-core/      findings, evidence, targets, results, and events
+  scorchkit-config/    configuration and credential contracts
+  scorchkit-executor/  bounded scheduler and durable job contracts
+  scorchkit-tools/     bounded subprocess ownership
+  scorchkit-{web,code,infra,cloud}/  family descriptors and categories
+  scorchkit-storage/   persistence record models
+  scorchkit-mcp/       MCP schemas and tool contracts
+  scorchkit-cli/       CLI argument contracts
+  scorchkit-agent/     host manifest and typed reasoning contracts
 src/
-  engine/       targets, policy, contexts, findings, evidence, events
+  engine/       policy-sealed contexts plus compatibility re-exports
   facade.rs     public construction and authorization boundary
   recon/        native DAST reconnaissance modules
   scanner/      native DAST vulnerability modules
@@ -48,17 +59,18 @@ src/
   sast_tools/   SAST external-tool adapters
   infra/        TCP, TLS, DNS, nmap, and CVE correlation
   cloud/        bounded cloud adapters and quarantined provider code
-  runner/       family orchestration and process ownership
-  cli/          command definitions and terminal presentation
-  mcp/          local stdio agent surface
-  storage/      PostgreSQL persistence
+  runner/       family orchestration, job service, and compatibility re-exports
+  cli/          command execution and terminal presentation
+  mcp/          local stdio transport and tool business logic
+  storage/      PostgreSQL adapters and migrations
   report/       terminal, JSON, HTML, SARIF, and PDF output
-  agent/        provider-neutral host contracts
-  ai/           provider-neutral planning and analysis adapters
+  agent/        local autonomous adapter
+  ai/           provider process adapters and reasoning workflows
 ```
 
-The current layout is a single crate. The ordered crate extraction is documented in the roadmap and
-starts only after policy, job, executor, and provider contracts are stable.
+The root `scorchkit` package remains the public library and binary. Compatibility modules preserve
+existing import paths while the extracted package owns the underlying type or implementation. Read
+[the workspace boundary](../architecture/workspace.md) before adding an internal dependency.
 
 ## Preserve the effect boundary
 
@@ -125,6 +137,10 @@ bash bin/gate.sh --fast
 bash bin/mutants.sh --inspect
 DATABASE_URL=postgresql://USER@localhost/DATABASE bash bin/gate.sh --diff
 ```
+
+The gate applies its Rust checks to every workspace package. For direct checks, use
+`cargo test --workspace --all-features` and
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`.
 
 The release baseline also requires a complete `bash bin/gate.sh --full`. Cargo commands run
 sequentially. The mutation runner alone manages its bounded workers and local scratch directories.

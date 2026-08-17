@@ -13,7 +13,7 @@ pub struct AppConfig {
     ///
     /// Scans fail closed when this is absent. Callers embedding `ScorchKit` may
     /// instead supply an engagement explicitly through
-    /// [`crate::facade::Engine::for_engagement`].
+    /// the `ScorchKit` `Engine::for_engagement` composition facade.
     #[serde(default)]
     pub engagement: Option<crate::engine::policy::Engagement>,
     pub scan: ScanConfig,
@@ -40,7 +40,7 @@ pub struct AppConfig {
     /// Credentials for authenticated network scanning (SSH, SMB, SNMP,
     /// Kerberos). Defaults to all-`None` so scans run unauthenticated
     /// unless opted in. See
-    /// [`crate::engine::network_credentials::NetworkCredentials`] for
+    /// [`crate::network_credentials::NetworkCredentials`] for
     /// the env-var precedence contract.
     #[serde(default)]
     pub network_credentials: crate::engine::network_credentials::NetworkCredentials,
@@ -50,7 +50,7 @@ pub struct AppConfig {
     /// scans use the underlying SDK / tool defaults (AWS CLI profile,
     /// `gcloud` ADC, `kubectl` current context) unless explicitly
     /// configured. See
-    /// [`crate::engine::cloud_credentials::CloudCredentials`] for the
+    /// [`crate::cloud_credentials::CloudCredentials`] for the
     /// env-var precedence contract. Shipped in WORK-150.
     #[cfg(feature = "cloud")]
     #[serde(default)]
@@ -60,8 +60,8 @@ pub struct AppConfig {
 /// Configuration for the built-in JSONL audit-log event subscriber.
 ///
 /// Disabled by default. When `enabled` is true and `path` is `Some`, the
-/// orchestrator wires an [`crate::engine::audit_log::AuditLogHandler`] that
-/// appends every published [`crate::engine::events::ScanEvent`] to the file
+/// orchestrator wires an audit-log handler that appends every published
+/// [`scorchkit_core::events::ScanEvent`] to the file
 /// as one JSON record per line.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]

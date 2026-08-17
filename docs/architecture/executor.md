@@ -1,9 +1,13 @@
 # Shared job executor
 
-`runner::job_executor` is the common scheduling boundary for DAST, SAST, infrastructure, and cloud
-module work. It is vendor-neutral and contains no agent, target, policy, transport, finding, event,
-storage, or terminal code. Family orchestrators build policy-sealed module futures and submit those
-futures to the executor.
+`scorchkit-executor` owns the common scheduler used by DAST, SAST, infrastructure, and cloud module
+work. The root path `scorchkit::runner::job_executor` remains a compatibility re-export. The
+scheduler contains no agent, target, policy, transport, finding, event, storage, or terminal code.
+Family orchestrators build policy-sealed module futures and submit those futures to the executor.
+
+The same package owns provider-neutral durable job types, the `JobStore` trait, and the in-memory
+store. The composed `ScanJobService` remains in the root package because it constructs the sealed
+DAST context. PostgreSQL remains a root storage adapter.
 
 ## Contract
 

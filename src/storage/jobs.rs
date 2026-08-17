@@ -45,7 +45,7 @@ fn decode_audit_event(value: serde_json::Value) -> Result<ScanJobAuditEvent> {
 #[async_trait]
 impl JobStore for PostgresJobStore {
     async fn create(&self, job: &ScanJob) -> Result<()> {
-        job.validate_create()?;
+        scorchkit_executor::integration::validate_job_create(job)?;
         let document = serde_json::to_value(job)?;
         let audit_event = ScanJobAuditEvent::from(job);
         let audit_document = serde_json::to_value(&audit_event)?;
@@ -69,7 +69,7 @@ impl JobStore for PostgresJobStore {
                     ScorchError::Database(format!("read scan job parent failed: {error}"))
                 })
                 .and_then(decode_document)?;
-            job.validate_successor(&parent)?;
+            scorchkit_executor::integration::validate_job_successor(job, &parent)?;
         }
         sqlx::query(
             "INSERT INTO scan_jobs (
@@ -197,7 +197,11 @@ impl JobStore for PostgresJobStore {
                 ScorchError::Database(format!("read locked scan job document failed: {error}"))
             })
             .and_then(decode_document)?;
-        job.validate_replacement(&existing, expected_revision)?;
+        scorchkit_executor::integration::validate_job_replacement(
+            job,
+            &existing,
+            expected_revision,
+        )?;
         let document = serde_json::to_value(job)?;
         let audit_event = ScanJobAuditEvent::from(job);
         let audit_document = serde_json::to_value(&audit_event)?;

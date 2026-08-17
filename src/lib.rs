@@ -79,7 +79,7 @@ pub mod scanner;
 pub mod storage;
 pub mod tools;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "infra"))]
 pub(crate) static TEST_ENVIRONMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 // Crate-root re-exports for the most common types.

@@ -101,14 +101,18 @@ prompt. The provider never receives database credentials or the serialized engag
 ## Source layout
 
 ```text
+crates/scorchkit-agent/src/ai/
+  prompts.rs       host-facing analysis focus vocabulary
+  response.rs      JSON extraction used by the contract decoder
+  types.rs         structured planning and analysis types
 src/ai/
   contracts.rs     typed task requests, versioned envelopes, rendering, and decoding
   provider.rs      provider interface and bounded CLI adapters
   planner.rs       scan-plan requests and module validation
   analyst.rs       finding analysis and terminal presentation
-  prompts.rs       host-facing analysis focus vocabulary
-  response.rs      JSON extraction used by the contract decoder
-  types.rs         structured planning and analysis types
+  prompts.rs       compatibility re-exports
+  response.rs      compatibility re-exports
+  types.rs         compatibility re-exports
   correlator.rs    optional inference over scanner findings
   remediation.rs   remediation helper types
 ```

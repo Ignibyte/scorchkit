@@ -209,11 +209,9 @@ impl ScanContext {
 
     fn require_grant(&self, capability: Capability, effect: EffectClass) -> Result<()> {
         let target = PolicyTarget::Web(self.target.url.clone());
-        if self
-            .authorization
-            .iter()
-            .any(|decision| decision.grants_exactly(&target, capability, effect))
-        {
+        if self.authorization.iter().any(|decision| {
+            super::policy::decision_grants_exactly(decision, &target, capability, effect)
+        }) {
             return Ok(());
         }
         Err(crate::engine::error::ScorchError::Config(format!(

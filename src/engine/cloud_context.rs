@@ -136,11 +136,9 @@ impl CloudContext {
 
     fn require_grant(&self, capability: Capability, effect: EffectClass) -> Result<()> {
         let target = PolicyTarget::cloud(self.target.display_raw());
-        if self
-            .authorization
-            .iter()
-            .any(|decision| decision.grants_exactly(&target, capability, effect))
-        {
+        if self.authorization.iter().any(|decision| {
+            super::policy::decision_grants_exactly(decision, &target, capability, effect)
+        }) {
             return Ok(());
         }
         Err(crate::engine::error::ScorchError::Config(format!(

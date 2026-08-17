@@ -39,9 +39,11 @@ New → Acknowledged → Remediated → Verified
 ## Module Structure
 
 ```
+crates/scorchkit-storage/src/lib.rs
+                — Project, ProjectTarget, ScanRecord, TrackedFinding, VulnStatus
 src/storage/
   mod.rs        — connect(), connect_with_max()
-  models.rs     — Project, ProjectTarget, ScanRecord, TrackedFinding, VulnStatus
+  models.rs     — compatibility re-exports
   projects.rs   — CRUD + target management
   scans.rs      — save/get/list scan records
   findings.rs   — save with dedup, status lifecycle, query by severity/status/scan
@@ -51,7 +53,9 @@ migrations/
   001_initial.sql … 008_scan_job_successor_uniqueness.sql
 ```
 
-Scan job domain types and the `JobStore` trait live outside this module in `runner::job`. The
+Scan job domain types, `JobStore`, and the in-memory store live in `scorchkit-executor::job`. The
+root `runner::job` module owns the composed scan service, and `src/storage/jobs.rs` owns the
+PostgreSQL adapter. The
 database adapter duplicates only indexed lifecycle fields beside the JSONB domain document. Every
 successful create or compare-and-swap writes its compact append-only audit event in the same
 transaction. See `docs/architecture/jobs.md`.

@@ -9,8 +9,8 @@
 //! NVD, optionally an `api_key` and `cache_dir`. Without an API key the
 //! NVD backend uses NVD's anonymous quota (5 requests / 30 seconds).
 //!
-//! The lookup factory in [`crate::infra::cve_lookup::build_cve_lookup`]
-//! consumes this block to construct a boxed [`crate::engine::cve::CveLookup`].
+//! The infrastructure lookup factory consumes this block to construct a boxed
+//! [`scorchkit_core::cve::CveLookup`].
 
 use std::fmt;
 use std::path::PathBuf;
@@ -40,10 +40,8 @@ pub struct CveConfig {
 ///
 /// `Disabled` is the default — no CVE module is wired into `assess` and
 /// the `cve_match` module is not present in the orchestrator. `Mock`
-/// returns a fixture-backed [`crate::infra::cve_mock::MockCveLookup`]
-/// (useful for examples and demos). `Nvd` returns a live
-/// [`crate::infra::cve_nvd::NvdCveLookup`]. `Composite` returns a
-/// [`crate::infra::cve_multi::MultiCveLookup`] wrapping the
+/// returns a fixture-backed mock lookup (useful for examples and demos).
+/// `Nvd` returns a live NVD lookup. `Composite` returns a multi-source lookup wrapping the
 /// sub-backends listed in [`CompositeConfig::sources`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -72,11 +70,11 @@ pub enum CveBackendKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CompositeSource {
-    /// Include an [`crate::infra::cve_nvd::NvdCveLookup`] built from `[cve.nvd]`.
+    /// Include an NVD lookup built from `[cve.nvd]`.
     Nvd,
-    /// Include an [`crate::infra::cve_osv::OsvCveLookup`] built from `[cve.osv]`.
+    /// Include an OSV lookup built from `[cve.osv]`.
     Osv,
-    /// Include an empty [`crate::infra::cve_mock::MockCveLookup`] (useful in tests).
+    /// Include an empty mock lookup (useful in tests).
     Mock,
 }
 
