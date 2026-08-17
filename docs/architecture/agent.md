@@ -96,8 +96,11 @@ Its `DATABASE_URL` declaration is a named environment pass-through, not a stored
 configuration and authorization still come from `AppConfig`. The package is therefore an adapter
 over the host-neutral MCP boundary, not a dependency of `engine`, `runner`, `storage`, or `ai`.
 
-The plugin consumes generated MCP input schemas and JSON content. Native MCP structured results,
-annotations, tool-class separation, and principal context remain the SK-032 transport contract.
+The plugin consumes generated MCP input schemas and prefers the versioned native structured result
+envelope. The server retains the legacy text payload for older hosts. Every tool advertises a
+read/local-state/external-effect class and complete conservative annotations. Local process
+principal data and self-asserted client attribution are returned for traceability but never grant
+authorization; remote authenticated binding remains SK-037.
 See [the Codex plugin guide](../guide/codex-plugin.md) for the operator-facing workflow.
 
 ## Development host

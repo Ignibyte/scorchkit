@@ -59,7 +59,7 @@ impl ScorchKitServer {
     }
 }
 
-#[tool_handler]
+#[tool_handler(router = Self::contract_tool_router())]
 impl ServerHandler for ScorchKitServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(

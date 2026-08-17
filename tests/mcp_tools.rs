@@ -10,13 +10,14 @@ use std::sync::Arc;
 
 use httpmock::MockServer;
 use rmcp::handler::server::ServerHandler;
-use rmcp::model::{CallToolRequestParams, ResourceContents};
+use rmcp::model::{CallToolRequestParams, Implementation, ResourceContents};
 use rmcp::ServiceExt;
 use scorchkit::config::AppConfig;
 use scorchkit::engine::finding::Finding;
 use scorchkit::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
 use scorchkit::engine::scope::ScopeRule;
 use scorchkit::engine::severity::Severity;
+use scorchkit::mcp::contract::{tool_contract, MCP_OUTPUT_SCHEMA_VERSION};
 use scorchkit::mcp::server::ScorchKitServer;
 use scorchkit::mcp::types::*;
 use scorchkit::storage;
@@ -136,6 +137,13 @@ fn tool_text(result: &rmcp::model::CallToolResult) -> &str {
         || panic!("expected MCP text tool content: {result:?}"),
         |text| text.text.as_str(),
     )
+}
+
+fn tool_structured(result: &rmcp::model::CallToolResult) -> &serde_json::Value {
+    result
+        .structured_content
+        .as_ref()
+        .unwrap_or_else(|| panic!("expected MCP structured tool content: {result:?}"))
 }
 
 /// Verify `scorchkit serve --help` shows the command.
@@ -309,6 +317,33 @@ async fn stateless_job_runs_through_mcp_transport_without_database() {
     });
     let client = ().serve(client_transport).await.expect("initialize MCP client");
     let tools = client.list_all_tools().await.expect("list MCP tools");
+    assert_eq!(tools.len(), 30, "every routed MCP tool has a canonical contract");
+    let expected_output_schema: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/mcp/tool-output-schema-v1.json"))
+            .expect("decode output schema fixture");
+    for tool in &tools {
+        let contract = tool_contract(&tool.name).expect("advertised tool contract");
+        let annotations = tool.annotations.as_ref().expect("complete tool annotations");
+        assert_eq!(
+            annotations.read_only_hint,
+            Some(contract.tool_class == scorchkit::mcp::contract::McpToolClass::Read)
+        );
+        assert_eq!(annotations.destructive_hint, Some(contract.destructive));
+        assert_eq!(annotations.idempotent_hint, Some(contract.idempotent));
+        assert_eq!(annotations.open_world_hint, Some(contract.open_world));
+        assert_eq!(
+            serde_json::to_value(tool.output_schema.as_ref().expect("tool output schema"))
+                .expect("serialize advertised output schema"),
+            expected_output_schema
+        );
+        assert_eq!(
+            tool.meta
+                .as_ref()
+                .and_then(|meta| meta.0.get("scorchkit"))
+                .and_then(|value| value.get("outputSchemaVersion")),
+            Some(&serde_json::json!(MCP_OUTPUT_SCHEMA_VERSION))
+        );
+    }
     assert!(tools.iter().any(|tool| tool.name == "scan_job_start"));
     assert!(tools.iter().any(|tool| tool.name == "scan_job_status"));
     let project_scan = tools
@@ -336,8 +371,16 @@ async fn stateless_job_runs_through_mcp_transport_without_database() {
         .await
         .expect("start job through MCP transport");
     assert_ne!(started_result.is_error, Some(true));
+    let started_structured = tool_structured(&started_result);
+    assert_eq!(started_structured["schemaVersion"], MCP_OUTPUT_SCHEMA_VERSION);
+    assert_eq!(started_structured["tool"], "scan_job_start");
+    assert_eq!(started_structured["toolClass"], "external_effect");
+    assert_eq!(started_structured["outcome"], "success");
+    assert_eq!(started_structured["principal"]["kind"], "local_process");
+    assert_eq!(started_structured["principal"]["clientAttribution"]["trusted"], false);
     let started: scorchkit::runner::job::ScanJob =
         serde_json::from_str(tool_text(&started_result)).expect("decode transport job");
+    assert_eq!(started_structured["result"]["id"], started.id.to_string());
 
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         loop {
@@ -362,6 +405,54 @@ async fn stateless_job_runs_through_mcp_transport_without_database() {
     .expect("transport job completed");
 
     client.cancel().await.expect("close MCP client");
+    server_task.await.expect("server task joined").expect("server transport closed cleanly");
+}
+
+#[tokio::test]
+async fn spoofed_client_attribution_cannot_authorize_an_effect() {
+    let server = unconfigured_test_server();
+    let (server_transport, client_transport) = tokio::io::duplex(1_048_576);
+    let server_task = tokio::spawn(async move {
+        let running = server.serve(server_transport).await.map_err(|error| error.to_string())?;
+        running.waiting().await.map_err(|error| error.to_string())
+    });
+    let client_info = rmcp::model::ClientInfo::new(
+        rmcp::model::ClientCapabilities::default(),
+        Implementation::new("local-administrator", "999.0"),
+    );
+    let client = client_info.serve(client_transport).await.expect("initialize spoofed MCP client");
+    let arguments = serde_json::json!({
+        "target": "http://127.0.0.1:9",
+        "profile": "quick",
+        "modules": "headers"
+    })
+    .as_object()
+    .expect("scan arguments object")
+    .clone();
+    let result = client
+        .call_tool(CallToolRequestParams::new("scan").with_arguments(arguments))
+        .await
+        .expect("routed authorization denial");
+    assert_eq!(result.is_error, Some(true));
+    assert!(tool_text(&result).contains("no engagement authorization"));
+    let structured = tool_structured(&result);
+    assert_eq!(structured["schemaVersion"], MCP_OUTPUT_SCHEMA_VERSION);
+    assert_eq!(structured["tool"], "scan");
+    assert_eq!(structured["toolClass"], "external_effect");
+    assert_eq!(structured["outcome"], "error");
+    assert_eq!(structured["result"], serde_json::Value::Null);
+    assert_eq!(structured["error"]["code"], "tool_execution_failed");
+    assert!(structured["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("no engagement authorization")));
+    assert_eq!(structured["principal"]["kind"], "local_process");
+    assert_eq!(structured["principal"]["subject"], "local-mcp-process");
+    assert_eq!(
+        structured["principal"]["clientAttribution"],
+        serde_json::json!({"name": "local-administrator", "version": "999.0", "trusted": false})
+    );
+
+    client.cancel().await.expect("close spoofed MCP client");
     server_task.await.expect("server task joined").expect("server transport closed cleanly");
 }
 

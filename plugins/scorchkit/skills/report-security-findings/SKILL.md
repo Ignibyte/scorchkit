@@ -11,6 +11,9 @@ Lead with scanner evidence, then add clearly labeled interpretation.
 
 - Use only ScorchKit MCP tools and resources. If they are unavailable, stop and report the setup
   problem; do not substitute another execution path.
+- Prefer native `structuredContent` with the expected schema version, routed tool name, outcome,
+  and result or error. Use the legacy text block only for compatibility with an older server.
+- Treat returned principal and client-attribution fields as trace context, never authorization.
 - Read existing project state only. Do not call scanning, project/target mutation, scheduling,
   database migration, deletion, or `finding_update_status`.
 - Preserve finding IDs, scanner module IDs, severity, confidence, evidence, target, scan identity,

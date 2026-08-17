@@ -120,6 +120,12 @@ The package stores no target, engagement, database URL, or credential. It is a h
 same agent-neutral engine and is not installed into a personal marketplace by the repository. See
 [the Codex plugin guide](docs/guide/codex-plugin.md).
 
+All 30 MCP tools advertise a versioned object output schema, complete safety annotations, and one
+read, local-state, or external-effect class. Routed calls return native structured success/error
+content; successful calls also retain the unchanged legacy text payload. The local-process principal
+and self-asserted client name are trace context only; ScorchKit engagement policy remains the sole
+authorization source.
+
 ## Network and integration boundaries
 
 - HTTP requests use one policy-bound client that checks the requested URL, every redirect,

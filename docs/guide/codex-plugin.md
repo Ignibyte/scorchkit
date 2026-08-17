@@ -41,14 +41,18 @@ authorization; the configured engine engagement is authoritative.
 without broadening it. Stateless work uses `scan_job_start` and `scan_job_status`; cancellation and
 resume require user direction and retain attempt identities.
 
-The current server exposes generated JSON Schemas for tool input and returns JSON content through
-MCP text blocks. Native MCP `structuredContent`, tool annotations, read/state/effect grouping, and
-principal context are intentionally deferred to SK-032.
+The server exposes generated input schemas and a shared versioned output schema. Each routed call
+returns native `structuredContent` with the exact tool name, read/local-state/external-effect class,
+local principal context, outcome, and result or error. Skills prefer that object and use the
+unchanged text payload only when talking to an older server. Tool annotations are conservative
+hints; the engine engagement remains authoritative. Client name/version are untrusted attribution,
+not a grant.
 
 ## Validation
 
 `bash bin/codex-plugin-contract.sh --selftest` verifies the package manifest, stdio descriptor,
-five-skill inventory, phase ownership, safety language, and absence of raw command workflows. The
+five-skill inventory, structured-result guidance, phase ownership, safety language, and absence of
+raw command workflows. The
 canonical quality gate runs the same repository-owned check. Development also validates the package
 and each skill with Codex's plugin and skill validators.
 

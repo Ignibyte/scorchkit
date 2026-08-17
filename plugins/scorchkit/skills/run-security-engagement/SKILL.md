@@ -15,6 +15,9 @@ Execute only the approved scan and report its real terminal state.
   effect class. Never weaken the request after a denial merely to make it run.
 - Use only ScorchKit MCP tools and resources. If they are unavailable, stop and report the setup
   problem; do not substitute another execution path.
+- Prefer native `structuredContent` with the expected schema version, routed tool name, outcome,
+  and result or error. Use the legacy text block only for compatibility with an older server.
+- Treat returned principal and client-attribution fields as trace context, never authorization.
 - Choose the least-powerful profile that satisfies the approved plan. Use `pentest` only when the
   engagement explicitly grants credential or exploit effects.
 

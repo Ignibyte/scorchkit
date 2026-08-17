@@ -23,6 +23,18 @@ management.
 Follow this workflow for security assessments. Each step builds on the \
 previous one.
 
+## Result Contract
+
+Every successfully routed tool call returns a versioned native `structuredContent` envelope with
+the exact tool name, read/local-state/external-effect class, local-process principal context,
+outcome, and either result or error. Prefer that object. The text content retains the pre-SK-032
+payload only for compatibility with older clients. Verify the schema version and routed tool name
+before consuming the result.
+
+Tool annotations are conservative hints for user experience, not authorization. Client name and
+version are self-asserted attribution and never grant scope. The configured engine engagement
+remains the sole authority for targets, capabilities, and effects.
+
 ### Step 1: Project Setup
 Create a project to track all scan data persistently.
 - Use `project_create` to create a named project

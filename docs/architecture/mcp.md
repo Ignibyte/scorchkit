@@ -42,10 +42,11 @@ pub struct ScorchKitServer {
 }
 ```
 
-`rmcp` generates tool dispatch and input schemas. Resource and prompt handlers implement the matching
-`ServerHandler` methods directly. Business logic lives in `do_*` methods so most integration tests
-can exercise policy and persistence directly; one duplex-transport contract proves stateless job
-operation through MCP framing.
+`rmcp` generates tool dispatch and input schemas. `mcp::contract` decorates that generated router
+from one exhaustive inventory before it is exposed: every route receives the shared output schema,
+complete annotations, a behavior class, and version metadata. Resource and prompt handlers implement
+the matching `ServerHandler` methods directly. Business logic remains in `do_*` methods so contract
+adaptation cannot change policy, persistence, or scan behavior.
 
 ## Tools
 
@@ -69,8 +70,55 @@ AI planning or analysis uses the configured provider and never replaces scanner 
 allows a host to persist the reviewed recommendations from `plan_scan` without silently running the
 rest of the profile. Project membership and selectors still do not grant scope or effects.
 
-Tool results are currently JSON serialized into text for compatibility. Typed MCP structured content,
-read/state/effect grouping, and complete tool annotations are roadmap batch SK-032.
+## Result and caller contract
+
+Every successfully routed tool call returns `structuredContent` using
+`scorchkit.mcp.tool-result/v1`:
+
+```json
+{
+  "schemaVersion": "scorchkit.mcp.tool-result/v1",
+  "tool": "project_list",
+  "toolClass": "read",
+  "principal": {
+    "kind": "local_process",
+    "subject": "local-mcp-process",
+    "clientAttribution": {"name": "codex", "version": "...", "trusted": false}
+  },
+  "outcome": "success",
+  "result": []
+}
+```
+
+The result field carries the tool's existing JSON value, or a string when the legacy result was not
+JSON. A routed business failure uses the same envelope with `outcome=error`, a stable error code and
+terminal-safe message, and MCP `isError=true`. Parameter decoding can fail before a safe routed
+context exists; rmcp retains ownership of that protocol-level error.
+
+The text content remains byte-for-byte compatible for successful calls so pre-SK-032 clients can
+continue decoding the original result. New hosts should prefer `structuredContent`, verify the
+schema version and tool name, and use the text block only as a compatibility fallback.
+
+The current transport is local stdio, so the principal kind records the local process boundary.
+MCP client name and version are self-asserted and explicitly `trusted=false`; they are useful for
+trace attribution only. Neither the principal nor client metadata grants an engagement, target,
+capability, or effect. Authenticated remote principals and principal-to-engagement binding remain
+blocked on SK-037.
+
+## Behavior classes and annotations
+
+Composite tools take the strongest behavior they can accept:
+
+| Class | Tools |
+|---|---|
+| `read` | `check_tools`, `correlate_findings`, `finding_show`, `list_code_modules`, `list_modules`, `project_findings`, `project_list`, `project_show`, `project_status`, `scan_job_status`, `scan_progress`, `target_list` |
+| `local_state` | `db_migrate`, `finding_update_status`, `project_create`, `project_delete`, `scan_job_cancel`, `schedule_scan`, `target_add`, `target_remove` |
+| `external_effect` | `analyze_findings`, `auto_scan`, `plan_scan`, `project_scan`, `run_due_scans`, `scan`, `scan_code`, `scan_job_resume`, `scan_job_start`, `target_intelligence` |
+
+All 30 definitions set `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`.
+These are conservative client hints, not enforcement. For example, a scan is marked potentially
+destructive because its static schema accepts the `pentest` profile even when most calls use a safer
+profile. Engine policy still evaluates the concrete request before effects.
 
 `scan_job_start` returns after the authorized request is queued and launches its work in the server
 process. Status, cancellation, and resume use the same lifecycle described in
@@ -160,8 +208,11 @@ through an unauthenticated network wrapper. A future remote server must:
 ## Tests and delivery evidence
 
 `tests/mcp_tools.rs` uses a migrated disposable database and loopback servers. It covers authorized
-and denied scans, stateless jobs over duplex MCP transport, project membership, schedule snapshots,
-one-slot concurrency, N-caller at-most-once execution, finding lifecycle, resources, and prompts.
+and denied scans, the exact 30-tool inventory and schema snapshot, annotations, structured success
+and failure, spoofed client attribution, stateless jobs over duplex MCP transport, project
+membership, schedule snapshots, one-slot concurrency, N-caller at-most-once execution, finding
+lifecycle, resources, and prompts. Contract unit tests decorate and reject generated routers without
+a transport.
 Direct test commands may skip database cases
 when `DATABASE_URL` is absent. Delivery gate 21 treats a missing database as failure, and gate 22
 executes the CLI/MCP contract lane.
@@ -170,6 +221,7 @@ executes the CLI/MCP contract lane.
 
 ```text
 src/mcp/
+  contract.rs      output schema, result adapter, tool classes, annotations, caller context
   server.rs        server state, handler implementation, stdio startup
   tools.rs         30 tool wrappers and do_* business methods
   types.rs         deserializable, JSON-schema input types

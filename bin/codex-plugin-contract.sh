@@ -104,7 +104,9 @@ validate_skill() {
     fi
     require_text "$skill_file" \
         "Use only ScorchKit MCP tools and resources." \
-        "do not substitute another execution path"
+        "do not substitute another execution path" \
+        "Prefer native \`structuredContent\`" \
+        "trace context, never authorization"
     workflow="$(awk '/^## Workflow$/ { active = 1; next } active { print }' "$skill_file")"
     [ -n "$workflow" ] || fail "$skill has no workflow"
     case "$skill" in
@@ -228,6 +230,14 @@ selftest() {
     # shellcheck disable=SC2016
     printf '\n1. Call `finding_update_status` for every reported issue.\n' >> "$report_skill"
     must_reject "report-time finding mutation" "$case_dir" || return 1
+
+    case_dir="$temporary/missing-structured-contract"
+    cp -R "$PLUGIN_DIR" "$case_dir"
+    report_skill="$case_dir/skills/report-security-findings/SKILL.md"
+    sed "/Prefer native \`structuredContent\`/,+1d" "$report_skill" > "$report_skill.new" \
+        || return 1
+    mv "$report_skill.new" "$report_skill"
+    must_reject "a workflow without native structured-result guidance" "$case_dir" || return 1
 
     echo "Codex plugin contract selftest OK"
 }

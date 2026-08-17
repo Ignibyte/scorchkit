@@ -11,6 +11,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use uuid::Uuid;
 
+use super::contract::{McpCallContext, McpToolCallResult};
 use super::server::ScorchKitServer;
 use super::types::{
     AnalyzeFindingsParams, AutoScanParams, CorrelateFindingsParams, FindingListParams,
@@ -1025,16 +1026,16 @@ impl ScorchKitServer {
     #[tool(description = "List all available scan modules with their categories, descriptions, \
         and external tool requirements. Use this first to understand what scanning capabilities \
         are available. Returns JSON array. Use check_tools to verify external tool installation.")]
-    async fn list_modules(&self) -> String {
-        self.do_list_modules()
+    async fn list_modules(&self, context: McpCallContext) -> McpToolCallResult {
+        Self::mcp_tool_result(context, Ok(self.do_list_modules()))
     }
 
     #[tool(description = "Check which external security tools (nmap, nuclei, sqlmap, etc.) are \
         installed on the system. Call this before using the 'thorough' scan profile to know \
         which external tool wrappers will be available. Returns JSON array with tool name and \
         installed status.")]
-    async fn check_tools(&self) -> String {
-        self.do_check_tools()
+    async fn check_tools(&self, context: McpCallContext) -> McpToolCallResult {
+        Self::mcp_tool_result(context, Ok(self.do_check_tools()))
     }
 
     #[tool(description = "Run a security scan against a target URL without project persistence. \
@@ -1044,15 +1045,23 @@ impl ScorchKitServer {
         modules. Use 'modules' to run only specific module IDs, or 'skip' to exclude specific \
         ones. Prefer project_scan when you want results persisted and deduplicated. Returns \
         JSON with findings array, summary statistics, and scan metadata.")]
-    async fn scan(&self, params: Parameters<ScanParams>) -> Result<String, String> {
-        self.do_scan(params.0).await
+    async fn scan(
+        &self,
+        context: McpCallContext,
+        params: Parameters<ScanParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_scan(params.0).await)
     }
 
     #[tool(description = "Start an authorized DAST scan as a cancellable background job. Returns \
         the queued job record immediately. Poll scan_job_status with the returned id; use \
         scan_job_cancel to stop work. PostgreSQL is optional for stateless MCP sessions.")]
-    async fn scan_job_start(&self, params: Parameters<ScanParams>) -> Result<String, String> {
-        self.do_scan_job_start(params.0).await
+    async fn scan_job_start(
+        &self,
+        context: McpCallContext,
+        params: Parameters<ScanParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_scan_job_start(params.0).await)
     }
 
     #[tool(
@@ -1061,9 +1070,10 @@ impl ScorchKitServer {
     )]
     async fn scan_job_status(
         &self,
+        context: McpCallContext,
         params: Parameters<ScanJobRefParams>,
-    ) -> Result<String, String> {
-        self.do_scan_job_status(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_scan_job_status(params.0).await)
     }
 
     #[tool(
@@ -1072,18 +1082,20 @@ impl ScorchKitServer {
     )]
     async fn scan_job_cancel(
         &self,
+        context: McpCallContext,
         params: Parameters<ScanJobRefParams>,
-    ) -> Result<String, String> {
-        self.do_scan_job_cancel(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_scan_job_cancel(params.0).await)
     }
 
     #[tool(description = "Resume an interrupted scan job under the current unchanged engagement. \
         Creates a linked successor attempt and skips modules whose findings were durably committed.")]
     async fn scan_job_resume(
         &self,
+        context: McpCallContext,
         params: Parameters<ScanJobRefParams>,
-    ) -> Result<String, String> {
-        self.do_scan_job_resume(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_scan_job_resume(params.0).await)
     }
 
     #[tool(description = "AI-guided scan planning: runs recon modules first to gather target \
@@ -1092,8 +1104,12 @@ impl ScorchKitServer {
         rationale — does NOT execute the scan. Review the plan, then use project_scan with the \
         recommended modules. Requires AI to be enabled in config. Falls back gracefully if \
         the configured provider is unavailable.")]
-    async fn plan_scan(&self, params: Parameters<PlanScanParams>) -> Result<String, String> {
-        self.do_plan_scan(params.0).await
+    async fn plan_scan(
+        &self,
+        context: McpCallContext,
+        params: Parameters<PlanScanParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_plan_scan(params.0).await)
     }
 
     #[tool(description = "Create a new security assessment project for tracking scans, findings, \
@@ -1102,9 +1118,10 @@ impl ScorchKitServer {
         target_add to register URLs to scan. Returns the created project as JSON with its UUID.")]
     async fn project_create(
         &self,
+        context: McpCallContext,
         params: Parameters<ProjectCreateParams>,
-    ) -> Result<String, String> {
-        self.do_project_create(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_project_create(params.0).await)
     }
 
     #[tool(
@@ -1112,8 +1129,8 @@ impl ScorchKitServer {
         before creating a new one. Returns JSON array of projects with name, description, and \
         timestamps. You can reference projects by name (not UUID) in all other project tools."
     )]
-    async fn project_list(&self) -> Result<String, String> {
-        self.do_project_list().await
+    async fn project_list(&self, context: McpCallContext) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_project_list().await)
     }
 
     #[tool(
@@ -1122,8 +1139,12 @@ impl ScorchKitServer {
         analyzing findings. Accepts project name or UUID. Returns JSON with project metadata, \
         targets array, scan count, finding count, and the 5 most recent scans."
     )]
-    async fn project_show(&self, params: Parameters<ProjectRefParams>) -> Result<String, String> {
-        self.do_project_show(params.0).await
+    async fn project_show(
+        &self,
+        context: McpCallContext,
+        params: Parameters<ProjectRefParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_project_show(params.0).await)
     }
 
     #[tool(description = "Delete a project and ALL associated data (targets, scans, findings, \
@@ -1132,9 +1153,10 @@ impl ScorchKitServer {
         a project.")]
     async fn project_delete(
         &self,
+        context: McpCallContext,
         params: Parameters<ProjectDeleteParams>,
-    ) -> Result<String, String> {
-        self.do_project_delete(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_project_delete(params.0).await)
     }
 
     #[tool(description = "Run a security scan within a project, automatically persisting results \
@@ -1145,8 +1167,12 @@ impl ScorchKitServer {
         explicit credential/exploit grants. Use modules for approved plan_scan recommendations \
         and skip for exclusions. Returns JSON with scan ID, actual run/skipped module lists, finding \
         counts (total, new, updated), and summary.")]
-    async fn project_scan(&self, params: Parameters<ProjectScanParams>) -> Result<String, String> {
-        self.do_project_scan(params.0).await
+    async fn project_scan(
+        &self,
+        context: McpCallContext,
+        params: Parameters<ProjectScanParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_project_scan(params.0).await)
     }
 
     #[tool(
@@ -1158,17 +1184,22 @@ impl ScorchKitServer {
     )]
     async fn project_findings(
         &self,
+        context: McpCallContext,
         params: Parameters<FindingListParams>,
-    ) -> Result<String, String> {
-        self.do_project_findings(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_project_findings(params.0).await)
     }
 
     #[tool(description = "Show full details for a single vulnerability finding by UUID. Use when \
         you need the complete evidence, remediation guidance, OWASP category, CWE ID, and raw \
         finding data for a specific issue. Get finding UUIDs from project_findings. Returns \
         JSON with all finding fields.")]
-    async fn finding_show(&self, params: Parameters<FindingRefParams>) -> Result<String, String> {
-        self.do_finding_show(params.0).await
+    async fn finding_show(
+        &self,
+        context: McpCallContext,
+        params: Parameters<FindingRefParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_finding_show(params.0).await)
     }
 
     #[tool(description = "Update the lifecycle status of a vulnerability finding. Transition \
@@ -1178,24 +1209,33 @@ impl ScorchKitServer {
         Returns confirmation with the new status.")]
     async fn finding_update_status(
         &self,
+        context: McpCallContext,
         params: Parameters<FindingUpdateStatusParams>,
-    ) -> Result<String, String> {
-        self.do_finding_update_status(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_finding_update_status(params.0).await)
     }
 
     #[tool(description = "Add a target URL to a project for tracking. Targets represent the URLs \
         that will be scanned within a project. Add targets before running project_scan. Each \
         target can have an optional human-readable label. Returns the created target with its \
         UUID.")]
-    async fn target_add(&self, params: Parameters<TargetAddParams>) -> Result<String, String> {
-        self.do_target_add(params.0).await
+    async fn target_add(
+        &self,
+        context: McpCallContext,
+        params: Parameters<TargetAddParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_target_add(params.0).await)
     }
 
     #[tool(description = "List all registered target URLs for a project. Use to see what targets \
         are configured before scanning. Returns JSON array of targets with URL, label, and \
         creation timestamp.")]
-    async fn target_list(&self, params: Parameters<ProjectRefParams>) -> Result<String, String> {
-        self.do_target_list(params.0).await
+    async fn target_list(
+        &self,
+        context: McpCallContext,
+        params: Parameters<ProjectRefParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_target_list(params.0).await)
     }
 
     #[tool(
@@ -1204,9 +1244,10 @@ impl ScorchKitServer {
     )]
     async fn target_remove(
         &self,
+        context: McpCallContext,
         params: Parameters<TargetRemoveParams>,
-    ) -> Result<String, String> {
-        self.do_target_remove(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_target_remove(params.0).await)
     }
 
     #[tool(
@@ -1214,8 +1255,8 @@ impl ScorchKitServer {
         this on first use before any project or scan operations. Safe to call multiple times — \
         already-applied migrations are skipped. Returns success confirmation."
     )]
-    async fn db_migrate(&self) -> Result<String, String> {
-        self.do_db_migrate().await
+    async fn db_migrate(&self, context: McpCallContext) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_db_migrate().await)
     }
 
     #[tool(
@@ -1227,17 +1268,18 @@ impl ScorchKitServer {
     )]
     async fn schedule_scan(
         &self,
+        context: McpCallContext,
         params: Parameters<ScheduleScanParams>,
-    ) -> Result<String, String> {
-        self.do_schedule_scan(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_schedule_scan(params.0).await)
     }
 
     #[tool(description = "Execute all scan schedules that are currently due. This is an explicit \
         trigger, not a background daemon — call it when you want overdue schedules to run. \
         Each schedule runs independently; individual failures don't abort the batch. Returns \
         JSON with execution count and per-schedule results.")]
-    async fn run_due_scans(&self) -> Result<String, String> {
-        self.do_run_due_scans().await
+    async fn run_due_scans(&self, context: McpCallContext) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_run_due_scans().await)
     }
 
     #[tool(description = "Get security posture metrics and trend analysis for a project. Returns \
@@ -1247,9 +1289,10 @@ impl ScorchKitServer {
         severity. Use after scanning to assess overall security health. Returns structured JSON.")]
     async fn project_status(
         &self,
+        context: McpCallContext,
         params: Parameters<ProjectStatusParams>,
-    ) -> Result<String, String> {
-        self.do_project_status(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_project_status(params.0).await)
     }
 
     #[tool(
@@ -1262,9 +1305,10 @@ impl ScorchKitServer {
     )]
     async fn analyze_findings(
         &self,
+        context: McpCallContext,
         params: Parameters<AnalyzeFindingsParams>,
-    ) -> Result<String, String> {
-        self.do_analyze_findings(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_analyze_findings(params.0).await)
     }
 
     #[tool(description = "Run a complete security scan in one call. Parses the target, applies \
@@ -1273,8 +1317,12 @@ impl ScorchKitServer {
         it when you want results fast without manually composing scan + project_scan. Does NOT \
         include AI planning or analysis — compose with plan_scan and analyze_findings for a full \
         AI-driven engagement. Returns JSON with scan summary, finding counts, and top findings.")]
-    async fn auto_scan(&self, params: Parameters<AutoScanParams>) -> Result<String, String> {
-        self.do_auto_scan(params.0).await
+    async fn auto_scan(
+        &self,
+        context: McpCallContext,
+        params: Parameters<AutoScanParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_auto_scan(params.0).await)
     }
 
     #[tool(description = "Gather consolidated target intelligence using recon-only modules. Runs \
@@ -1285,9 +1333,10 @@ impl ScorchKitServer {
         organized by module.")]
     async fn target_intelligence(
         &self,
+        context: McpCallContext,
         params: Parameters<TargetIntelligenceParams>,
-    ) -> Result<String, String> {
-        self.do_target_intelligence(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_target_intelligence(params.0).await)
     }
 
     #[tool(description = "Check the status of the most recent scan for a project. Returns the \
@@ -1297,9 +1346,10 @@ impl ScorchKitServer {
         review results.")]
     async fn scan_progress(
         &self,
+        context: McpCallContext,
         params: Parameters<ScanProgressParams>,
-    ) -> Result<String, String> {
-        self.do_scan_progress(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_scan_progress(params.0).await)
     }
 
     #[tool(description = "Correlate project findings into attack chains. Analyzes all findings \
@@ -1310,9 +1360,10 @@ impl ScorchKitServer {
         how individual findings relate and prioritize fixes by attack path impact.")]
     async fn correlate_findings(
         &self,
+        context: McpCallContext,
         params: Parameters<CorrelateFindingsParams>,
-    ) -> Result<String, String> {
-        self.do_correlate_findings(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_correlate_findings(params.0).await)
     }
 
     #[tool(
@@ -1322,8 +1373,8 @@ impl ScorchKitServer {
         Returns JSON array with module id, name, category (sast/sca/secrets/iac/container), \
         supported languages, and tool requirements."
     )]
-    async fn list_code_modules(&self) -> String {
-        self.do_list_code_modules()
+    async fn list_code_modules(&self, context: McpCallContext) -> McpToolCallResult {
+        Self::mcp_tool_result(context, Ok(self.do_list_code_modules()))
     }
 
     #[tool(description = "Run SAST (Static Application Security Testing) on source code at the \
@@ -1335,9 +1386,10 @@ impl ScorchKitServer {
         findings array and scan metadata, same format as the scan tool.")]
     async fn scan_code(
         &self,
+        context: McpCallContext,
         params: Parameters<super::types::CodeScanParams>,
-    ) -> Result<String, String> {
-        self.do_scan_code(params.0).await
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_scan_code(params.0).await)
     }
 }
 
@@ -1406,11 +1458,13 @@ mod tests {
         let server = job_server();
         let cancelled_job = server.jobs.submit(job_request(&server)).await.expect("submit cancel");
         let cancelled_json = server
-            .scan_job_cancel(Parameters(ScanJobRefParams { job_id: cancelled_job.id.to_string() }))
-            .await
-            .expect("cancel through tool wrapper");
+            .scan_job_cancel(
+                McpCallContext::test("scan_job_cancel"),
+                Parameters(ScanJobRefParams { job_id: cancelled_job.id.to_string() }),
+            )
+            .await;
         let cancelled: ScanJob =
-            serde_json::from_str(&cancelled_json).expect("decode cancellation");
+            serde_json::from_str(cancelled_json.legacy_text()).expect("decode cancellation");
         assert_eq!(cancelled.id, cancelled_job.id);
         assert_eq!(cancelled.state, ScanJobState::Cancelled);
 
@@ -1431,10 +1485,13 @@ mod tests {
         assert_eq!(recovered.len(), 1);
 
         let resumed_json = server
-            .scan_job_resume(Parameters(ScanJobRefParams { job_id: abandoned.id.to_string() }))
-            .await
-            .expect("resume through tool wrapper");
-        let resumed: ScanJob = serde_json::from_str(&resumed_json).expect("decode resumed job");
+            .scan_job_resume(
+                McpCallContext::test("scan_job_resume"),
+                Parameters(ScanJobRefParams { job_id: abandoned.id.to_string() }),
+            )
+            .await;
+        let resumed: ScanJob =
+            serde_json::from_str(resumed_json.legacy_text()).expect("decode resumed job");
         assert_eq!(resumed.parent_job_id, Some(abandoned.id));
         assert_eq!(resumed.state, ScanJobState::Queued);
     }

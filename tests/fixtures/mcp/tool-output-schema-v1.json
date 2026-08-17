@@ -1,0 +1,66 @@
+{
+  "$defs": {
+    "McpClientAttribution": {
+      "description": "Untrusted MCP client implementation attribution.",
+      "properties": {
+        "name": {"description": "Self-asserted implementation name from MCP initialization.", "type": "string"},
+        "trusted": {"description": "Always false for initialization metadata; it is not authentication evidence.", "type": "boolean"},
+        "version": {"description": "Self-asserted implementation version from MCP initialization.", "type": "string"}
+      },
+      "required": ["name", "version", "trusted"],
+      "type": "object"
+    },
+    "McpPrincipalContext": {
+      "description": "Caller context attached to every successfully routed local MCP call.",
+      "properties": {
+        "clientAttribution": {
+          "anyOf": [{"$ref": "#/$defs/McpClientAttribution"}, {"type": "null"}],
+          "description": "Self-asserted client metadata, kept separate from the transport principal."
+        },
+        "kind": {"description": "Transport-derived principal kind. SK-032 supports only `local_process`.", "type": "string"},
+        "subject": {"description": "Stable subject for the local-process trust boundary.", "type": "string"}
+      },
+      "required": ["kind", "subject"],
+      "type": "object"
+    },
+    "McpToolClass": {
+      "description": "The strongest behavior a tool can perform.",
+      "oneOf": [
+        {"const": "read", "description": "Observes `ScorchKit` or local process state without changing it or starting external work.", "type": "string"},
+        {"const": "local_state", "description": "Changes ScorchKit-owned state without starting new target or provider work.", "type": "string"},
+        {"const": "external_effect", "description": "May contact targets, launch tools/providers, or otherwise create external effects.", "type": "string"}
+      ]
+    },
+    "McpToolError": {
+      "description": "Caller-visible details for a routed MCP tool failure.",
+      "properties": {
+        "code": {"description": "Stable machine-readable error category.", "type": "string"},
+        "message": {"description": "Terminal-safe caller-visible error message.", "type": "string"}
+      },
+      "required": ["code", "message"],
+      "type": "object"
+    },
+    "McpToolOutcome": {
+      "description": "Stable outcome discriminator for structured MCP tool results.",
+      "oneOf": [
+        {"const": "success", "description": "The routed tool completed successfully.", "type": "string"},
+        {"const": "error", "description": "The routed tool returned a caller-visible business error.", "type": "string"}
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "error": {
+      "anyOf": [{"$ref": "#/$defs/McpToolError"}, {"type": "null"}],
+      "description": "Caller-visible error for a failed routed call."
+    },
+    "outcome": {"$ref": "#/$defs/McpToolOutcome", "description": "Success or error discriminator."},
+    "principal": {"$ref": "#/$defs/McpPrincipalContext", "description": "Transport-derived caller context; never an authorization grant."},
+    "result": {"description": "Parsed legacy JSON result or plain string for a successful call."},
+    "schemaVersion": {"description": "Structured result schema version.", "type": "string"},
+    "tool": {"description": "Exact routed MCP tool name.", "type": "string"},
+    "toolClass": {"$ref": "#/$defs/McpToolClass", "description": "Strongest behavior class for the routed tool."}
+  },
+  "required": ["schemaVersion", "tool", "toolClass", "principal", "outcome"],
+  "type": "object"
+}

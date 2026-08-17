@@ -15,6 +15,9 @@ Verify with a comparable scan; never equate a claimed fix with evidence.
   registered project target. Do not broaden scope or profile to obtain a result.
 - Use only ScorchKit MCP tools and resources. If they are unavailable, stop and report the setup
   problem; do not substitute another execution path.
+- Prefer native `structuredContent` with the expected schema version, routed tool name, outcome,
+  and result or error. Use the legacy text block only for compatibility with an older server.
+- Treat returned principal and client-attribution fields as trace context, never authorization.
 - Call `finding_update_status` only after the follow-up evidence supports the transition and the
   user's verification request covers that finding.
 
