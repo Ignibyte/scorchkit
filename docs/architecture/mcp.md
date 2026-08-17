@@ -65,12 +65,20 @@ The current server exposes 30 tools.
 Credential and exploit modules are available only through `pentest` with explicit engagement grants.
 AI planning or analysis uses the configured provider and never replaces scanner evidence.
 
+`project_scan` accepts optional `modules` and `skip` selectors after the profile is authorized. This
+allows a host to persist the reviewed recommendations from `plan_scan` without silently running the
+rest of the profile. Project membership and selectors still do not grant scope or effects.
+
 Tool results are currently JSON serialized into text for compatibility. Typed MCP structured content,
 read/state/effect grouping, and complete tool annotations are roadmap batch SK-032.
 
 `scan_job_start` returns after the authorized request is queued and launches its work in the server
 process. Status, cancellation, and resume use the same lifecycle described in
 `docs/architecture/jobs.md`. The synchronous `scan` tool remains a compatibility wrapper.
+
+The repository-owned Codex package at `plugins/scorchkit` declares this server and five focused MCP
+workflows. It stores no configuration values and adds no authorization path. See
+[the Codex plugin guide](../guide/codex-plugin.md).
 
 ## Resources
 

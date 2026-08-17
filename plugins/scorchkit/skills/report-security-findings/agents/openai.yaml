@@ -1,0 +1,4 @@
+interface:
+  display_name: "Report Security Findings"
+  short_description: "Report ScorchKit evidence and risk clearly"
+  default_prompt: "Use $report-security-findings to report the findings from my ScorchKit project."

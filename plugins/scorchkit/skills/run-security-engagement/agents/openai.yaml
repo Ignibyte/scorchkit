@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Security Engagement"
+  short_description: "Run an authorized ScorchKit security scan"
+  default_prompt: "Use $run-security-engagement to run my authorized ScorchKit assessment."

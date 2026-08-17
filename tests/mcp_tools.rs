@@ -311,6 +311,17 @@ async fn stateless_job_runs_through_mcp_transport_without_database() {
     let tools = client.list_all_tools().await.expect("list MCP tools");
     assert!(tools.iter().any(|tool| tool.name == "scan_job_start"));
     assert!(tools.iter().any(|tool| tool.name == "scan_job_status"));
+    let project_scan = tools
+        .iter()
+        .find(|tool| tool.name == "project_scan")
+        .expect("project_scan tool is advertised");
+    let properties = project_scan
+        .input_schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .expect("project_scan input properties");
+    assert!(properties.contains_key("modules"));
+    assert!(properties.contains_key("skip"));
 
     let arguments = serde_json::json!({
         "target": target.url("/"),
@@ -514,13 +525,45 @@ async fn test_tool_project_scan() {
         project: name.clone(),
         target: target.url("/"),
         profile: "quick".to_string(),
+        modules: Some("headers,tech,cors".to_string()),
+        skip: Some("tech".to_string()),
     };
     let result = server.do_project_scan(params).await;
     assert!(result.is_ok(), "loopback project scan should succeed: {result:?}");
+    let response: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+    assert_eq!(response["modules_run"], serde_json::json!(["headers"]));
+    assert_eq!(response["modules_skipped"], serde_json::json!([]));
     let persisted = storage::scans::list_scans(&pool, project.id).await.unwrap();
     assert_eq!(persisted.len(), 1, "project scan should persist exactly one scan record");
+    assert_eq!(persisted[0].modules_run, vec!["headers"], "project scan must apply plan selectors");
 
     // Cleanup
+    storage::projects::delete_project(&pool, project.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_tool_project_scan_denies_without_engagement() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let name = unique_name("mcp-pscan-no-engagement");
+    let project = storage::projects::create_project(&pool, &name, "").await.unwrap();
+    let target = "http://127.0.0.1:9";
+    storage::projects::add_target(&pool, project.id, target, "must-not-connect").await.unwrap();
+    let server = ScorchKitServer::new(Arc::new(AppConfig::default()), pool.clone());
+
+    let result = server
+        .do_project_scan(ProjectScanParams {
+            project: name,
+            target: target.to_string(),
+            profile: "quick".to_string(),
+            modules: Some("headers".to_string()),
+            skip: None,
+        })
+        .await;
+    assert!(
+        result.is_err_and(|error| error.contains("no engagement authorization")),
+        "persisted MCP scans must fail closed before loopback I/O without an engagement"
+    );
+
     storage::projects::delete_project(&pool, project.id).await.unwrap();
 }
 
@@ -536,6 +579,8 @@ async fn test_tool_project_scan_rejects_unregistered_target() {
             project: name,
             target: "http://127.0.0.1:9".to_string(),
             profile: "quick".to_string(),
+            modules: Some("headers".to_string()),
+            skip: None,
         })
         .await;
     assert!(

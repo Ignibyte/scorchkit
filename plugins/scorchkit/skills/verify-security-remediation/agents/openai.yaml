@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify Security Remediation"
+  short_description: "Verify ScorchKit fixes with follow-up evidence"
+  default_prompt: "Use $verify-security-remediation to verify fixes in my ScorchKit project."

@@ -294,6 +294,12 @@ impl ScorchKitServer {
         let mut orchestrator = Orchestrator::new(ctx);
         orchestrator.register_default_modules();
         orchestrator.apply_profile(&params.profile);
+        if let Some(modules) = params.modules.as_deref() {
+            orchestrator.filter_by_ids(&comma_separated(modules));
+        }
+        if let Some(skip) = params.skip.as_deref() {
+            orchestrator.exclude_by_ids(&comma_separated(skip));
+        }
 
         let result = orchestrator.run(true).await.map_err(|e| e.to_string())?;
 
@@ -325,6 +331,8 @@ impl ScorchKitServer {
             "scan_id": scan.id,
             "project": project.name,
             "target": result.target.url.as_str(),
+            "modules_run": modules_run,
+            "modules_skipped": modules_skipped,
             "findings_total": result.findings.len(),
             "findings_new": new_count,
             "findings_updated": result.findings.len() - new_count,
@@ -1134,8 +1142,9 @@ impl ScorchKitServer {
         again increments seen_count instead of creating a duplicate. This is the primary \
         scanning tool for tracked assessments. Use profile 'quick' for recon, 'standard' for \
         built-in assessment, 'thorough' for a non-restricted deep dive, or 'pentest' only with \
-        explicit credential/exploit grants. Returns JSON with scan ID, finding counts \
-        (total, new, updated), and summary.")]
+        explicit credential/exploit grants. Use modules for approved plan_scan recommendations \
+        and skip for exclusions. Returns JSON with scan ID, actual run/skipped module lists, finding \
+        counts (total, new, updated), and summary.")]
     async fn project_scan(&self, params: Parameters<ProjectScanParams>) -> Result<String, String> {
         self.do_project_scan(params.0).await
     }

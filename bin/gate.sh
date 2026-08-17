@@ -280,7 +280,8 @@ metadata_format_gate() {
         [ -f "$toml_file" ] || continue
         taplo fmt --check "$toml_file" || return 1
     done < <(git ls-files --cached --others --exclude-standard -- '*.toml')
-    typos
+    typos || return 1
+    bash bin/codex-plugin-contract.sh --selftest
 }
 
 semgrep_gate() {

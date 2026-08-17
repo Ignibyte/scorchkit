@@ -84,6 +84,22 @@ The supported transport is local stdio. ScorchKit does not ship remote MCP trans
 transport must bind an authenticated principal to an engagement and define host validation and TLS
 termination before it can execute scans.
 
+## Codex plugin
+
+`plugins/scorchkit` is the preferred host package. Its standard plugin manifest points to the local
+stdio MCP server and bundles five phase-specific skills for preparation, planning, execution,
+reporting, and remediation verification. The skills call MCP tools directly and stop when that
+interface is unavailable; they do not teach Codex a second command-driven execution path.
+
+The package contains no engagement or credential values and does not create a marketplace entry.
+Its `DATABASE_URL` declaration is a named environment pass-through, not a stored value. Runtime
+configuration and authorization still come from `AppConfig`. The package is therefore an adapter
+over the host-neutral MCP boundary, not a dependency of `engine`, `runner`, `storage`, or `ai`.
+
+The plugin consumes generated MCP input schemas and JSON content. Native MCP structured results,
+annotations, tool-class separation, and principal context remain the SK-032 transport contract.
+See [the Codex plugin guide](../guide/codex-plugin.md) for the operator-facing workflow.
+
 ## Development host
 
 Codex discovers `.agents/skills/scorchkit-pipeline/SKILL.md` for repository changes. That skill is a

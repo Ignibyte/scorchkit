@@ -5,6 +5,12 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Codex-first plugin and workflow skills (TICKET-005 / SK-031)** — Added a repository-owned
+  ScorchKit plugin with local stdio MCP startup and focused skills for engagement preparation,
+  planning, execution, reporting, and remediation verification. Skills use MCP directly, preserve
+  engine-owned authorization, separate scanner evidence from AI interpretation, and contain no raw
+  command workflow. Added repository package validation and optional module/skip selectors for
+  persisted `project_scan` execution of approved plans.
 - **Typed AI provider contracts (TICKET-004 / SK-030)** — Replaced raw system/user generation with
   provider-neutral planning, analysis, correlation, and remediation methods. Added required
   `scorchkit.ai/v1` task envelopes, exact schema/task validation, typed errors, shared Codex and

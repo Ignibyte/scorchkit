@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "scorchkit": {
+      "command": "scorchkit",
+      "args": ["serve"],
+      "env_vars": ["DATABASE_URL"],
+      "tool_timeout_sec": 3600
+    }
+  }
+}

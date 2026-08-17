@@ -86,6 +86,11 @@ pub struct ProjectScanParams {
     /// authorized credential/exploit modules. Defaults to "standard".
     #[serde(default = "default_profile")]
     pub profile: String,
+    /// Comma-separated module IDs to run within the authorized profile. Omit to run the complete
+    /// profile. Use validated IDs returned by `plan_scan` or `list_modules`.
+    pub modules: Option<String>,
+    /// Comma-separated module IDs to exclude after profile and include filtering.
+    pub skip: Option<String>,
 }
 
 /// Parameters for adding a target to a project.

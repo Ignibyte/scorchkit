@@ -47,6 +47,8 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-clippy-before-mutation-seal-001` | Run strict all-target Clippy after mutation assertions and before sealing the current-tree mutation hash. | `AAR-003-scan-job-lifecycle` |
 | `PR-scorchkit-provider-consumption-validation-001` | Revalidate public provider envelopes and request-bound invariants where workflows consume them, regardless of adapter validation. | `AAR-004-typed-ai-provider-contracts` |
 | `PR-scorchkit-green-baseline-reuse-001` | Reuse a completed green DIFF/FULL mutation result only when raw outcomes prove zero misses and the exact mutation-input hash is unchanged. | `AAR-004-typed-ai-provider-contracts` |
+| `PR-scorchkit-host-workflow-tool-contract-001` | Bind every host-workflow input and output claim to the advertised MCP schema, immediate tool result, and an executing transport test. | `AAR-005-codex-first-plugin` |
+| `PR-scorchkit-semantic-token-policy-check-001` | Enforce static phase boundaries on protected tool/effect tokens independently of surrounding prose, and prove alternate wording fails. | `AAR-005-codex-first-plugin` |
 
 ## Register
 
@@ -76,3 +78,5 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-focused-evidence-ticket-coupling-001` | process failure | `AAR-003-scan-job-lifecycle` |
 | `BF-scorchkit-provider-envelope-bypass-001` | contract bug | `AAR-004-typed-ai-provider-contracts` |
 | `BF-scorchkit-empty-survivor-proof-gap-001` | process failure | `AAR-004-typed-ai-provider-contracts` |
+| `BF-scorchkit-project-scan-contract-gap-001` | contract bug | `AAR-005-codex-first-plugin` |
+| `BF-scorchkit-plugin-phase-verb-bypass-001` | test gap | `AAR-005-codex-first-plugin` |

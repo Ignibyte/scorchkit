@@ -108,6 +108,18 @@ scorchkit run https://owned.example --profile quick --analyze
 scorchkit analyze report.json --focus prioritize
 ```
 
+## Codex plugin
+
+The repository-owned package at `plugins/scorchkit` gives Codex five focused MCP workflows for
+engagement preparation, planning, execution, reporting, and remediation verification. Operational
+skills use the local stdio MCP server directly and stop when it is unavailable. They do not treat a
+prompt, project, target registration, or plan as authorization and do not fall back to a
+terminal-driven scan.
+
+The package stores no target, engagement, database URL, or credential. It is a host adapter over the
+same agent-neutral engine and is not installed into a personal marketplace by the repository. See
+[the Codex plugin guide](docs/guide/codex-plugin.md).
+
 ## Network and integration boundaries
 
 - HTTP requests use one policy-bound client that checks the requested URL, every redirect,
@@ -154,6 +166,7 @@ Read [CONSTITUTION.md](CONSTITUTION.md), [AGENTS.md](AGENTS.md), and the
 - [Getting started](docs/guide/getting-started.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [Agent integration](docs/architecture/agent.md)
+- [Codex plugin](docs/guide/codex-plugin.md)
 - [AI adapters](docs/architecture/ai.md)
 - [Module development](docs/architecture/modules.md)
 - [External tool inventory](docs/tools-checklist.md)

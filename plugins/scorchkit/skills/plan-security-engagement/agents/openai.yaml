@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan Security Engagement"
+  short_description: "Build a reviewable ScorchKit scan plan"
+  default_prompt: "Use $plan-security-engagement to plan an authorized ScorchKit assessment."

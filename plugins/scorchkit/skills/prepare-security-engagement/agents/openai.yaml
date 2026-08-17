@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare Security Engagement"
+  short_description: "Set up authorized ScorchKit engagement state"
+  default_prompt: "Use $prepare-security-engagement to prepare an authorized ScorchKit engagement."

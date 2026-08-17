@@ -1,0 +1,39 @@
+{
+  "name": "scorchkit",
+  "version": "0.1.0",
+  "description": "Operate authorized ScorchKit security engagements through local MCP workflows.",
+  "author": {
+    "name": "Ignibyte",
+    "url": "https://github.com/Ignibyte"
+  },
+  "homepage": "https://github.com/Ignibyte/scorch_kit",
+  "repository": "https://github.com/Ignibyte/scorch_kit",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "sast",
+    "dast",
+    "mcp",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "ScorchKit",
+    "shortDescription": "Authorized local SAST and DAST workflows",
+    "longDescription": "ScorchKit gives Codex focused workflows for preparing, planning, running, reporting, and verifying authorized security assessments through a local policy-gated MCP server.",
+    "developerName": "Ignibyte",
+    "category": "Security",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/Ignibyte/scorch_kit",
+    "defaultPrompt": [
+      "Prepare an authorized ScorchKit engagement.",
+      "Plan and run an authorized ScorchKit scan.",
+      "Report and verify my ScorchKit findings."
+    ]
+  }
+}
