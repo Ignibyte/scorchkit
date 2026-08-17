@@ -32,6 +32,13 @@ pub struct ScanParams {
     pub skip: Option<String>,
 }
 
+/// Parameters for a scan-job lookup, cancellation, or resume.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScanJobRefParams {
+    /// Scan job UUID returned by `scan_job_start` or `scan_job_resume`.
+    pub job_id: String,
+}
+
 fn default_profile() -> String {
     "standard".to_string()
 }

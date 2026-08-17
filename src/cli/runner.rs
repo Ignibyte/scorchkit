@@ -289,6 +289,9 @@ pub async fn execute(cli: Cli) -> Result<()> {
         #[cfg(feature = "storage")]
         Commands::Schedule { command } => run_schedule_command(&config, command).await,
 
+        #[cfg(feature = "storage")]
+        Commands::Job { command } => crate::cli::job::run_job_command(&config, command).await,
+
         #[cfg(feature = "mcp")]
         Commands::Serve => crate::cli::serve::run_serve(&config).await,
 

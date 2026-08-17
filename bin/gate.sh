@@ -20,7 +20,33 @@ case "${1:-}" in
 esac
 [ "${GATE_FAST:-0}" = "1" ] && MODE="fast"
 
-FOCUSED_EVIDENCE_NAME="scorchkit-mutants-focused-ticket-002"
+FOCUSED_EVIDENCE_NAME="${SCORCHKIT_FOCUSED_EVIDENCE_NAME:-}"
+if [ "$MODE" = "focused-repair" ] && [ -z "$FOCUSED_EVIDENCE_NAME" ]; then
+    shopt -s nullglob
+    focused_active_specs=(docs/planning/pipeline/active/*.spec.md)
+    shopt -u nullglob
+    if [ "${#focused_active_specs[@]}" -eq 1 ]; then
+        focused_ticket="$(awk -F ': *' '$1 == "ticket" { print $2; exit }' \
+            "${focused_active_specs[0]}")"
+        [[ "$focused_ticket" =~ ^TICKET-([0-9]+)$ ]] || {
+            echo "focused-repair mode could not resolve the active ticket" >&2
+            exit 2
+        }
+        FOCUSED_EVIDENCE_NAME="scorchkit-mutants-focused-ticket-${BASH_REMATCH[1]}"
+    elif [ "${#focused_active_specs[@]}" -eq 0 ]; then
+        FOCUSED_EVIDENCE_NAME="$(find "$SCORCHKIT_GIT_DIR" -maxdepth 1 -type d \
+            -name 'scorchkit-mutants-focused-ticket-*' -print 2>/dev/null \
+            | LC_ALL=C sort | tail -1)"
+        FOCUSED_EVIDENCE_NAME="${FOCUSED_EVIDENCE_NAME##*/}"
+        [ -n "$FOCUSED_EVIDENCE_NAME" ] || {
+            echo "focused-repair mode found no sealed evidence" >&2
+            exit 2
+        }
+    else
+        echo "focused-repair mode requires exactly zero or one active pipeline" >&2
+        exit 2
+    fi
+fi
 FOCUSED_EVIDENCE_DIR="$SCORCHKIT_GIT_DIR/$FOCUSED_EVIDENCE_NAME"
 FOCUSED_EVIDENCE_DIGEST=""
 
@@ -269,27 +295,53 @@ coverage_gate() {
 }
 
 focused_repair_scope_gate() {
-    local -a active_specs
+    local evidence_roadmap evidence_ticket ticket_doc
+    local -a active_specs closed_tickets
+    [ -f "$FOCUSED_EVIDENCE_DIR/summary.json" ] || {
+        echo "focused-repair evidence summary is missing" >&2
+        return 1
+    }
+    evidence_ticket="$(jq -r '.ticket // empty' "$FOCUSED_EVIDENCE_DIR/summary.json")"
+    evidence_roadmap="$(jq -r '.roadmap_item // empty' "$FOCUSED_EVIDENCE_DIR/summary.json")"
+    [[ "$evidence_ticket" =~ ^TICKET-[0-9]+$ ]] \
+        && [[ "$evidence_roadmap" =~ ^SK-[0-9]+$ ]] || {
+        echo "focused-repair evidence has an invalid ticket or roadmap item" >&2
+        return 1
+    }
     shopt -s nullglob
     active_specs=(docs/planning/pipeline/active/*.spec.md)
     shopt -u nullglob
     if [ "${#active_specs[@]}" -eq 1 ]; then
-        grep -Fqx 'ticket: TICKET-002' "${active_specs[0]}" || {
-            echo "focused-repair mode is not approved for the active ticket" >&2
+        if ! grep -Fqx "ticket: $evidence_ticket" "${active_specs[0]}" \
+            || ! grep -Fqx 'focused_repair: approved' "${active_specs[0]}" \
+            || ! grep -Fqx "focused_evidence: $FOCUSED_EVIDENCE_NAME" \
+                "${active_specs[0]}"; then
+            echo "focused-repair mode is not recorded for the active ticket" >&2
             return 1
-        }
+        fi
+        ticket_doc="$(awk -F ': *' '$1 == "ticket_doc" { print $2; exit }' \
+            "${active_specs[0]}")"
+        if [ ! -f "$ticket_doc" ] \
+            || ! grep -Fqx 'focused_repair: approved' "$ticket_doc"; then
+            echo "focused-repair approval is missing from the active ticket" >&2
+            return 1
+        fi
     elif [ "${#active_specs[@]}" -eq 0 ]; then
-        [ -f docs/planning/tickets/closed/TICKET-002-shared-job-executor.md ] || {
-            echo "focused-repair delivery requires active or archived TICKET-002" >&2
+        shopt -s nullglob
+        closed_tickets=(docs/planning/tickets/closed/"$evidence_ticket"-*.md)
+        shopt -u nullglob
+        if [ "${#closed_tickets[@]}" -ne 1 ] \
+            || ! grep -Fqx 'focused_repair: approved' "${closed_tickets[0]}"; then
+            echo "focused-repair delivery requires its approved archived ticket" >&2
             return 1
-        }
+        fi
     else
         echo "focused-repair delivery requires exactly zero or one active pipeline" >&2
         return 1
     fi
-    jq -e '.ticket == "TICKET-002" and .roadmap_item == "SK-028"' \
+    jq -e '.owner_approval | type == "string" and length > 0' \
         "$FOCUSED_EVIDENCE_DIR/summary.json" >/dev/null || {
-        echo "focused-repair evidence does not belong to TICKET-002 / SK-028" >&2
+        echo "focused-repair evidence does not contain owner approval" >&2
         return 1
     }
 }

@@ -46,6 +46,9 @@ pub enum ScorchError {
     #[error("database error: {0}")]
     Database(String),
 
+    #[error("scan job error: {0}")]
+    Job(String),
+
     #[error("scan cancelled: {reason}")]
     Cancelled { reason: String },
 

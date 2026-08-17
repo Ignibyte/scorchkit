@@ -88,7 +88,15 @@ profile is denied unless the engagement grants the matching capabilities and eff
 - `list_modules` — Show available modules with their categories
 - `check_tools` — Verify which external tools are installed
 - `scan` — Run a scan without project persistence (quick ad-hoc testing)
+- `scan_job_start` — Start an authorized scan and return its durable job record immediately
+- `scan_job_status` — Read progress or the terminal result for one job
+- `scan_job_cancel` — Request idempotent cancellation for a queued or running job
+- `scan_job_resume` — Reauthorize and resume an interrupted job as a linked attempt
 - `plan_scan` — AI-guided module selection based on recon (returns plan only)
+
+Use scan jobs for work that may outlive one tool call. Poll status at a reasonable interval and
+cancel only at the user's direction. Without a database, jobs last for the MCP server process;
+project, finding, schedule, resource, and migration operations require configured PostgreSQL.
 
 ### Project Management
 - `project_create` — Create a new assessment project
@@ -194,14 +202,17 @@ mod tests {
         }
     }
 
-    /// Verify all 20 MCP tool names appear in the instructions.
-    /// This ensures the instructions stay in sync with the tool set.
+    /// Verify all documented workflow tool names appear in the instructions.
     #[test]
     fn instructions_contains_all_tools() {
         let tools = [
             "list_modules",
             "check_tools",
             "scan",
+            "scan_job_start",
+            "scan_job_status",
+            "scan_job_cancel",
+            "scan_job_resume",
             "plan_scan",
             "project_create",
             "project_list",

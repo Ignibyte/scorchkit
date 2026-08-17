@@ -26,7 +26,7 @@ is created.
 | Infrastructure/cloud | `infra`, `cloud` when compiled |
 | Analysis/reporting | `analyze`, `diff` |
 | Agent host | `agent`, `serve` when compiled |
-| Persistence | `db`, `project`, `finding`, `schedule` when compiled |
+| Persistence | `db`, `project`, `finding`, `schedule`, `job` when compiled |
 | Setup | `init`, `completions` |
 
 Run `scorchkit --help` and `scorchkit <command> --help` for the exact surface of the compiled feature
@@ -66,6 +66,11 @@ A schedule can be created only for a registered target under the current engagem
 engagement snapshot is stored. Due execution claims rows in a short transaction, advances the
 occurrence, releases the database connection, and then runs effects.
 
+Durable DAST jobs use `job run`, `list`, `status`, `cancel`, `recover`, and `resume`. Run and resume
+stay in the foreground so Ctrl-C becomes a stored cancellation instead of abandoning an unowned
+task. Recovery marks expired nonterminal attempts interrupted; resume reauthorizes and creates a
+linked attempt containing only safely completed evidence.
+
 ## AI
 
 `--analyze`, `analyze`, planning, and `agent` use the configured provider. Codex is the default; Claude
@@ -83,5 +88,6 @@ src/cli/
   project.rs    project and target operations
   finding.rs    finding lifecycle
   schedule.rs   schedule creation and due execution
+  job.rs        durable DAST job lifecycle
   serve.rs      local stdio MCP startup
 ```

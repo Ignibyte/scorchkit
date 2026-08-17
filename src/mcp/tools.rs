@@ -15,14 +15,15 @@ use super::server::ScorchKitServer;
 use super::types::{
     AnalyzeFindingsParams, AutoScanParams, CorrelateFindingsParams, FindingListParams,
     FindingRefParams, FindingUpdateStatusParams, PlanScanParams, ProjectCreateParams,
-    ProjectDeleteParams, ProjectRefParams, ProjectScanParams, ProjectStatusParams, ScanParams,
-    ScanProgressParams, ScheduleScanParams, TargetAddParams, TargetIntelligenceParams,
-    TargetRemoveParams,
+    ProjectDeleteParams, ProjectRefParams, ProjectScanParams, ProjectStatusParams,
+    ScanJobRefParams, ScanParams, ScanProgressParams, ScheduleScanParams, TargetAddParams,
+    TargetIntelligenceParams, TargetRemoveParams,
 };
 use crate::engine::error::ScorchError;
 use crate::engine::policy::{Capability, EffectClass, PolicyTarget};
 use crate::engine::target::Target;
 use crate::facade::Engine;
+use crate::runner::job::{DastJobRequest, ScanJob, ScanJobState};
 use crate::runner::orchestrator::Orchestrator;
 use crate::storage::{context, findings, metrics, projects, scans, schedules};
 
@@ -39,6 +40,24 @@ async fn resolve_project(
     projects::get_project_by_name(pool, project_ref)
         .await?
         .ok_or_else(|| ScorchError::Config(format!("project '{project_ref}' not found")))
+}
+
+fn comma_separated(value: &str) -> Vec<String> {
+    value.split(',').map(str::trim).filter(|item| !item.is_empty()).map(str::to_string).collect()
+}
+
+fn job_id(value: &str) -> Result<Uuid, String> {
+    Uuid::parse_str(value).map_err(|error| format!("invalid scan job UUID '{value}': {error}"))
+}
+
+fn completed_job_result(job: ScanJob) -> Result<String, String> {
+    match job.state {
+        ScanJobState::Succeeded => serde_json::to_string_pretty(
+            job.result.as_ref().ok_or_else(|| "successful scan job has no result".to_string())?,
+        )
+        .map_err(|error| error.to_string()),
+        _ => Err(job.error.unwrap_or_else(|| format!("scan job ended in {}", job.state.as_str()))),
+    }
 }
 
 /// Public business logic methods — called by both `#[tool]` wrappers and tests.
@@ -106,28 +125,77 @@ impl ScorchKitServer {
     /// Returns an error if the target URL is invalid, the HTTP client cannot
     /// be built, or the scan fails.
     pub async fn do_scan(&self, params: ScanParams) -> Result<String, String> {
-        let engine = Engine::new(Arc::clone(&self.config));
-        let ctx =
-            engine.dast_context(&params.target, &params.profile).map_err(|e| e.to_string())?;
+        let job = self.submit_scan_job(params).await?;
+        completed_job_result(self.jobs.run(job.id).await.map_err(|error| error.to_string())?)
+    }
 
-        let module_filter: Option<Vec<String>> =
-            params.modules.map(|m| m.split(',').map(|s| s.trim().to_string()).collect());
-        let skip_filter: Option<Vec<String>> =
-            params.skip.map(|s| s.split(',').map(|s| s.trim().to_string()).collect());
+    /// Submit a stateless DAST job and return before scanner modules complete.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when authorization, request validation, or initial persistence fails.
+    pub async fn do_scan_job_start(&self, params: ScanParams) -> Result<String, String> {
+        let job = self.submit_scan_job(params).await?;
+        let response = serde_json::to_string_pretty(&job).map_err(|error| error.to_string())?;
+        let jobs = self.jobs.clone();
+        tokio::spawn(async move {
+            if let Err(error) = jobs.run(job.id).await {
+                tracing::warn!(job_id = %job.id, %error, "scan job runner stopped");
+            }
+        });
+        Ok(response)
+    }
 
-        let mut orchestrator = Orchestrator::new(ctx);
-        orchestrator.register_default_modules();
-        orchestrator.apply_profile(&params.profile);
+    /// Return the complete persisted state of one scan job.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the UUID is invalid or the job does not exist.
+    pub async fn do_scan_job_status(&self, params: ScanJobRefParams) -> Result<String, String> {
+        let job =
+            self.jobs.get(job_id(&params.job_id)?).await.map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&job).map_err(|error| error.to_string())
+    }
 
-        if let Some(ref include) = module_filter {
-            orchestrator.filter_by_ids(include);
-        }
-        if let Some(ref exclude) = skip_filter {
-            orchestrator.exclude_by_ids(exclude);
-        }
+    /// Persist and signal cancellation for a queued or running job.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the UUID is invalid, missing, or no longer cancellable.
+    pub async fn do_scan_job_cancel(&self, params: ScanJobRefParams) -> Result<String, String> {
+        let job =
+            self.jobs.cancel(job_id(&params.job_id)?).await.map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&job).map_err(|error| error.to_string())
+    }
 
-        let result = orchestrator.run(true).await.map_err(|e| e.to_string())?;
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+    /// Create and start a successor attempt for an interrupted job.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the job is not interrupted or current authorization differs.
+    pub async fn do_scan_job_resume(&self, params: ScanJobRefParams) -> Result<String, String> {
+        let job =
+            self.jobs.resume(job_id(&params.job_id)?).await.map_err(|error| error.to_string())?;
+        let response = serde_json::to_string_pretty(&job).map_err(|error| error.to_string())?;
+        let jobs = self.jobs.clone();
+        tokio::spawn(async move {
+            if let Err(error) = jobs.run(job.id).await {
+                tracing::warn!(job_id = %job.id, %error, "resumed scan job runner stopped");
+            }
+        });
+        Ok(response)
+    }
+
+    async fn submit_scan_job(&self, params: ScanParams) -> Result<ScanJob, String> {
+        let engagement = self
+            .config
+            .engagement
+            .clone()
+            .ok_or_else(|| "no engagement authorization configured for scan job".to_string())?;
+        let request = DastJobRequest::new(params.target, params.profile, engagement)
+            .with_modules(params.modules.as_deref().map(comma_separated))
+            .with_skip(params.skip.as_deref().map_or_else(Vec::new, comma_separated));
+        self.jobs.submit(request).await.map_err(|error| error.to_string())
     }
 
     /// Create a new project.
@@ -137,7 +205,7 @@ impl ScorchKitServer {
     /// Returns an error if the project name already exists or the database fails.
     pub async fn do_project_create(&self, params: ProjectCreateParams) -> Result<String, String> {
         let desc = params.description.as_deref().unwrap_or("");
-        let project = projects::create_project(&self.pool, &params.name, desc)
+        let project = projects::create_project(self.require_pool()?, &params.name, desc)
             .await
             .map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&project).map_err(|e| e.to_string())
@@ -149,7 +217,8 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the database query fails.
     pub async fn do_project_list(&self) -> Result<String, String> {
-        let project_list = projects::list_projects(&self.pool).await.map_err(|e| e.to_string())?;
+        let project_list =
+            projects::list_projects(self.require_pool()?).await.map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&project_list).map_err(|e| e.to_string())
     }
 
@@ -159,14 +228,17 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database fails.
     pub async fn do_project_show(&self, params: ProjectRefParams) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
-        let targets =
-            projects::list_targets(&self.pool, project.id).await.map_err(|e| e.to_string())?;
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|e| e.to_string())?;
+        let targets = projects::list_targets(self.require_pool()?, project.id)
+            .await
+            .map_err(|e| e.to_string())?;
         let scan_list =
-            scans::list_scans(&self.pool, project.id).await.map_err(|e| e.to_string())?;
-        let finding_list =
-            findings::list_findings(&self.pool, project.id).await.map_err(|e| e.to_string())?;
+            scans::list_scans(self.require_pool()?, project.id).await.map_err(|e| e.to_string())?;
+        let finding_list = findings::list_findings(self.require_pool()?, project.id)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let result = serde_json::json!({
             "project": project,
@@ -184,8 +256,9 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database fails.
     pub async fn do_project_delete(&self, params: ProjectDeleteParams) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|e| e.to_string())?;
 
         if !params.force {
             return Ok(format!(
@@ -195,7 +268,9 @@ impl ScorchKitServer {
             ));
         }
 
-        projects::delete_project(&self.pool, project.id).await.map_err(|e| e.to_string())?;
+        projects::delete_project(self.require_pool()?, project.id)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(format!("{{\"deleted\": true, \"project\": \"{}\"}}", project.name))
     }
 
@@ -205,10 +280,11 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found, the scan fails, or persistence fails.
     pub async fn do_project_scan(&self, params: ProjectScanParams) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|e| e.to_string())?;
         let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
-        require_registered_project_target(&self.pool, project.id, &target)
+        require_registered_project_target(self.require_pool()?, project.id, &target)
             .await
             .map_err(|e| e.to_string())?;
         let engine = Engine::new(Arc::clone(&self.config));
@@ -227,7 +303,7 @@ impl ScorchKitServer {
         let summary_json = serde_json::to_value(&result.summary).map_err(|e| e.to_string())?;
 
         let scan = scans::save_scan(
-            &self.pool,
+            self.require_pool()?,
             project.id,
             result.target.url.as_str(),
             &params.profile,
@@ -240,9 +316,10 @@ impl ScorchKitServer {
         .await
         .map_err(|e| e.to_string())?;
 
-        let new_count = findings::save_findings(&self.pool, project.id, scan.id, &result.findings)
-            .await
-            .map_err(|e| e.to_string())?;
+        let new_count =
+            findings::save_findings(self.require_pool()?, project.id, scan.id, &result.findings)
+                .await
+                .map_err(|e| e.to_string())?;
 
         let output = serde_json::json!({
             "scan_id": scan.id,
@@ -262,11 +339,12 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database fails.
     pub async fn do_project_findings(&self, params: FindingListParams) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let finding_list = match (params.severity.as_deref(), params.status.as_deref()) {
-            (Some(sev), _) => findings::find_by_severity(&self.pool, project.id, sev)
+            (Some(sev), _) => findings::find_by_severity(self.require_pool()?, project.id, sev)
                 .await
                 .map_err(|e| e.to_string())?,
             (_, Some(st)) => {
@@ -277,13 +355,13 @@ impl ScorchKitServer {
                              Valid: new, acknowledged, false_positive, remediated, verified"
                         )
                     })?;
-                findings::find_by_status(&self.pool, project.id, vuln_status)
+                findings::find_by_status(self.require_pool()?, project.id, vuln_status)
                     .await
                     .map_err(|e| e.to_string())?
             }
-            _ => {
-                findings::list_findings(&self.pool, project.id).await.map_err(|e| e.to_string())?
-            }
+            _ => findings::list_findings(self.require_pool()?, project.id)
+                .await
+                .map_err(|e| e.to_string())?,
         };
 
         serde_json::to_string_pretty(&finding_list).map_err(|e| e.to_string())
@@ -297,7 +375,7 @@ impl ScorchKitServer {
     pub async fn do_finding_show(&self, params: FindingRefParams) -> Result<String, String> {
         let id = Uuid::parse_str(&params.id)
             .map_err(|e| format!("invalid finding UUID '{}': {e}", params.id))?;
-        let finding = findings::get_finding(&self.pool, id)
+        let finding = findings::get_finding(self.require_pool()?, id)
             .await
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("finding '{}' not found", params.id))?;
@@ -325,7 +403,7 @@ impl ScorchKitServer {
                 )
             })?;
 
-        let updated = findings::update_finding_status(&self.pool, id, status, None)
+        let updated = findings::update_finding_status(self.require_pool()?, id, status, None)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -345,10 +423,11 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database fails.
     pub async fn do_target_add(&self, params: TargetAddParams) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|e| e.to_string())?;
         let label = params.label.as_deref().unwrap_or("");
-        let target = projects::add_target(&self.pool, project.id, &params.url, label)
+        let target = projects::add_target(self.require_pool()?, project.id, &params.url, label)
             .await
             .map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&target).map_err(|e| e.to_string())
@@ -360,10 +439,12 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database fails.
     pub async fn do_target_list(&self, params: ProjectRefParams) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
-        let targets =
-            projects::list_targets(&self.pool, project.id).await.map_err(|e| e.to_string())?;
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|e| e.to_string())?;
+        let targets = projects::list_targets(self.require_pool()?, project.id)
+            .await
+            .map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&targets).map_err(|e| e.to_string())
     }
 
@@ -373,11 +454,12 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project/target is not found or the database fails.
     pub async fn do_target_remove(&self, params: TargetRemoveParams) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|e| e.to_string())?;
         let target_id = Uuid::parse_str(&params.id)
             .map_err(|e| format!("invalid target UUID '{}': {e}", params.id))?;
-        let removed = projects::remove_target(&self.pool, project.id, target_id)
+        let removed = projects::remove_target(self.require_pool()?, project.id, target_id)
             .await
             .map_err(|e| e.to_string())?;
         if removed {
@@ -393,7 +475,9 @@ impl ScorchKitServer {
     ///
     /// Returns an error if migration execution fails.
     pub async fn do_db_migrate(&self) -> Result<String, String> {
-        crate::storage::migrate::run_migrations(&self.pool).await.map_err(|e| e.to_string())?;
+        crate::storage::migrate::run_migrations(self.require_pool()?)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok("{\"success\": true, \"message\": \"Database migrations complete\"}".to_string())
     }
 
@@ -404,10 +488,11 @@ impl ScorchKitServer {
     /// Returns an error if the project is not found, the cron expression
     /// is invalid, or the database fails.
     pub async fn do_schedule_scan(&self, params: ScheduleScanParams) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|e| e.to_string())?;
         let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
-        require_registered_project_target(&self.pool, project.id, &target)
+        require_registered_project_target(self.require_pool()?, project.id, &target)
             .await
             .map_err(|e| e.to_string())?;
         let engine = Engine::new(Arc::clone(&self.config));
@@ -415,7 +500,7 @@ impl ScorchKitServer {
             .authorize_web_scan_for_profile(&target.url, &params.profile)
             .map_err(|e| e.to_string())?;
         let schedule = schedules::create_schedule(
-            &self.pool,
+            self.require_pool()?,
             project.id,
             target.url.as_str(),
             &params.profile,
@@ -438,9 +523,10 @@ impl ScorchKitServer {
     /// Returns an error if the database query fails. Individual scan
     /// failures are captured in the results, not propagated.
     pub async fn do_run_due_scans(&self) -> Result<String, String> {
-        let outcomes = crate::cli::schedule::execute_due_schedules(&self.pool, &self.config)
-            .await
-            .map_err(|e| e.to_string())?;
+        let outcomes =
+            crate::cli::schedule::execute_due_schedules(self.require_pool()?, &self.config)
+                .await
+                .map_err(|e| e.to_string())?;
 
         if outcomes.is_empty() {
             return Ok("{\"executed\": 0, \"message\": \"No schedules are due\"}".to_string());
@@ -463,11 +549,13 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database fails.
     pub async fn do_project_status(&self, params: ProjectStatusParams) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
-        let posture = metrics::build_posture_metrics(&self.pool, project.id, &project.name)
+        let project = resolve_project(self.require_pool()?, &params.project)
             .await
             .map_err(|e| e.to_string())?;
+        let posture =
+            metrics::build_posture_metrics(self.require_pool()?, project.id, &project.name)
+                .await
+                .map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&posture).map_err(|e| e.to_string())
     }
 
@@ -522,8 +610,9 @@ impl ScorchKitServer {
         &self,
         params: AnalyzeFindingsParams,
     ) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let focus = crate::ai::prompts::AnalysisFocus::parse(&params.focus);
 
@@ -531,9 +620,13 @@ impl ScorchKitServer {
         let tracked_findings = if let Some(ref scan_id_str) = params.scan_id {
             let scan_id = Uuid::parse_str(scan_id_str)
                 .map_err(|e| format!("invalid scan UUID '{scan_id_str}': {e}"))?;
-            findings::find_by_scan(&self.pool, scan_id).await.map_err(|e| e.to_string())?
+            findings::find_by_scan(self.require_pool()?, scan_id)
+                .await
+                .map_err(|e| e.to_string())?
         } else {
-            findings::list_findings(&self.pool, project.id).await.map_err(|e| e.to_string())?
+            findings::list_findings(self.require_pool()?, project.id)
+                .await
+                .map_err(|e| e.to_string())?
         };
 
         if tracked_findings.is_empty() {
@@ -550,7 +643,7 @@ impl ScorchKitServer {
 
         // Build a minimal ScanResult for the analyzer
         let scan_records =
-            scans::list_scans(&self.pool, project.id).await.map_err(|e| e.to_string())?;
+            scans::list_scans(self.require_pool()?, project.id).await.map_err(|e| e.to_string())?;
         let target_url = scan_records.first().map_or("unknown", |s| s.target_url.as_str());
         let target = crate::engine::target::Target::parse(target_url).map_err(|e| e.to_string())?;
         let scan_result = crate::engine::scan_result::ScanResult::new(
@@ -563,9 +656,10 @@ impl ScorchKitServer {
         );
 
         // Build project context for trend-aware analysis
-        let project_context = context::build_project_context(&self.pool, project.id, &project.name)
-            .await
-            .map_err(|e| e.to_string())?;
+        let project_context =
+            context::build_project_context(self.require_pool()?, project.id, &project.name)
+                .await
+                .map_err(|e| e.to_string())?;
 
         // Run AI analysis
         if !self.config.ai.enabled {
@@ -619,9 +713,10 @@ impl ScorchKitServer {
     pub async fn do_auto_scan(&self, params: AutoScanParams) -> Result<String, String> {
         let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
         let project = if let Some(project_ref) = params.project.as_deref() {
-            let project =
-                resolve_project(&self.pool, project_ref).await.map_err(|e| e.to_string())?;
-            require_registered_project_target(&self.pool, project.id, &target)
+            let project = resolve_project(self.require_pool()?, project_ref)
+                .await
+                .map_err(|e| e.to_string())?;
+            require_registered_project_target(self.require_pool()?, project.id, &target)
                 .await
                 .map_err(|e| e.to_string())?;
             Some(project)
@@ -649,7 +744,7 @@ impl ScorchKitServer {
             let summary_json = serde_json::to_value(&result.summary).map_err(|e| e.to_string())?;
 
             let scan_record = scans::save_scan(
-                &self.pool,
+                self.require_pool()?,
                 project.id,
                 result.target.url.as_str(),
                 &params.profile,
@@ -661,10 +756,14 @@ impl ScorchKitServer {
             )
             .await
             .map_err(|e| e.to_string())?;
-            let saved_count =
-                findings::save_findings(&self.pool, project.id, scan_record.id, &result.findings)
-                    .await
-                    .map_err(|e| e.to_string())?;
+            let saved_count = findings::save_findings(
+                self.require_pool()?,
+                project.id,
+                scan_record.id,
+                &result.findings,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
             let output = serde_json::json!({
                 "scan_id": result.scan_id,
@@ -766,10 +865,11 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database query fails.
     pub async fn do_scan_progress(&self, params: ScanProgressParams) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|e| e.to_string())?;
         let scan_records =
-            scans::list_scans(&self.pool, project.id).await.map_err(|e| e.to_string())?;
+            scans::list_scans(self.require_pool()?, project.id).await.map_err(|e| e.to_string())?;
 
         let Some(latest) = scan_records.first() else {
             return Ok(serde_json::json!({
@@ -780,8 +880,10 @@ impl ScorchKitServer {
             .to_string());
         };
 
-        let finding_count =
-            findings::list_findings(&self.pool, project.id).await.map_err(|e| e.to_string())?.len();
+        let finding_count = findings::list_findings(self.require_pool()?, project.id)
+            .await
+            .map_err(|e| e.to_string())?
+            .len();
 
         let status = if latest.completed_at.is_some() { "complete" } else { "in_progress" };
 
@@ -817,10 +919,12 @@ impl ScorchKitServer {
         &self,
         params: CorrelateFindingsParams,
     ) -> Result<String, String> {
-        let project =
-            resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
-        let tracked_findings =
-            findings::list_findings(&self.pool, project.id).await.map_err(|e| e.to_string())?;
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|e| e.to_string())?;
+        let tracked_findings = findings::list_findings(self.require_pool()?, project.id)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let correlation_findings: Vec<super::prompts::CorrelationFinding> = tracked_findings
             .iter()
@@ -934,6 +1038,44 @@ impl ScorchKitServer {
         JSON with findings array, summary statistics, and scan metadata.")]
     async fn scan(&self, params: Parameters<ScanParams>) -> Result<String, String> {
         self.do_scan(params.0).await
+    }
+
+    #[tool(description = "Start an authorized DAST scan as a cancellable background job. Returns \
+        the queued job record immediately. Poll scan_job_status with the returned id; use \
+        scan_job_cancel to stop work. PostgreSQL is optional for stateless MCP sessions.")]
+    async fn scan_job_start(&self, params: Parameters<ScanParams>) -> Result<String, String> {
+        self.do_scan_job_start(params.0).await
+    }
+
+    #[tool(
+        description = "Read one scan job's lifecycle, module progress, partial completed-module \
+        findings, terminal error, and final result by job UUID."
+    )]
+    async fn scan_job_status(
+        &self,
+        params: Parameters<ScanJobRefParams>,
+    ) -> Result<String, String> {
+        self.do_scan_job_status(params.0).await
+    }
+
+    #[tool(
+        description = "Cancel a queued or running scan job by UUID. Cancellation is idempotent \
+        while pending or already cancelled and preserves completed-module evidence."
+    )]
+    async fn scan_job_cancel(
+        &self,
+        params: Parameters<ScanJobRefParams>,
+    ) -> Result<String, String> {
+        self.do_scan_job_cancel(params.0).await
+    }
+
+    #[tool(description = "Resume an interrupted scan job under the current unchanged engagement. \
+        Creates a linked successor attempt and skips modules whose findings were durably committed.")]
+    async fn scan_job_resume(
+        &self,
+        params: Parameters<ScanJobRefParams>,
+    ) -> Result<String, String> {
+        self.do_scan_job_resume(params.0).await
     }
 
     #[tool(description = "AI-guided scan planning: runs recon modules first to gather target \
@@ -1205,5 +1347,86 @@ async fn require_registered_project_target(
             "target '{}' is not registered to project {project_id}",
             requested.url
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::engine::policy::{Engagement, EngagementPolicy};
+    use crate::engine::scope::ScopeRule;
+    use chrono::Utc;
+
+    fn job_server() -> ScorchKitServer {
+        let policy = EngagementPolicy::default()
+            .allow_scope(ScopeRule::Exact("localhost".to_string()))
+            .allow_capability(Capability::DastScan)
+            .allow_effect(EffectClass::ActiveSafe);
+        let engagement = Engagement::new("mcp-job-wrapper-test", policy);
+        let config = AppConfig { engagement: Some(engagement), ..AppConfig::default() };
+        ScorchKitServer::new_stateless(Arc::new(config))
+    }
+
+    fn job_request(server: &ScorchKitServer) -> DastJobRequest {
+        DastJobRequest::new(
+            "http://localhost:1",
+            "quick",
+            server.config.engagement.clone().expect("job engagement"),
+        )
+        .with_modules(Some(vec!["headers".to_string()]))
+    }
+
+    #[test]
+    fn completed_job_result_rejects_missing_success_payload() {
+        let mut job = ScanJob::new(
+            DastJobRequest::new(
+                "http://localhost:1",
+                "quick",
+                Engagement::new("result-test", EngagementPolicy::default()),
+            ),
+            Uuid::new_v4(),
+        );
+        job.state = ScanJobState::Succeeded;
+        let error = completed_job_result(job).expect_err("success requires a persisted result");
+        assert_eq!(error, "successful scan job has no result");
+    }
+
+    #[tokio::test]
+    async fn job_tool_wrappers_preserve_cancel_and_resume_payloads() {
+        let server = job_server();
+        let cancelled_job = server.jobs.submit(job_request(&server)).await.expect("submit cancel");
+        let cancelled_json = server
+            .scan_job_cancel(Parameters(ScanJobRefParams { job_id: cancelled_job.id.to_string() }))
+            .await
+            .expect("cancel through tool wrapper");
+        let cancelled: ScanJob =
+            serde_json::from_str(&cancelled_json).expect("decode cancellation");
+        assert_eq!(cancelled.id, cancelled_job.id);
+        assert_eq!(cancelled.state, ScanJobState::Cancelled);
+
+        let abandoned = server.jobs.submit(job_request(&server)).await.expect("submit resume");
+        let mut running = abandoned.clone();
+        running.state = ScanJobState::Running;
+        running.revision = 1;
+        running.started_at = Some(Utc::now());
+        running.updated_at = Utc::now();
+        running.lease_expires_at = Some(Utc::now() - chrono::Duration::seconds(1));
+        assert!(server
+            .jobs
+            .store()
+            .compare_and_swap(0, &running)
+            .await
+            .expect("persist abandoned job"));
+        let recovered = server.jobs.recover_interrupted().await.expect("recover abandoned job");
+        assert_eq!(recovered.len(), 1);
+
+        let resumed_json = server
+            .scan_job_resume(Parameters(ScanJobRefParams { job_id: abandoned.id.to_string() }))
+            .await
+            .expect("resume through tool wrapper");
+        let resumed: ScanJob = serde_json::from_str(&resumed_json).expect("decode resumed job");
+        assert_eq!(resumed.parent_job_id, Some(abandoned.id));
+        assert_eq!(resumed.state, ScanJobState::Queued);
     }
 }

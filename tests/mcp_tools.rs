@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use httpmock::MockServer;
 use rmcp::handler::server::ServerHandler;
-use rmcp::model::ResourceContents;
+use rmcp::model::{CallToolRequestParams, ResourceContents};
+use rmcp::ServiceExt;
 use scorchkit::config::AppConfig;
 use scorchkit::engine::finding::Finding;
 use scorchkit::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
@@ -79,18 +80,15 @@ fn test_server(pool: sqlx::PgPool) -> ScorchKitServer {
 
 /// Build a server for methods that do not touch storage.
 fn test_server_without_database() -> ScorchKitServer {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgresql://localhost/scorchkit_unconnected_test")
-        .unwrap_or_else(|error| panic!("lazy test database URL should parse: {error}"));
-    test_server(pool)
+    let mut config = AppConfig::default();
+    config.scan.timeout_seconds = 5;
+    config.engagement = Some(test_engagement());
+    ScorchKitServer::new_stateless(Arc::new(config))
 }
 
 /// Build a server with no engagement to prove effectful tools fail closed.
 fn unconfigured_test_server() -> ScorchKitServer {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgresql://localhost/scorchkit_unconnected_test")
-        .unwrap_or_else(|error| panic!("lazy test database URL should parse: {error}"));
-    ScorchKitServer::new(Arc::new(AppConfig::default()), pool)
+    ScorchKitServer::new_stateless(Arc::new(AppConfig::default()))
 }
 
 /// Start a loopback server that accepts every bounded scan request.
@@ -133,6 +131,13 @@ fn resource_text(result: &rmcp::model::ReadResourceResult) -> &str {
     }
 }
 
+fn tool_text(result: &rmcp::model::CallToolResult) -> &str {
+    result.content.first().and_then(|content| content.raw.as_text()).map_or_else(
+        || panic!("expected MCP text tool content: {result:?}"),
+        |text| text.text.as_str(),
+    )
+}
+
 /// Verify `scorchkit serve --help` shows the command.
 #[test]
 fn test_serve_help() {
@@ -145,6 +150,31 @@ fn test_serve_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("MCP server"));
+}
+
+#[test]
+fn serve_fails_closed_when_explicit_database_url_is_invalid() {
+    use assert_cmd::Command;
+    use predicates::prelude::*;
+
+    let directory = tempfile::tempdir().expect("create serve config directory");
+    let config_path = directory.path().join("scorchkit.toml");
+    let mut config = AppConfig::default();
+    config.database.url = Some("not-a-postgresql-url".to_string());
+    std::fs::write(
+        &config_path,
+        toml::to_string_pretty(&config).expect("serialize invalid database config"),
+    )
+    .expect("write serve config");
+
+    Command::cargo_bin("scorchkit")
+        .expect("resolve scorchkit binary")
+        .args(["--config", config_path.to_str().expect("UTF-8 config path"), "serve"])
+        .env_remove("DATABASE_URL")
+        .timeout(std::time::Duration::from_secs(5))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("connection failed"));
 }
 
 /// Verify `ScorchKitServer::new()` constructs successfully.
@@ -183,9 +213,8 @@ async fn test_tool_check_tools() {
 /// Verify `scan` completes against a deterministic loopback target.
 #[tokio::test]
 async fn test_tool_scan() {
-    let Some(pool) = get_pool_or_skip().await else { return };
     let target = local_scan_target().await;
-    let server = test_server(pool);
+    let server = test_server_without_database();
     let params = ScanParams {
         target: target.url("/"),
         profile: "quick".to_string(),
@@ -194,6 +223,135 @@ async fn test_tool_scan() {
     };
     let result = server.do_scan(params).await;
     assert!(result.is_ok(), "loopback scan should succeed: {result:?}");
+    let scan: scorchkit::engine::scan_result::ScanResult =
+        serde_json::from_str(&result.expect("scan result JSON")).expect("decode complete scan");
+    assert_eq!(scan.target.url.as_str(), target.url("/"));
+    assert_eq!(scan.modules_run, ["headers"]);
+}
+
+#[tokio::test]
+async fn stateless_scan_job_start_status_and_cancel_need_no_database() {
+    let target = MockServer::start_async().await;
+    let _mock = target
+        .mock_async(|when, then| {
+            when.any_request();
+            then.delay(std::time::Duration::from_secs(5)).status(200).body("slow");
+        })
+        .await;
+    let server = test_server_without_database();
+    let started_json = server
+        .do_scan_job_start(ScanParams {
+            target: target.url("/"),
+            profile: "quick".to_string(),
+            modules: Some("headers".to_string()),
+            skip: None,
+        })
+        .await
+        .expect("start stateless scan job");
+    let started: scorchkit::runner::job::ScanJob =
+        serde_json::from_str(&started_json).expect("decode started job");
+
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let status_json = server
+                .do_scan_job_status(ScanJobRefParams { job_id: started.id.to_string() })
+                .await
+                .expect("read stateless job");
+            let status: scorchkit::runner::job::ScanJob =
+                serde_json::from_str(&status_json).expect("decode status job");
+            if status.state == scorchkit::runner::job::ScanJobState::Running {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("job reached running state");
+
+    let cancelled_json = server
+        .do_scan_job_cancel(ScanJobRefParams { job_id: started.id.to_string() })
+        .await
+        .expect("cancel stateless job");
+    let cancelling: scorchkit::runner::job::ScanJob =
+        serde_json::from_str(&cancelled_json).expect("decode cancelling job");
+    assert_eq!(cancelling.state, scorchkit::runner::job::ScanJobState::Cancelling);
+
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let status_json = server
+                .do_scan_job_status(ScanJobRefParams { job_id: started.id.to_string() })
+                .await
+                .expect("read cancelled stateless job");
+            let status: scorchkit::runner::job::ScanJob =
+                serde_json::from_str(&status_json).expect("decode cancelled job");
+            if status.state == scorchkit::runner::job::ScanJobState::Cancelled {
+                assert!(status.result.is_none());
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("job reached cancelled state");
+
+    let database_error = server.do_project_list().await.expect_err("database tool must fail");
+    assert!(database_error.contains("database unavailable"));
+}
+
+#[tokio::test]
+async fn stateless_job_runs_through_mcp_transport_without_database() {
+    let target = local_scan_target().await;
+    let server = test_server_without_database();
+    let (server_transport, client_transport) = tokio::io::duplex(1_048_576);
+    let server_task = tokio::spawn(async move {
+        let running = server.serve(server_transport).await.map_err(|error| error.to_string())?;
+        running.waiting().await.map_err(|error| error.to_string())
+    });
+    let client = ().serve(client_transport).await.expect("initialize MCP client");
+    let tools = client.list_all_tools().await.expect("list MCP tools");
+    assert!(tools.iter().any(|tool| tool.name == "scan_job_start"));
+    assert!(tools.iter().any(|tool| tool.name == "scan_job_status"));
+
+    let arguments = serde_json::json!({
+        "target": target.url("/"),
+        "profile": "quick",
+        "modules": "headers"
+    })
+    .as_object()
+    .expect("tool arguments object")
+    .clone();
+    let started_result = client
+        .call_tool(CallToolRequestParams::new("scan_job_start").with_arguments(arguments))
+        .await
+        .expect("start job through MCP transport");
+    assert_ne!(started_result.is_error, Some(true));
+    let started: scorchkit::runner::job::ScanJob =
+        serde_json::from_str(tool_text(&started_result)).expect("decode transport job");
+
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let arguments = serde_json::json!({"job_id": started.id.to_string()})
+                .as_object()
+                .expect("status arguments object")
+                .clone();
+            let status_result = client
+                .call_tool(CallToolRequestParams::new("scan_job_status").with_arguments(arguments))
+                .await
+                .expect("read job through MCP transport");
+            let status: scorchkit::runner::job::ScanJob =
+                serde_json::from_str(tool_text(&status_result)).expect("decode transport status");
+            if status.state == scorchkit::runner::job::ScanJobState::Succeeded {
+                assert!(status.result.is_some());
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("transport job completed");
+
+    client.cancel().await.expect("close MCP client");
+    server_task.await.expect("server task joined").expect("server transport closed cleanly");
 }
 
 #[tokio::test]
@@ -410,8 +568,16 @@ async fn test_tool_project_findings() {
     )
     .await
     .unwrap();
-    let findings_data =
-        vec![Finding::new("xss", Severity::High, "XSS", "desc", "https://example.com")];
+    let findings_data = vec![
+        Finding::new("xss", Severity::High, "XSS", "desc", "https://example.com"),
+        Finding::new(
+            "headers",
+            Severity::Critical,
+            "Missing headers",
+            "desc",
+            "https://example.com/headers",
+        ),
+    ];
     storage::findings::save_findings(&pool, project.id, scan.id, &findings_data).await.unwrap();
 
     let result = server
@@ -423,7 +589,41 @@ async fn test_tool_project_findings() {
         .await;
     assert!(result.is_ok(), "project_findings should succeed");
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&result.unwrap()).unwrap();
-    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed.len(), 2);
+
+    let critical = server
+        .do_project_findings(FindingListParams {
+            project: name.clone(),
+            severity: Some("critical".to_string()),
+            status: None,
+        })
+        .await
+        .expect("filter findings by severity");
+    let critical: Vec<serde_json::Value> = serde_json::from_str(&critical).unwrap();
+    assert_eq!(critical.len(), 1);
+    assert_eq!(critical[0]["severity"], "critical");
+
+    let tracked = storage::findings::list_findings(&pool, project.id).await.unwrap();
+    let high = tracked.iter().find(|finding| finding.severity == "high").expect("high finding");
+    storage::findings::update_finding_status(
+        &pool,
+        high.id,
+        scorchkit::storage::models::VulnStatus::Acknowledged,
+        Some("reviewed"),
+    )
+    .await
+    .unwrap();
+    let acknowledged = server
+        .do_project_findings(FindingListParams {
+            project: name.clone(),
+            severity: None,
+            status: Some("acknowledged".to_string()),
+        })
+        .await
+        .expect("filter findings by status");
+    let acknowledged: Vec<serde_json::Value> = serde_json::from_str(&acknowledged).unwrap();
+    assert_eq!(acknowledged.len(), 1);
+    assert_eq!(acknowledged[0]["status"], "acknowledged");
 
     // Cleanup
     storage::projects::delete_project(&pool, project.id).await.unwrap();
@@ -913,6 +1113,71 @@ fn test_tool_scan_progress() {
     let json = r#"{"project": "my-project"}"#;
     let params: ScanProgressParams = serde_json::from_str(json).expect("deserialize");
     assert_eq!(params.project, "my-project");
+}
+
+#[tokio::test]
+async fn scan_progress_and_correlation_return_structured_project_results(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-progress-correlation");
+    let project = storage::projects::create_project(&pool, &name, "").await?;
+
+    let empty_progress: serde_json::Value = serde_json::from_str(
+        &server
+            .do_scan_progress(ScanProgressParams { project: name.clone() })
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+    assert_eq!(empty_progress["project"], name);
+    assert_eq!(empty_progress["status"], "no_scans");
+
+    let now = chrono::Utc::now();
+    let scan = storage::scans::save_scan(
+        &pool,
+        project.id,
+        "https://example.com",
+        "quick",
+        now,
+        Some(now),
+        &["gitleaks".to_string()],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await?;
+    let seeded = vec![Finding::new(
+        "gitleaks",
+        Severity::Critical,
+        "Exposed API key",
+        "fixture",
+        "https://example.com",
+    )];
+    storage::findings::save_findings(&pool, project.id, scan.id, &seeded).await?;
+
+    let progress: serde_json::Value = serde_json::from_str(
+        &server
+            .do_scan_progress(ScanProgressParams { project: name.clone() })
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+    assert_eq!(progress["project"], name);
+    assert_eq!(progress["status"], "complete");
+    assert_eq!(progress["total_scans"], 1);
+    assert_eq!(progress["total_tracked_findings"], 1);
+
+    let correlation: serde_json::Value = serde_json::from_str(
+        &server
+            .do_correlate_findings(CorrelateFindingsParams { project: name.clone() })
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+    assert_eq!(correlation["project"], name);
+    assert_eq!(correlation["total_findings_analyzed"], 1);
+    assert!(correlation["attack_chains_found"].as_u64().is_some_and(|count| count >= 1));
+    assert!(correlation["chains"].as_array().is_some_and(|chains| !chains.is_empty()));
+
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
 }
 
 /// Verify `correlate_findings` params deserialize.

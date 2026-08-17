@@ -1,7 +1,5 @@
-use std::time::Instant;
-
-#[cfg(test)]
 use std::sync::Arc;
+use std::time::Instant;
 
 use chrono::Utc;
 use colored::Colorize;
@@ -15,6 +13,7 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::scan_result::ScanResult;
+use crate::runner::job::{JobProgressSink, JobProgressUpdate};
 use crate::runner::job_executor::{
     cancel_on_token, ensure_not_cancelled, CancellationToken, JobExecutor, JobOutcome,
 };
@@ -42,13 +41,14 @@ pub struct Orchestrator {
     ctx: ScanContext,
     modules: Vec<Box<dyn ScanModule>>,
     hook_runner: crate::engine::hook_runner::HookRunner,
+    job_progress: Option<Arc<dyn JobProgressSink>>,
 }
 
 impl Orchestrator {
     #[must_use]
     pub fn new(ctx: ScanContext) -> Self {
         let hook_runner = crate::engine::hook_runner::HookRunner::new(&ctx.config.hooks);
-        Self { ctx, modules: Vec::new(), hook_runner }
+        Self { ctx, modules: Vec::new(), hook_runner, job_progress: None }
     }
 
     pub fn register_default_modules(&mut self) {
@@ -84,6 +84,17 @@ impl Orchestrator {
 
     pub fn exclude_by_ids(&mut self, ids: &[String]) {
         self.modules.retain(|m| !ids.iter().any(|id| id == m.id()));
+    }
+
+    /// Number of modules selected for this orchestrator run.
+    #[must_use]
+    pub fn module_count(&self) -> usize {
+        self.modules.len()
+    }
+
+    /// Attach the reliable module-boundary sink owned by a scan job.
+    pub fn set_job_progress_sink(&mut self, sink: Arc<dyn JobProgressSink>) {
+        self.job_progress = Some(sink);
     }
 
     /// Filter modules by scan profile.
@@ -311,6 +322,11 @@ impl Orchestrator {
                     module_id: module.id().to_string(),
                     reason: reason.clone(),
                 });
+                if let Some(sink) = &self.job_progress {
+                    sink.publish(JobProgressUpdate::Skipped {
+                        module_id: module.id().to_string(),
+                    })?;
+                }
                 modules_skipped.push((module.id().to_string(), reason));
                 continue;
             }
@@ -345,12 +361,19 @@ impl Orchestrator {
 
         let batches: [Vec<&dyn ScanModule>; 2] = (recon, scanners).into();
         for batch in batches {
-            let outcomes =
-                execute_scan_modules(batch, &self.ctx, &scan_id, quiet, &executor, cancellation)
-                    .await?;
+            let outcomes = execute_scan_modules(
+                batch,
+                &self.ctx,
+                &scan_id,
+                quiet,
+                &executor,
+                cancellation,
+                self.job_progress.as_ref(),
+            )
+            .await?;
             for outcome in outcomes {
                 let duration_ms = u64::try_from(outcome.duration().as_millis()).unwrap_or(u64::MAX);
-                let ModuleExecution { module_id, module_name, result } = outcome.into_output();
+                let ModuleExecution { module_id, module_name, result } = outcome.into_output()?;
                 match result {
                     Ok(findings) => {
                         // Fire post-module hooks in deterministic executor order.
@@ -403,6 +426,12 @@ impl Orchestrator {
                             findings_count: findings.len(),
                             duration_ms,
                         });
+                        if let Some(sink) = &self.job_progress {
+                            sink.publish(JobProgressUpdate::Completed {
+                                module_id: module_id.clone(),
+                                findings: findings.clone(),
+                            })?;
+                        }
                         modules_run.push(module_id);
                         all_findings.extend(findings);
                     }
@@ -413,6 +442,11 @@ impl Orchestrator {
                             module_id: module_id.clone(),
                             error: error.clone(),
                         });
+                        if let Some(sink) = &self.job_progress {
+                            sink.publish(JobProgressUpdate::Failed {
+                                module_id: module_id.clone(),
+                            })?;
+                        }
                         modules_skipped.push((module_id, error));
                     }
                 }
@@ -719,6 +753,7 @@ impl Orchestrator {
             quiet,
             &executor,
             cancellation,
+            self.job_progress.as_ref(),
             &mut all_findings,
             &mut modules_run,
             &mut modules_skipped,
@@ -740,6 +775,7 @@ impl Orchestrator {
             quiet,
             &executor,
             cancellation,
+            self.job_progress.as_ref(),
             &mut all_findings,
             &mut modules_run,
             &mut modules_skipped,
@@ -781,14 +817,19 @@ async fn execute_scan_modules<'module>(
     quiet: bool,
     executor: &JobExecutor,
     cancellation: &CancellationToken,
-) -> Result<Vec<JobOutcome<ModuleExecution>>> {
+    progress_sink: Option<&Arc<dyn JobProgressSink>>,
+) -> Result<Vec<JobOutcome<Result<ModuleExecution>>>> {
     let mut jobs = Vec::with_capacity(modules.len());
     for module in modules {
         let scan_id = scan_id.to_string();
+        let progress_sink = progress_sink.cloned();
         jobs.push(
             async move {
                 let module_name = module.name().to_string();
                 let module_id = module.id().to_string();
+                if let Some(sink) = &progress_sink {
+                    sink.publish(JobProgressUpdate::Started { module_id: module_id.clone() })?;
+                }
                 let spinner =
                     progress::is_visible(quiet).then(|| progress::module_spinner(&module_name));
                 ctx.events.publish(ScanEvent::ModuleStarted {
@@ -809,7 +850,7 @@ async fn execute_scan_modules<'module>(
                         }
                     }
                 }
-                ModuleExecution { module_id, module_name, result }
+                Ok(ModuleExecution { module_id, module_name, result })
             }
             .boxed(),
         );
@@ -827,6 +868,7 @@ async fn run_module_batch(
     quiet: bool,
     executor: &JobExecutor,
     cancellation: &CancellationToken,
+    progress_sink: Option<&Arc<dyn JobProgressSink>>,
     findings: &mut Vec<Finding>,
     modules_run: &mut Vec<String>,
     modules_skipped: &mut Vec<(String, String)>,
@@ -851,6 +893,9 @@ async fn run_module_batch(
                 module_id: module.id().to_string(),
                 reason: reason.clone(),
             });
+            if let Some(sink) = progress_sink {
+                sink.publish(JobProgressUpdate::Skipped { module_id: module.id().to_string() })?;
+            }
             modules_skipped.push((module.id().to_string(), reason));
             continue;
         }
@@ -858,10 +903,11 @@ async fn run_module_batch(
     }
 
     let outcomes =
-        execute_scan_modules(runnable, ctx, scan_id, quiet, executor, cancellation).await?;
+        execute_scan_modules(runnable, ctx, scan_id, quiet, executor, cancellation, progress_sink)
+            .await?;
     for outcome in outcomes {
         let duration_ms = u64::try_from(outcome.duration().as_millis()).unwrap_or(u64::MAX);
-        let ModuleExecution { module_id, result, .. } = outcome.into_output();
+        let ModuleExecution { module_id, result, .. } = outcome.into_output()?;
 
         match result {
             Ok(found) => {
@@ -878,6 +924,12 @@ async fn run_module_batch(
                     findings_count: found.len(),
                     duration_ms,
                 });
+                if let Some(sink) = progress_sink {
+                    sink.publish(JobProgressUpdate::Completed {
+                        module_id: module_id.clone(),
+                        findings: found.clone(),
+                    })?;
+                }
                 modules_run.push(module_id);
                 findings.extend(found);
             }
@@ -888,6 +940,9 @@ async fn run_module_batch(
                     module_id: module_id.clone(),
                     error: err_str.clone(),
                 });
+                if let Some(sink) = progress_sink {
+                    sink.publish(JobProgressUpdate::Failed { module_id: module_id.clone() })?;
+                }
                 modules_skipped.push((module_id, err_str));
             }
         }

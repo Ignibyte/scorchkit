@@ -39,8 +39,9 @@ Future drop is the effect cancellation boundary:
 - Native socket futures release their sockets.
 
 Loopback HTTP and local process-tree tests require cleanup within two seconds. The executor does not
-return a partial `ScanResult` or persist progress. SK-029 owns durable job state, progress, partial
-recovery, and transport-facing cancellation.
+return a partial `ScanResult` or persist progress. The provider-neutral job control plane in
+`docs/architecture/jobs.md` owns durable state, progress, partial recovery, and transport-facing
+cancellation without changing this executor contract.
 
 ## Family phases
 
@@ -55,9 +56,9 @@ Post-module hooks, finding events, completion/error events, and result assembly 
 outcome list after a phase. `ModuleStarted` is published when a module future begins polling, so it
 continues to describe real execution rather than queue admission.
 
-Checkpoint mode remains serial and saves after every module. Converting that path to a batch without
-durable partial outcomes would weaken resume behavior. SK-029 replaces this exception with the
-stored job lifecycle.
+Checkpoint mode remains as a legacy serial compatibility path. New CLI and MCP work uses the stored
+job lifecycle, whose reliable module-boundary sink preserves completed evidence while the shared
+executor remains concurrent and persistence-free.
 
 ## Failure boundary
 

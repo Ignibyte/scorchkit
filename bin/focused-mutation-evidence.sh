@@ -11,20 +11,22 @@ FOCUSED_EVIDENCE_FILES=(
     initial/mutants.json
     initial/caught.txt
     initial/missed.txt
+    initial/timeout.txt
     initial/unviable.txt
     recheck/outcomes.json
     recheck/mutants.json
     recheck/caught.txt
     recheck/missed.txt
+    recheck/timeout.txt
     recheck/unviable.txt
 )
 readonly FOCUSED_EVIDENCE_FILES
 FOCUSED_FOLLOWUP_FILES=(
-    followup-001/base-src-runner-subprocess.rs
     followup-001/outcomes.json
     followup-001/mutants.json
     followup-001/caught.txt
     followup-001/missed.txt
+    followup-001/timeout.txt
     followup-001/unviable.txt
 )
 readonly FOCUSED_FOLLOWUP_FILES
@@ -50,9 +52,9 @@ need_tool() {
 
 mutation_input_hash() {
     local root="${1:-$ROOT_DIR}"
-    local override_relative="${2:-}" override_source="${3:-}"
+    local override_manifest="${2:-}"
     local digest entry_count=0 file file_list fingerprint head manifest override_seen=0
-    local state_failed=0 target
+    local override_count=0 override_matches override_source state_failed=0 target
     local -a scope=(
         Cargo.toml
         Cargo.lock
@@ -76,14 +78,27 @@ mutation_input_hash() {
         return 1
     }
     root="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" || return 1
-    if [ -n "$override_relative" ]; then
-        if [ -z "$override_source" ] || [ ! -f "$override_source" ] || [ -L "$override_source" ]; then
-            echo "mutation input override is missing or is a symlink" >&2
+    if [ -n "$override_manifest" ]; then
+        if [ ! -f "$override_manifest" ] || [ -L "$override_manifest" ]; then
+            echo "mutation input override manifest is missing or is a symlink" >&2
             return 1
         fi
-    elif [ -n "$override_source" ]; then
-        echo "mutation input override requires a repository-relative path" >&2
-        return 1
+        override_count="$(awk -F '\t' '
+            NF != 2 || $1 == "" || $2 == "" { invalid = 1 }
+            END { if (invalid) exit 1; print NR }
+        ' "$override_manifest")" || {
+            echo "mutation input override manifest is invalid" >&2
+            return 1
+        }
+        [ "$override_count" -gt 0 ] || {
+            echo "mutation input override manifest is empty" >&2
+            return 1
+        }
+        if [ "$(cut -f1 "$override_manifest" | LC_ALL=C sort -u | wc -l | tr -d ' ')" \
+            -ne "$override_count" ]; then
+            echo "mutation input override manifest contains duplicate paths" >&2
+            return 1
+        fi
     fi
 
     file_list="$(mktemp "${TMPDIR:-/tmp}/scorchkit-mutation-inputs.XXXXXX")" || return 1
@@ -116,7 +131,23 @@ mutation_input_hash() {
             }
             printf 'PATH\0%s\0SYMLINK\0%s\0' "$file" "$target" >> "$manifest"
         elif [ -f "$root/$file" ]; then
-            if [ -n "$override_relative" ] && [ "$file" = "$override_relative" ]; then
+            override_source=""
+            if [ -n "$override_manifest" ]; then
+                override_matches="$(awk -F '\t' -v path="$file" '$1 == path { print $2 }' \
+                    "$override_manifest")"
+                if [ -n "$override_matches" ]; then
+                    if [ "$(printf '%s\n' "$override_matches" | wc -l | tr -d ' ')" -ne 1 ]; then
+                        state_failed=1
+                        break
+                    fi
+                    override_source="$override_matches"
+                fi
+            fi
+            if [ -n "$override_source" ]; then
+                if [ ! -f "$override_source" ] || [ -L "$override_source" ]; then
+                    state_failed=1
+                    break
+                fi
                 digest="$(shasum -a 256 < "$override_source" 2>/dev/null | awk '{print $1}')"
                 override_seen=$((override_seen + 1))
             else
@@ -138,7 +169,7 @@ mutation_input_hash() {
     rm -f "$file_list"
 
     if [ "$state_failed" -ne 0 ] || [ "$entry_count" -eq 0 ] \
-        || { [ -n "$override_relative" ] && [ "$override_seen" -ne 1 ]; }; then
+        || { [ -n "$override_manifest" ] && [ "$override_seen" -ne "$override_count" ]; }; then
         rm -f "$manifest"
         echo "could not read a complete mutation input inventory" >&2
         return 1
@@ -162,6 +193,12 @@ evidence_file_list() {
         for relative in "${FOCUSED_FOLLOWUP_FILES[@]}"; do
             printf '%s\n' "$relative"
         done
+    fi
+    if [ -f "$evidence/summary.json" ]; then
+        jq -r '.input_transition.snapshots[]?.snapshot // empty' \
+            "$evidence/summary.json" 2>/dev/null || return 1
+        jq -r '.focused_followup.snapshots[]?.snapshot // empty' \
+            "$evidence/summary.json" 2>/dev/null || return 1
     fi
 }
 
@@ -238,19 +275,25 @@ verify_evidence() {
     local initial_selected initial_caught initial_missed initial_unviable initial_timeout
     local recheck_selected recheck_caught recheck_missed recheck_unviable recheck_timeout
     local summary_selected summary_files summary_functions summary_mutated_functions summary_initial_caught
-    local summary_initial_missed summary_initial_unviable summary_recheck_selected
-    local summary_recheck_caught summary_recheck_missed summary_recheck_unviable
+    local summary_initial_missed summary_initial_timeout summary_initial_unviable
+    local summary_recheck_selected summary_recheck_caught summary_recheck_missed
+    local summary_recheck_timeout summary_recheck_unviable
+    local repair_files repair_functions repair_selected
     local final_caught final_missed final_unviable final_viable final_score required_score
-    local actual_files actual_functions baseline_followup=0 baseline_initial baseline_recheck
+    local actual_files actual_functions actual_recheck_files actual_recheck_functions
+    local baseline_followup=0 baseline_initial baseline_recheck
     local current_input sealed_input followup_version="" initial_version recheck_version numeric
     local initial_inventory recheck_inventory initial_missed_names recheck_caught_names result_digest
-    local base_input followup_base_snapshot followup_base_snapshot_sha followup_caught=0
-    local followup_expected_functions followup_file followup_functions followup_inventory
+    local base_input followup_base_input="" followup_caught=0
+    local followup_actual_files=0 followup_actual_functions=0 followup_expected_functions
+    local followup_functions followup_inventory
     local followup_missed=0
     local followup_mutants followup_outcomes followup_selected=0 followup_score=0
     local followup_timeout=0 followup_unviable=0 hypothetical_base snapshot_sha
-    local summary_followup_caught=0 summary_followup_missed=0 summary_followup_selected=0
-    local summary_followup_unviable=0
+    local summary_followup_caught=0 summary_followup_files=0 summary_followup_missed=0
+    local summary_followup_selected=0 summary_followup_timeout=0 summary_followup_unviable=0
+    local transition_manifest transition_seen=0
+    local transition_file transition_snapshot transition_snapshot_sha
 
     need_tool cmp || return 1
     need_tool jq || return 1
@@ -271,6 +314,7 @@ verify_evidence() {
             and .completed == true
             and (.date | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
             and (.cargo_mutants_version | type == "string" and length > 0)
+            and (.owner_approval | type == "string" and length > 0)
             and .full_repository_mutation == "deferred_by_repository_owner"
             and (.mutation_input_sha256 | test("^[0-9a-f]{64}$"))
             and ((.base_mutation_input_sha256 // .mutation_input_sha256)
@@ -279,11 +323,16 @@ verify_evidence() {
             and (.scope.functions | nni and . > 0)
             and (.scope.mutated_functions | nni and . > 0)
             and (.scope.selected_mutations | nni and . > 0)
+            and (.repair_scope.files | nni and . > 0)
+            and (.repair_scope.functions | nni and . > 0)
+            and (.repair_scope.selected_mutations | nni and . > 0)
             and (.initial_run.caught | nni)
+            and (.initial_run.timeouts | nni)
             and (.initial_run.missed | nni)
             and (.initial_run.unviable | nni)
             and (.exact_recheck.selected_mutations | nni and . > 0)
             and (.exact_recheck.caught | nni)
+            and (.exact_recheck.timeouts | nni)
             and (.exact_recheck.missed | nni)
             and (.exact_recheck.unviable | nni)
             and (.final_outcome.caught | nni)
@@ -294,19 +343,34 @@ verify_evidence() {
                 | type == "number" and . >= 0 and . <= 100)
             and (.final_outcome.required_score_percent
                 | type == "number" and . >= 95 and . <= 100)
+            and ((has("input_transition") | not) or (
+                .input_transition.snapshots | type == "array" and length > 0
+                and all(.[];
+                    (.file | type == "string" and length > 0)
+                    and (.snapshot | type == "string" and length > 0)
+                    and (.sha256 | test("^[0-9a-f]{64}$")))
+                and ([.[].file] | length == (unique | length))
+                and ([.[].snapshot] | length == (unique | length))
+            ))
             and ((has("focused_followup") | not) or (
                 .focused_followup.id == "followup-001"
                 and (.focused_followup.reason | type == "string" and length > 0)
-                and (.focused_followup.changed_file | type == "string" and length > 0)
-                and .focused_followup.baseline_snapshot
-                    == "followup-001/base-src-runner-subprocess.rs"
-                and (.focused_followup.baseline_snapshot_sha256
+                and (.focused_followup.base_mutation_input_sha256
                     | test("^[0-9a-f]{64}$"))
+                and (.focused_followup.files | nni and . > 0)
+                and (.focused_followup.snapshots | type == "array" and length > 0
+                    and all(.[];
+                        (.file | type == "string" and length > 0)
+                        and (.snapshot | type == "string" and length > 0)
+                        and (.sha256 | test("^[0-9a-f]{64}$")))
+                    and ([.[].file] | length == (unique | length))
+                    and ([.[].snapshot] | length == (unique | length)))
                 and (.focused_followup.functions | type == "array" and length > 0
                     and all(.[]; type == "string" and length > 0)
                     and length == (unique | length))
                 and (.focused_followup.selected_mutations | nni and . > 0)
                 and (.focused_followup.caught | nni)
+                and (.focused_followup.timeouts | nni)
                 and (.focused_followup.missed | nni)
                 and (.focused_followup.unviable | nni)
                 and (.focused_followup.mutation_score_percent
@@ -360,7 +424,7 @@ verify_evidence() {
         if ! jq -e '
                 type == "array" and length > 0
                 and all(.[]; (.name | type == "string" and length > 0)
-                    and .file == "src/runner/subprocess.rs"
+                    and (.file | type == "string" and length > 0)
                     and (.function.function_name | type == "string" and length > 0))
                 and ([.[].name] | length == (unique | length))
             ' "$followup_mutants" >/dev/null \
@@ -398,12 +462,17 @@ verify_evidence() {
     summary_functions="$(jq -r '.scope.functions' "$summary")"
     summary_mutated_functions="$(jq -r '.scope.mutated_functions' "$summary")"
     summary_initial_caught="$(jq -r '.initial_run.caught' "$summary")"
+    summary_initial_timeout="$(jq -r '.initial_run.timeouts' "$summary")"
     summary_initial_missed="$(jq -r '.initial_run.missed' "$summary")"
     summary_initial_unviable="$(jq -r '.initial_run.unviable' "$summary")"
     summary_recheck_selected="$(jq -r '.exact_recheck.selected_mutations' "$summary")"
     summary_recheck_caught="$(jq -r '.exact_recheck.caught' "$summary")"
+    summary_recheck_timeout="$(jq -r '.exact_recheck.timeouts' "$summary")"
     summary_recheck_missed="$(jq -r '.exact_recheck.missed' "$summary")"
     summary_recheck_unviable="$(jq -r '.exact_recheck.unviable' "$summary")"
+    repair_files="$(jq -r '.repair_scope.files' "$summary")"
+    repair_functions="$(jq -r '.repair_scope.functions' "$summary")"
+    repair_selected="$(jq -r '.repair_scope.selected_mutations' "$summary")"
     final_caught="$(jq -r '.final_outcome.caught' "$summary")"
     final_missed="$(jq -r '.final_outcome.missed' "$summary")"
     final_unviable="$(jq -r '.final_outcome.unviable' "$summary")"
@@ -412,6 +481,9 @@ verify_evidence() {
     required_score="$(jq -r '.final_outcome.required_score_percent' "$summary")"
     actual_files="$(jq -r '[.[].file] | unique | length' "$initial_mutants")"
     actual_functions="$(jq -r '[.[].function.function_name] | unique | length' "$initial_mutants")"
+    actual_recheck_files="$(jq -r '[.[].file] | unique | length' "$recheck_mutants")"
+    actual_recheck_functions="$(jq -r '[.[].function.function_name] | unique | length' \
+        "$recheck_mutants")"
     initial_version="$(jq -r '.cargo_mutants_version' "$initial_outcomes")"
     recheck_version="$(jq -r '.cargo_mutants_version' "$recheck_outcomes")"
     if [ -n "$followup_outcomes" ]; then
@@ -424,8 +496,14 @@ verify_evidence() {
         followup_version="$(jq -r '.cargo_mutants_version' "$followup_outcomes")"
         summary_followup_selected="$(jq -r '.focused_followup.selected_mutations' "$summary")"
         summary_followup_caught="$(jq -r '.focused_followup.caught' "$summary")"
+        summary_followup_timeout="$(jq -r '.focused_followup.timeouts' "$summary")"
         summary_followup_missed="$(jq -r '.focused_followup.missed' "$summary")"
         summary_followup_unviable="$(jq -r '.focused_followup.unviable' "$summary")"
+        summary_followup_files="$(jq -r '.focused_followup.files' "$summary")"
+        followup_base_input="$(jq -r '.focused_followup.base_mutation_input_sha256' "$summary")"
+        followup_actual_files="$(jq -r '[.[].file] | unique | length' "$followup_mutants")"
+        followup_actual_functions="$(jq -r '[.[].function.function_name] | unique | length' \
+            "$followup_mutants")"
         followup_score="$(jq -r '.focused_followup.mutation_score_percent' "$summary")"
     fi
 
@@ -433,13 +511,18 @@ verify_evidence() {
         "$initial_unviable" "$initial_timeout" "$recheck_selected" "$recheck_caught" \
         "$recheck_missed" "$recheck_unviable" "$recheck_timeout" "$summary_selected" \
         "$summary_files" "$summary_functions" "$summary_mutated_functions" \
-        "$summary_initial_caught" "$summary_initial_missed" "$summary_initial_unviable" \
-        "$summary_recheck_selected" "$summary_recheck_caught" "$summary_recheck_missed" \
-        "$summary_recheck_unviable" "$final_caught" "$final_missed" "$final_unviable" \
-        "$final_viable" "$actual_files" "$actual_functions" "$followup_selected" \
+        "$summary_initial_caught" "$summary_initial_timeout" "$summary_initial_missed" \
+        "$summary_initial_unviable" "$summary_recheck_selected" "$summary_recheck_caught" \
+        "$summary_recheck_timeout" "$summary_recheck_missed" "$summary_recheck_unviable" \
+        "$repair_files" "$repair_functions" "$repair_selected" \
+        "$final_caught" "$final_missed" "$final_unviable" \
+        "$final_viable" "$actual_files" "$actual_functions" "$actual_recheck_files" \
+        "$actual_recheck_functions" "$followup_selected" \
         "$followup_caught" "$followup_missed" "$followup_unviable" "$followup_timeout" \
         "$summary_followup_selected" "$summary_followup_caught" \
-        "$summary_followup_missed" "$summary_followup_unviable"; do
+        "$summary_followup_timeout" "$summary_followup_missed" \
+        "$summary_followup_unviable" "$summary_followup_files" \
+        "$followup_actual_files" "$followup_actual_functions"; do
         [[ "$numeric" =~ ^[0-9]+$ ]] || {
             echo "focused mutation evidence contains a non-integer count" >&2
             return 1
@@ -453,16 +536,16 @@ verify_evidence() {
     fi
 
     if [ "$baseline_initial" -ne 1 ] || [ "$baseline_recheck" -ne 1 ] \
-        || [ "$initial_timeout" -ne 0 ] || [ "$recheck_timeout" -ne 0 ] \
         || [ "$initial_version" != "$recheck_version" ] \
         || [ "$initial_version" != "$(jq -r '.cargo_mutants_version' "$summary")" ] \
         || { [ -n "$followup_outcomes" ] \
-            && { [ "$baseline_followup" -ne 1 ] || [ "$followup_timeout" -ne 0 ] \
+            && { [ "$baseline_followup" -ne 1 ] \
                 || [ "$followup_version" != "$initial_version" ]; }; }; then
-        echo "focused mutation runs require one successful baseline and no timeouts" >&2
+        echo "focused mutation runs require one successful baseline and one tool version" >&2
         return 1
     fi
-    if [ "$initial_selected" -ne "$((initial_caught + initial_missed + initial_unviable))" ] \
+    if [ "$initial_selected" \
+        -ne "$((initial_caught + initial_timeout + initial_missed + initial_unviable))" ] \
         || [ "$(jq -r '.outcomes | length' "$initial_outcomes")" -ne "$((initial_selected + 1))" ] \
         || [ "$initial_selected" -ne "$summary_selected" ] \
         || [ "$initial_selected" -ne "$(jq -r '.total_mutants' "$initial_outcomes")" ] \
@@ -471,6 +554,7 @@ verify_evidence() {
         || [ "$initial_unviable" -ne "$(jq -r '.unviable' "$initial_outcomes")" ] \
         || [ "$initial_timeout" -ne "$(jq -r '.timeout' "$initial_outcomes")" ] \
         || [ "$initial_caught" -ne "$summary_initial_caught" ] \
+        || [ "$initial_timeout" -ne "$summary_initial_timeout" ] \
         || [ "$initial_missed" -ne "$summary_initial_missed" ] \
         || [ "$initial_unviable" -ne "$summary_initial_unviable" ] \
         || [ "$actual_files" -ne "$summary_files" ] \
@@ -479,7 +563,8 @@ verify_evidence() {
         echo "focused mutation initial-run counts do not match the sealed summary" >&2
         return 1
     fi
-    if [ "$recheck_selected" -ne "$((recheck_caught + recheck_missed + recheck_unviable))" ] \
+    if [ "$recheck_selected" \
+        -ne "$((recheck_caught + recheck_timeout + recheck_missed + recheck_unviable))" ] \
         || [ "$(jq -r '.outcomes | length' "$recheck_outcomes")" -ne "$((recheck_selected + 1))" ] \
         || [ "$recheck_selected" -ne "$summary_recheck_selected" ] \
         || [ "$recheck_selected" -ne "$(jq -r '.total_mutants' "$recheck_outcomes")" ] \
@@ -488,13 +573,18 @@ verify_evidence() {
         || [ "$recheck_unviable" -ne "$(jq -r '.unviable' "$recheck_outcomes")" ] \
         || [ "$recheck_timeout" -ne "$(jq -r '.timeout' "$recheck_outcomes")" ] \
         || [ "$recheck_caught" -ne "$summary_recheck_caught" ] \
+        || [ "$recheck_timeout" -ne "$summary_recheck_timeout" ] \
         || [ "$recheck_missed" -ne "$summary_recheck_missed" ] \
-        || [ "$recheck_unviable" -ne "$summary_recheck_unviable" ]; then
+        || [ "$recheck_unviable" -ne "$summary_recheck_unviable" ] \
+        || [ "$recheck_selected" -ne "$repair_selected" ] \
+        || [ "$actual_recheck_files" -ne "$repair_files" ] \
+        || [ "$actual_recheck_functions" -ne "$repair_functions" ]; then
         echo "focused mutation exact-recheck counts do not match the sealed summary" >&2
         return 1
     fi
     if [ -n "$followup_outcomes" ]; then
-        if [ "$followup_selected" -ne "$((followup_caught + followup_missed + followup_unviable))" ] \
+        if [ "$followup_selected" \
+            -ne "$((followup_caught + followup_timeout + followup_missed + followup_unviable))" ] \
             || [ "$(jq -r '.outcomes | length' "$followup_outcomes")" -ne "$((followup_selected + 1))" ] \
             || [ "$followup_selected" -ne "$(jq -r '.total_mutants' "$followup_outcomes")" ] \
             || [ "$followup_caught" -ne "$(jq -r '.caught' "$followup_outcomes")" ] \
@@ -503,13 +593,16 @@ verify_evidence() {
             || [ "$followup_timeout" -ne "$(jq -r '.timeout' "$followup_outcomes")" ] \
             || [ "$followup_selected" -ne "$summary_followup_selected" ] \
             || [ "$followup_caught" -ne "$summary_followup_caught" ] \
+            || [ "$followup_timeout" -ne "$summary_followup_timeout" ] \
             || [ "$followup_missed" -ne "$summary_followup_missed" ] \
             || [ "$followup_unviable" -ne "$summary_followup_unviable" ] \
+            || [ "$followup_actual_files" -ne "$summary_followup_files" ] \
             || [ "$followup_missed" -ne 0 ]; then
             echo "focused mutation follow-up counts do not match the sealed summary" >&2
             return 1
         fi
-        if ! awk -v caught="$followup_caught" -v viable="$((followup_caught + followup_missed))" \
+        if ! awk -v caught="$((followup_caught + followup_timeout))" \
+            -v viable="$((followup_caught + followup_timeout + followup_missed))" \
             -v reported="$followup_score" \
             'BEGIN {
                 if (viable <= 0 || reported < 95) exit 1
@@ -525,6 +618,8 @@ verify_evidence() {
             "$evidence/followup-001/caught.txt" || return 1
         compare_outcome_names "$followup_outcomes" MissedMutant \
             "$evidence/followup-001/missed.txt" || return 1
+        compare_outcome_names "$followup_outcomes" Timeout \
+            "$evidence/followup-001/timeout.txt" || return 1
         compare_outcome_names "$followup_outcomes" Unviable \
             "$evidence/followup-001/unviable.txt" || return 1
 
@@ -551,14 +646,21 @@ verify_evidence() {
             echo "follow-up function scope does not match the sealed summary" >&2
             return 1
         fi
+        if [ "$followup_actual_functions" \
+            -ne "$(jq -r '.focused_followup.functions | length' "$summary")" ]; then
+            rm -f "$followup_inventory" "$followup_functions" "$followup_expected_functions"
+            echo "follow-up function count does not match the sealed summary" >&2
+            return 1
+        fi
         rm -f "$followup_inventory" "$followup_functions" "$followup_expected_functions"
     fi
     if [ "$initial_missed" -ne "$recheck_selected" ] \
-        || [ "$recheck_caught" -ne "$recheck_selected" ] \
+        || [ "$((recheck_caught + recheck_timeout))" -ne "$recheck_selected" ] \
         || [ "$recheck_missed" -ne 0 ] || [ "$recheck_unviable" -ne 0 ] \
-        || [ "$final_caught" -ne "$((initial_caught + recheck_caught + followup_caught))" ] \
+        || [ "$final_caught" \
+            -ne "$((initial_caught + initial_timeout + recheck_caught + recheck_timeout))" ] \
         || [ "$final_missed" -ne 0 ] \
-        || [ "$final_unviable" -ne "$((initial_unviable + recheck_unviable + followup_unviable))" ] \
+        || [ "$final_unviable" -ne "$((initial_unviable + recheck_unviable))" ] \
         || [ "$final_viable" -ne "$((final_caught + final_missed))" ]; then
         echo "focused mutation repair arithmetic is inconsistent" >&2
         return 1
@@ -578,9 +680,11 @@ verify_evidence() {
 
     compare_outcome_names "$initial_outcomes" CaughtMutant "$evidence/initial/caught.txt" || return 1
     compare_outcome_names "$initial_outcomes" MissedMutant "$evidence/initial/missed.txt" || return 1
+    compare_outcome_names "$initial_outcomes" Timeout "$evidence/initial/timeout.txt" || return 1
     compare_outcome_names "$initial_outcomes" Unviable "$evidence/initial/unviable.txt" || return 1
     compare_outcome_names "$recheck_outcomes" CaughtMutant "$evidence/recheck/caught.txt" || return 1
     compare_outcome_names "$recheck_outcomes" MissedMutant "$evidence/recheck/missed.txt" || return 1
+    compare_outcome_names "$recheck_outcomes" Timeout "$evidence/recheck/timeout.txt" || return 1
     compare_outcome_names "$recheck_outcomes" Unviable "$evidence/recheck/unviable.txt" || return 1
 
     initial_inventory="$(mktemp "${TMPDIR:-/tmp}/scorchkit-initial-inventory.XXXXXX")" || return 1
@@ -607,7 +711,8 @@ verify_evidence() {
     jq -r '.outcomes[] | select(.summary == "MissedMutant") | .scenario.Mutant.name' \
         "$initial_outcomes" | LC_ALL=C sort > "$initial_missed_names"
     jq -r '.[].name' "$recheck_mutants" | LC_ALL=C sort > "$recheck_inventory"
-    jq -r '.outcomes[] | select(.summary == "CaughtMutant") | .scenario.Mutant.name' \
+    jq -r '.outcomes[] | select(.summary == "CaughtMutant" or .summary == "Timeout")
+        | .scenario.Mutant.name' \
         "$recheck_outcomes" | LC_ALL=C sort > "$recheck_caught_names"
     if ! cmp -s "$initial_missed_names" "$recheck_inventory" \
         || ! cmp -s "$initial_missed_names" "$recheck_caught_names"; then
@@ -624,31 +729,112 @@ verify_evidence() {
         echo "focused mutation evidence does not match current mutation-relevant inputs" >&2
         return 1
     fi
-    if [ -n "$followup_outcomes" ]; then
-        followup_file="$(jq -r '.focused_followup.changed_file' "$summary")"
-        followup_base_snapshot="$(jq -r '.focused_followup.baseline_snapshot' "$summary")"
-        followup_base_snapshot_sha="$(jq -r '.focused_followup.baseline_snapshot_sha256' "$summary")"
-        if [ "$followup_file" != "src/runner/subprocess.rs" ] \
-            || [ ! -f "$evidence/$followup_base_snapshot" ] \
-            || [ -L "$evidence/$followup_base_snapshot" ] \
-            || cmp -s "$ROOT_DIR/$followup_file" "$evidence/$followup_base_snapshot"; then
-            echo "focused mutation follow-up source transition is invalid" >&2
+    if jq -e 'has("input_transition")' "$summary" >/dev/null; then
+        if [ "$base_input" = "$current_input" ]; then
+            echo "focused mutation input transition did not change the sealed input hash" >&2
             return 1
         fi
-        snapshot_sha="$(shasum -a 256 < "$evidence/$followup_base_snapshot" | awk '{print $1}')"
-        if [ "$snapshot_sha" != "$followup_base_snapshot_sha" ]; then
-            echo "focused mutation follow-up baseline snapshot digest is invalid" >&2
+        transition_manifest="$(mktemp "${TMPDIR:-/tmp}/scorchkit-transition.XXXXXX")" \
+            || return 1
+        : > "$transition_manifest"
+        while IFS=$'\t' read -r transition_file transition_snapshot transition_snapshot_sha; do
+            transition_seen=$((transition_seen + 1))
+            if [ -z "$transition_file" ] || [ -z "$transition_snapshot" ] \
+                || [ -z "$transition_snapshot_sha" ] \
+                || [[ "$transition_file" == /* ]] || [[ "$transition_file" == *"../"* ]] \
+                || [[ "$transition_file" == *"/.." ]] \
+                || [[ "$transition_snapshot" != transition/* ]] \
+                || [[ "$transition_snapshot" == *"../"* ]] \
+                || [ ! -f "$ROOT_DIR/$transition_file" ] \
+                || [ -L "$ROOT_DIR/$transition_file" ] \
+                || [ ! -f "$evidence/$transition_snapshot" ] \
+                || [ -L "$evidence/$transition_snapshot" ] \
+                || cmp -s "$ROOT_DIR/$transition_file" "$evidence/$transition_snapshot"; then
+                rm -f "$transition_manifest"
+                echo "focused mutation input transition is invalid" >&2
+                return 1
+            fi
+            snapshot_sha="$(shasum -a 256 < "$evidence/$transition_snapshot" \
+                | awk '{print $1}')"
+            if [ "$snapshot_sha" != "$transition_snapshot_sha" ]; then
+                rm -f "$transition_manifest"
+                echo "focused mutation transition snapshot digest is invalid" >&2
+                return 1
+            fi
+            printf '%s\t%s\n' "$transition_file" "$evidence/$transition_snapshot" \
+                >> "$transition_manifest"
+        done < <(jq -r '.input_transition.snapshots[] | [.file, .snapshot, .sha256] | @tsv' \
+            "$summary")
+        if [ "$transition_seen" -eq 0 ]; then
+            rm -f "$transition_manifest"
+            echo "focused mutation input transition is empty" >&2
             return 1
         fi
-        hypothetical_base="$(mutation_input_hash \
-            "$ROOT_DIR" "$followup_file" "$evidence/$followup_base_snapshot")" || return 1
+        hypothetical_base="$(mutation_input_hash "$ROOT_DIR" "$transition_manifest")" || {
+            rm -f "$transition_manifest"
+            return 1
+        }
+        rm -f "$transition_manifest"
         if [ "$hypothetical_base" != "$base_input" ]; then
-            echo "focused mutation follow-up changed inputs outside its sealed file" >&2
+            echo "focused mutation repair changed inputs outside its sealed snapshots" >&2
+            return 1
+        fi
+    elif [ -n "$followup_outcomes" ]; then
+        if [ "$base_input" != "$followup_base_input" ]; then
+            echo "focused mutation follow-up base does not match the sealed base input" >&2
             return 1
         fi
     elif [ "$base_input" != "$current_input" ]; then
         echo "focused mutation base input does not match current inputs" >&2
         return 1
+    fi
+    if [ -n "$followup_outcomes" ]; then
+        transition_seen=0
+        transition_manifest="$(mktemp "${TMPDIR:-/tmp}/scorchkit-transition.XXXXXX")" \
+            || return 1
+        : > "$transition_manifest"
+        while IFS=$'\t' read -r transition_file transition_snapshot transition_snapshot_sha; do
+            transition_seen=$((transition_seen + 1))
+            if [ -z "$transition_file" ] || [ -z "$transition_snapshot" ] \
+                || [ -z "$transition_snapshot_sha" ] \
+                || [[ "$transition_file" == /* ]] || [[ "$transition_file" == *"../"* ]] \
+                || [[ "$transition_file" == *"/.." ]] \
+                || [[ "$transition_snapshot" != followup-001/* ]] \
+                || [[ "$transition_snapshot" == *"../"* ]] \
+                || [ ! -f "$ROOT_DIR/$transition_file" ] \
+                || [ -L "$ROOT_DIR/$transition_file" ] \
+                || [ ! -f "$evidence/$transition_snapshot" ] \
+                || [ -L "$evidence/$transition_snapshot" ] \
+                || cmp -s "$ROOT_DIR/$transition_file" "$evidence/$transition_snapshot"; then
+                rm -f "$transition_manifest"
+                echo "focused mutation follow-up transition is invalid" >&2
+                return 1
+            fi
+            snapshot_sha="$(shasum -a 256 < "$evidence/$transition_snapshot" \
+                | awk '{print $1}')"
+            if [ "$snapshot_sha" != "$transition_snapshot_sha" ]; then
+                rm -f "$transition_manifest"
+                echo "focused mutation follow-up snapshot digest is invalid" >&2
+                return 1
+            fi
+            printf '%s\t%s\n' "$transition_file" "$evidence/$transition_snapshot" \
+                >> "$transition_manifest"
+        done < <(jq -r '.focused_followup.snapshots[] | [.file, .snapshot, .sha256] | @tsv' \
+            "$summary")
+        if [ "$transition_seen" -ne "$summary_followup_files" ]; then
+            rm -f "$transition_manifest"
+            echo "focused mutation follow-up snapshot count is inconsistent" >&2
+            return 1
+        fi
+        hypothetical_base="$(mutation_input_hash "$ROOT_DIR" "$transition_manifest")" || {
+            rm -f "$transition_manifest"
+            return 1
+        }
+        rm -f "$transition_manifest"
+        if [ "$hypothetical_base" != "$followup_base_input" ]; then
+            echo "focused mutation follow-up changed inputs outside its sealed snapshots" >&2
+            return 1
+        fi
     fi
     result_digest="$(evidence_digest "$evidence")" || return 1
     echo "focused mutation evidence verified: $final_caught/$final_viable viable caught, ${final_score}% MSI"
@@ -693,9 +879,11 @@ selftest() {
         ']}' > "$evidence/recheck/outcomes.json"
     : > "$evidence/initial/caught.txt"
     printf '%s\n' "$mutant_name" > "$evidence/initial/missed.txt"
+    : > "$evidence/initial/timeout.txt"
     : > "$evidence/initial/unviable.txt"
     printf '%s\n' "$mutant_name" > "$evidence/recheck/caught.txt"
     : > "$evidence/recheck/missed.txt"
+    : > "$evidence/recheck/timeout.txt"
     : > "$evidence/recheck/unviable.txt"
     printf '%s\n' \
         '{' \
@@ -704,10 +892,12 @@ selftest() {
         '  "completed": true,' \
         '  "date": "2026-08-16",' \
         '  "cargo_mutants_version": "selftest",' \
+        '  "owner_approval": "selftest",' \
         "  \"mutation_input_sha256\": \"$input_hash\"," \
         '  "scope": {"files": 1, "functions": 1, "mutated_functions": 1, "selected_mutations": 1},' \
-        '  "initial_run": {"caught": 0, "missed": 1, "unviable": 0},' \
-        '  "exact_recheck": {"selected_mutations": 1, "caught": 1, "missed": 0, "unviable": 0},' \
+        '  "repair_scope": {"files": 1, "functions": 1, "selected_mutations": 1},' \
+        '  "initial_run": {"caught": 0, "timeouts": 0, "missed": 1, "unviable": 0},' \
+        '  "exact_recheck": {"selected_mutations": 1, "caught": 1, "timeouts": 0, "missed": 0, "unviable": 0},' \
         '  "final_outcome": {"caught": 1, "missed": 0, "unviable": 0, "viable": 1, "mutation_score_percent": 100, "required_score_percent": 95},' \
         '  "full_repository_mutation": "deferred_by_repository_owner"' \
         '}' > "$evidence/summary.json"
@@ -773,6 +963,7 @@ selftest() {
         ']}' > "$evidence/followup-001/outcomes.json"
     printf '%s\n' "$followup_name" > "$evidence/followup-001/caught.txt"
     : > "$evidence/followup-001/missed.txt"
+    : > "$evidence/followup-001/timeout.txt"
     : > "$evidence/followup-001/unviable.txt"
     jq --arg base "$input_hash" --arg current "$current_hash" --arg snapshot "$snapshot_sha" '
         .base_mutation_input_sha256 = $base
@@ -780,18 +971,21 @@ selftest() {
         | .focused_followup = {
             id: "followup-001",
             reason: "selftest transition",
-            changed_file: "src/runner/subprocess.rs",
-            baseline_snapshot: "followup-001/base-src-runner-subprocess.rs",
-            baseline_snapshot_sha256: $snapshot,
+            base_mutation_input_sha256: $base,
+            files: 1,
+            snapshots: [{
+                file: "src/runner/subprocess.rs",
+                snapshot: "followup-001/base-src-runner-subprocess.rs",
+                sha256: $snapshot
+            }],
             functions: ["stop_owned_process"],
             selected_mutations: 1,
             caught: 1,
+            timeouts: 0,
             missed: 0,
             unviable: 0,
             mutation_score_percent: 100
         }
-        | .final_outcome.caught = 2
-        | .final_outcome.viable = 2
     ' "$evidence/summary.json" > "$summary_backup" || return 1
     mv "$summary_backup" "$evidence/summary.json"
     ROOT_DIR="$fixture" verify_evidence "$evidence" >/dev/null || return 1

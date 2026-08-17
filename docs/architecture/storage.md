@@ -20,6 +20,9 @@ projects (id, name, description, settings JSONB, created_at, updated_at)
     └── project_targets (id, project_id FK, url UNIQUE(project_id,url), label)
     └── scan_records (id, project_id FK, target_url, profile, started_at, completed_at, modules_run TEXT[], modules_skipped TEXT[], summary JSONB)
         └── tracked_findings (id, scan_id FK, project_id FK, fingerprint, module_id, severity, title, description, affected_target, evidence, remediation, owasp_category, cwe_id, raw_finding JSONB, first_seen, last_seen, seen_count, status)
+
+scan_jobs (id, root_job_id, parent_job_id, attempt, state, revision, owner_id, lease_expires_at, document JSONB, timestamps)
+    └── scan_job_audit_events (job_id, revision, state, occurred_at, event JSONB)
 ```
 
 ## Finding Deduplication
@@ -42,10 +45,16 @@ src/storage/
   projects.rs   — CRUD + target management
   scans.rs      — save/get/list scan records
   findings.rs   — save with dedup, status lifecycle, query by severity/status/scan
+  jobs.rs       — provider-neutral job store adapter with transactional revision audit
   migrate.rs    — run embedded migrations
 migrations/
-  001_initial.sql
+  001_initial.sql … 008_scan_job_successor_uniqueness.sql
 ```
+
+Scan job domain types and the `JobStore` trait live outside this module in `runner::job`. The
+database adapter duplicates only indexed lifecycle fields beside the JSONB domain document. Every
+successful create or compare-and-swap writes its compact append-only audit event in the same
+transaction. See `docs/architecture/jobs.md`.
 
 ## Alternatives Considered
 

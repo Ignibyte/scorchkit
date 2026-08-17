@@ -20,6 +20,7 @@
 pub mod context;
 pub mod findings;
 pub mod intelligence;
+pub mod jobs;
 pub mod metrics;
 pub mod migrate;
 pub mod models;

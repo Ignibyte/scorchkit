@@ -264,6 +264,13 @@ pub enum Commands {
         command: ScheduleCommands,
     },
 
+    /// Run and manage durable scan jobs.
+    #[cfg(feature = "storage")]
+    Job {
+        #[command(subcommand)]
+        command: JobCommands,
+    },
+
     /// Start the MCP server on stdio transport
     #[cfg(feature = "mcp")]
     Serve,
@@ -553,6 +560,65 @@ pub enum ScheduleCommands {
 
     /// Execute all schedules that are due
     RunDue,
+}
+
+/// Durable scan job subcommands.
+#[cfg(feature = "storage")]
+#[derive(Subcommand, Debug)]
+pub enum JobCommands {
+    /// Submit and run a DAST job in the foreground.
+    Run {
+        /// Authorized target URL.
+        target: String,
+        /// Scan profile: quick, standard, thorough, or pentest.
+        #[arg(long, default_value = "standard")]
+        profile: String,
+        /// Comma-separated module allow-list.
+        #[arg(long)]
+        modules: Option<String>,
+        /// Comma-separated module deny-list.
+        #[arg(long)]
+        skip: Option<String>,
+        /// Database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// List at most 1,000 stored jobs in creation order.
+    List {
+        /// Database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Show one job and its progress.
+    Status {
+        /// Scan job UUID.
+        id: String,
+        /// Database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Cancel a queued or running job.
+    Cancel {
+        /// Scan job UUID.
+        id: String,
+        /// Database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Mark jobs with expired ownership leases as interrupted.
+    Recover {
+        /// Database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Create a successor for an interrupted job and run it in the foreground.
+    Resume {
+        /// Interrupted scan job UUID.
+        id: String,
+        /// Database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
 }
 
 /// Print shell completions to stdout.

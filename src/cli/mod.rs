@@ -6,6 +6,8 @@ pub mod doctor;
 pub mod finding;
 pub mod init;
 #[cfg(feature = "storage")]
+pub mod job;
+#[cfg(feature = "storage")]
 pub mod project;
 pub mod runner;
 #[cfg(feature = "storage")]

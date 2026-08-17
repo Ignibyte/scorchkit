@@ -6,7 +6,7 @@ use super::severity::Severity;
 use super::target::Target;
 
 /// Aggregated results from a complete scan.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
     /// Unique scan identifier.
     pub scan_id: String,
@@ -27,7 +27,7 @@ pub struct ScanResult {
 }
 
 /// Summary statistics for a scan.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanSummary {
     pub total_findings: usize,
     pub critical: usize,

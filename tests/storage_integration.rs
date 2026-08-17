@@ -8,8 +8,12 @@
 
 use scorchkit::config::DatabaseConfig;
 use scorchkit::engine::finding::Finding;
+use scorchkit::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
+use scorchkit::engine::scope::ScopeRule;
 use scorchkit::engine::severity::Severity;
+use scorchkit::runner::job::{DastJobRequest, JobStore, ScanJob};
 use scorchkit::storage;
+use scorchkit::storage::jobs::PostgresJobStore;
 use scorchkit::storage::models::VulnStatus;
 
 /// Helper to get a database pool or skip the test.
@@ -29,6 +33,92 @@ async fn get_pool_or_skip() -> Option<sqlx::PgPool> {
         .await
         .unwrap_or_else(|error| panic!("test database migration failed: {error}"));
     Some(pool)
+}
+
+fn stored_job_request() -> DastJobRequest {
+    let policy = EngagementPolicy::default()
+        .allow_scope(ScopeRule::Exact("example.com".to_string()))
+        .allow_capability(Capability::DastScan)
+        .allow_effect(EffectClass::ActiveSafe);
+    DastJobRequest::new(
+        "https://example.com",
+        "quick",
+        Engagement::new("postgres-job-store", policy),
+    )
+}
+
+#[tokio::test]
+async fn postgres_job_store_matches_compare_and_swap_contract() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let store = PostgresJobStore::new(pool.clone());
+    let job = ScanJob::new(stored_job_request(), uuid::Uuid::new_v4());
+    store.create(&job).await.expect("create scan job");
+
+    let loaded = store.get(job.id).await.expect("load scan job").expect("stored job");
+    assert_eq!(loaded.id, job.id);
+    assert_eq!(loaded.revision, 0);
+
+    let mut updated = loaded.clone();
+    updated.revision = 1;
+    updated.state = scorchkit::runner::job::ScanJobState::Running;
+    updated.lease_expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+    updated.started_at = Some(chrono::Utc::now());
+    updated.updated_at = chrono::Utc::now();
+    updated.error = Some("conformance update".to_string());
+    assert!(store.compare_and_swap(0, &updated).await.expect("current revision update"));
+    assert!(!store.compare_and_swap(0, &loaded).await.expect("stale revision rejection"));
+    assert!(store.list().await.expect("list scan jobs").iter().any(|item| item.id == job.id));
+    assert!(store
+        .list_recoverable(chrono::Utc::now())
+        .await
+        .expect("list recoverable scan jobs")
+        .iter()
+        .any(|item| item.id == job.id));
+    let mut illegal = updated.clone();
+    illegal.revision = 2;
+    illegal.request.target = "https://changed.example".to_string();
+    illegal.updated_at = chrono::Utc::now();
+    assert!(
+        store.compare_and_swap(1, &illegal).await.is_err(),
+        "immutable requests must be enforced by the store"
+    );
+    let audit = store.audit_events(job.id).await.expect("list scan job audit events");
+    assert_eq!(audit.len(), 2);
+    assert_eq!(audit[0].revision, 0);
+    assert_eq!(audit[1].revision, 1);
+
+    let mut interrupted = updated.clone();
+    interrupted.revision = 2;
+    interrupted.state = scorchkit::runner::job::ScanJobState::Interrupted;
+    interrupted.owner_id = None;
+    interrupted.lease_expires_at = None;
+    interrupted.updated_at = chrono::Utc::now();
+    interrupted.finished_at = Some(chrono::Utc::now());
+    assert!(store.compare_and_swap(1, &interrupted).await.expect("interrupt root job"));
+    let successor = ScanJob::successor(&interrupted, uuid::Uuid::new_v4());
+    store.create(&successor).await.expect("create unique successor");
+    let competing_successor = ScanJob::successor(&interrupted, uuid::Uuid::new_v4());
+    assert!(
+        store.create(&competing_successor).await.is_err(),
+        "a parent attempt must not fork concurrent successors"
+    );
+    let mut forged_successor = ScanJob::successor(&interrupted, uuid::Uuid::new_v4());
+    forged_successor.attempt = 99;
+    assert!(
+        store.create(&forged_successor).await.is_err(),
+        "successor lineage must be validated before insertion"
+    );
+
+    sqlx::query("DELETE FROM scan_jobs WHERE id = $1")
+        .bind(successor.id)
+        .execute(&pool)
+        .await
+        .expect("delete successor fixture");
+    sqlx::query("DELETE FROM scan_jobs WHERE id = $1")
+        .bind(job.id)
+        .execute(&pool)
+        .await
+        .expect("delete scan job fixture");
 }
 
 /// Generate a unique project name to avoid collisions in parallel test runs.

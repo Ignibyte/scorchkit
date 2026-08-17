@@ -168,3 +168,11 @@ the current generated mutation inventory with the initial inventory, and bind bo
 two-file inline-test transition with source snapshots and mutation-input hashes. The final score is
 35/35 viable caught with 33 unviable. This approval does not turn focused delivery into the default
 for later feature tickets and does not satisfy or cancel the scheduled broad inventory.
+
+TICKET-003 is the third owner-approved use and is limited to SK-029. Its completed DIFF baseline
+selected 279 mutants across eight files: 150 were caught, 22 timed out and count as caught, 61 were
+missed, and 46 were unviable. The owner stopped repeat mutation scans, required reruns only for the
+fixed scope, and approved the local commit. The exact repair scope is those 61 survivors in 23
+functions across four files. The sealed current-tree recheck caught all 61, reconstructing 233/233
+viable outcomes with four pre-repair mutation-input snapshots and no repeated broad sweep. The next
+broad inventory remains scheduled work.

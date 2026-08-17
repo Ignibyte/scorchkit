@@ -5,6 +5,12 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Durable scan job lifecycle (TICKET-003 / SK-029)** — Added provider-neutral queued, running,
+  cancelling, terminal, interruption, and successor-attempt contracts; bounded reliable
+  module-progress persistence; shared cancellation; ownership leases and repeated recovery;
+  in-memory and transactional PostgreSQL stores with append-only revision audit; CLI job commands;
+  asynchronous MCP job tools; and stateless MCP startup without a database. Existing synchronous
+  MCP scans remain compatible through the same lifecycle.
 - **Repository-owned delivery pipeline (TICKET-001)** — Added numbered tickets, EARS specs, phase
   evidence, adversarial inspection, AARs, an exact-worktree delivery receipt, Git pre-commit
   enforcement, a Codex repository skill, and stable quality gates 1–22. The workflow is agent-neutral

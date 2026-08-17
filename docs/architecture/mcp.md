@@ -3,8 +3,9 @@
 ScorchKit exposes its local security engine through MCP over stdio. Codex is the preferred client,
 but the server uses standard MCP types and has no vendor-specific authorization path.
 
-The current `mcp` Cargo feature implies `storage`, so the server requires PostgreSQL. Roadmap batch
-SK-029 separates scan-only operation from persistent projects and schedules.
+The current `mcp` Cargo feature implies the storage code is compiled, but local scan operation does
+not require a database. With no configured database URL, the server starts with process-local jobs;
+project, schedule, finding, resource, and migration operations fail explicitly.
 
 ## Process and trust boundary
 
@@ -13,7 +14,9 @@ local MCP host
       |
   stdio transport
       |
-ScorchKitServer ── PostgreSQL
+ScorchKitServer ── optional PostgreSQL
+      |                 |
+ScanJobService     project storage
       |
 policy-gated Engine
       |
@@ -34,22 +37,23 @@ engagement snapshot; due execution denies missing, legacy, or changed snapshots.
 ```rust
 pub struct ScorchKitServer {
     pub(crate) config: Arc<AppConfig>,
-    pub(crate) pool: PgPool,
-    tool_router: ToolRouter<Self>,
+    pub(crate) pool: Option<PgPool>,
+    pub(crate) jobs: ScanJobService,
 }
 ```
 
 `rmcp` generates tool dispatch and input schemas. Resource and prompt handlers implement the matching
-`ServerHandler` methods directly. Business logic lives in `do_*` methods so integration tests can
-exercise policy and persistence without simulating stdio framing.
+`ServerHandler` methods directly. Business logic lives in `do_*` methods so most integration tests
+can exercise policy and persistence directly; one duplex-transport contract proves stateless job
+operation through MCP framing.
 
 ## Tools
 
-The current server exposes 26 tools.
+The current server exposes 30 tools.
 
 | Group | Tools |
 |---|---|
-| DAST | `list_modules`, `check_tools`, `scan`, `plan_scan`, `auto_scan`, `target_intelligence`, `scan_progress` |
+| DAST | `list_modules`, `check_tools`, `scan`, `scan_job_start`, `scan_job_status`, `scan_job_cancel`, `scan_job_resume`, `plan_scan`, `auto_scan`, `target_intelligence`, `scan_progress` |
 | SAST | `list_code_modules`, `scan_code` |
 | Projects | `project_create`, `project_list`, `project_show`, `project_delete`, `project_scan`, `project_status` |
 | Targets | `target_add`, `target_list`, `target_remove` |
@@ -63,6 +67,10 @@ AI planning or analysis uses the configured provider and never replaces scanner 
 
 Tool results are currently JSON serialized into text for compatibility. Typed MCP structured content,
 read/state/effect grouping, and complete tool annotations are roadmap batch SK-032.
+
+`scan_job_start` returns after the authorized request is queued and launches its work in the server
+process. Status, cancellation, and resume use the same lifecycle described in
+`docs/architecture/jobs.md`. The synchronous `scan` tool remains a compatibility wrapper.
 
 ## Resources
 
@@ -96,7 +104,13 @@ Prompts tell the host which tools to call. They do not grant scope or effects.
 
 ## Local startup
 
-Build with MCP and storage, migrate the database, and start the stdio server:
+For stateless local scans, start the stdio server without a database URL:
+
+```bash
+scorchkit serve
+```
+
+For persistent projects and cross-process jobs, migrate the database and start with its URL:
 
 ```bash
 cargo build --release --features mcp
@@ -138,8 +152,9 @@ through an unauthenticated network wrapper. A future remote server must:
 ## Tests and delivery evidence
 
 `tests/mcp_tools.rs` uses a migrated disposable database and loopback servers. It covers authorized
-and denied scans, project membership, schedule snapshots, one-slot concurrency, N-caller at-most-once
-execution, finding lifecycle, resources, and prompts. Direct test commands may skip database cases
+and denied scans, stateless jobs over duplex MCP transport, project membership, schedule snapshots,
+one-slot concurrency, N-caller at-most-once execution, finding lifecycle, resources, and prompts.
+Direct test commands may skip database cases
 when `DATABASE_URL` is absent. Delivery gate 21 treats a missing database as failure, and gate 22
 executes the CLI/MCP contract lane.
 
@@ -148,7 +163,7 @@ executes the CLI/MCP contract lane.
 ```text
 src/mcp/
   server.rs        server state, handler implementation, stdio startup
-  tools.rs         26 tool wrappers and do_* business methods
+  tools.rs         30 tool wrappers and do_* business methods
   types.rs         deserializable, JSON-schema input types
   resources.rs     URI parser, listings, templates, and reads
   prompts.rs       five workflow prompts and correlation rules

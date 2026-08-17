@@ -155,7 +155,13 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the database query fails.
     pub async fn do_list_resources(&self) -> Result<ListResourcesResult, rmcp::ErrorData> {
-        let project_list = projects::list_projects(&self.pool).await.map_err(db_error)?;
+        let pool = self.pool.as_ref().ok_or_else(|| {
+            rmcp::ErrorData::internal_error(
+                "database unavailable: project resources require an attached database",
+                None,
+            )
+        })?;
+        let project_list = projects::list_projects(pool).await.map_err(db_error)?;
 
         let mut resources: Vec<Resource> =
             vec![RawResource::new("scorchkit://projects", "All Projects")
@@ -209,27 +215,29 @@ impl ScorchKitServer {
 
     /// Fetch the JSON content for a parsed resource kind.
     async fn read_resource_json(&self, kind: &ResourceKind) -> Result<String, rmcp::ErrorData> {
+        let pool = self.pool.as_ref().ok_or_else(|| {
+            rmcp::ErrorData::internal_error(
+                "database unavailable: project resources require an attached database",
+                None,
+            )
+        })?;
         match kind {
             ResourceKind::Projects => {
-                let list = projects::list_projects(&self.pool).await.map_err(db_error)?;
+                let list = projects::list_projects(pool).await.map_err(db_error)?;
                 to_json(&list)
             }
             ResourceKind::Project(id) => {
-                let project = projects::get_project(&self.pool, *id)
-                    .await
-                    .map_err(db_error)?
-                    .ok_or_else(|| {
+                let project =
+                    projects::get_project(pool, *id).await.map_err(db_error)?.ok_or_else(|| {
                         rmcp::ErrorData::resource_not_found(
                             format!("project '{id}' not found"),
                             None,
                         )
                     })?;
-                let targets =
-                    projects::list_targets(&self.pool, project.id).await.map_err(db_error)?;
-                let scan_list =
-                    scans::list_scans(&self.pool, project.id).await.map_err(db_error)?;
+                let targets = projects::list_targets(pool, project.id).await.map_err(db_error)?;
+                let scan_list = scans::list_scans(pool, project.id).await.map_err(db_error)?;
                 let finding_list =
-                    findings::list_findings(&self.pool, project.id).await.map_err(db_error)?;
+                    findings::list_findings(pool, project.id).await.map_err(db_error)?;
                 to_json(&serde_json::json!({
                     "project": project,
                     "targets": targets,
@@ -239,16 +247,14 @@ impl ScorchKitServer {
                 }))
             }
             ResourceKind::ProjectScans(project_id) => {
-                require_project(&self.pool, *project_id).await?;
-                let list = scans::list_scans(&self.pool, *project_id).await.map_err(db_error)?;
+                require_project(pool, *project_id).await?;
+                let list = scans::list_scans(pool, *project_id).await.map_err(db_error)?;
                 to_json(&list)
             }
             ResourceKind::Scan(project_id, scan_id) => {
-                require_project(&self.pool, *project_id).await?;
-                let scan = scans::get_scan(&self.pool, *scan_id)
-                    .await
-                    .map_err(db_error)?
-                    .ok_or_else(|| {
+                require_project(pool, *project_id).await?;
+                let scan =
+                    scans::get_scan(pool, *scan_id).await.map_err(db_error)?.ok_or_else(|| {
                         rmcp::ErrorData::resource_not_found(
                             format!("scan '{scan_id}' not found"),
                             None,
@@ -257,14 +263,13 @@ impl ScorchKitServer {
                 to_json(&scan)
             }
             ResourceKind::ProjectFindings(project_id) => {
-                require_project(&self.pool, *project_id).await?;
-                let list =
-                    findings::list_findings(&self.pool, *project_id).await.map_err(db_error)?;
+                require_project(pool, *project_id).await?;
+                let list = findings::list_findings(pool, *project_id).await.map_err(db_error)?;
                 to_json(&list)
             }
             ResourceKind::Finding(project_id, finding_id) => {
-                require_project(&self.pool, *project_id).await?;
-                let finding = findings::get_finding(&self.pool, *finding_id)
+                require_project(pool, *project_id).await?;
+                let finding = findings::get_finding(pool, *finding_id)
                     .await
                     .map_err(db_error)?
                     .ok_or_else(|| {

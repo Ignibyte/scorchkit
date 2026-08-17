@@ -368,7 +368,7 @@ validate_phase_evidence() {
             case "$receipt_mode" in
                 diff | full) ;;
                 focused-repair)
-                    [ "$(frontmatter_value "$spec" ticket)" = "TICKET-002" ] || {
+                    [ "$(frontmatter_value "$spec" focused_repair)" = "approved" ] || {
                         echo "focused-repair validation is not approved for this ticket" >&2
                         return 1
                     }

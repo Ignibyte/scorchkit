@@ -1,6 +1,24 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 
+#[cfg(feature = "storage")]
+fn cli_job_engagement() -> scorchkit::engine::policy::Engagement {
+    use scorchkit::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
+    use scorchkit::engine::scope::ScopeRule;
+
+    let policy = EngagementPolicy::default()
+        .allow_scope(ScopeRule::Cidr {
+            network: u32::from(std::net::Ipv4Addr::new(127, 0, 0, 0)),
+            mask: u32::MAX << 24,
+        })
+        .allow_scope(ScopeRule::CidrV6 { network: 1, mask: u128::MAX })
+        .allow_capability(Capability::DastScan)
+        .allow_capability(Capability::ExternalTool)
+        .allow_effect(EffectClass::ActiveSafe)
+        .allow_effect(EffectClass::Intrusive);
+    Engagement::new("cli-job-contract", policy)
+}
+
 #[test]
 fn test_help() {
     Command::cargo_bin("scorchkit")
@@ -230,6 +248,123 @@ fn test_cli_schedule_run_due_in_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("due"));
+}
+
+/// Verify the durable job lifecycle is exposed by the storage-enabled CLI.
+#[cfg(feature = "storage")]
+#[test]
+fn test_cli_job_lifecycle_help() {
+    Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["job", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("run"))
+        .stdout(predicate::str::contains("status"))
+        .stdout(predicate::str::contains("cancel"))
+        .stdout(predicate::str::contains("recover"))
+        .stdout(predicate::str::contains("resume"));
+}
+
+/// Job commands fail explicitly when `PostgreSQL` was not configured.
+#[cfg(feature = "storage")]
+#[test]
+fn test_cli_job_status_requires_database() {
+    Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["job", "status", "00000000-0000-0000-0000-000000000001"])
+        .env_remove("DATABASE_URL")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no database URL configured"));
+}
+
+/// Run and read a real PostgreSQL-backed CLI job against an authorized loopback target.
+#[cfg(feature = "storage")]
+#[tokio::test]
+async fn test_cli_job_run_and_status_lifecycle() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL not set — skipping CLI job integration test");
+        return;
+    };
+    let target = httpmock::MockServer::start_async().await;
+    let _mock = target
+        .mock_async(|when, then| {
+            when.any_request();
+            then.status(200).header("content-type", "text/html").body("<html>ok</html>");
+        })
+        .await;
+    let directory = tempfile::tempdir().expect("create CLI job config directory");
+    let config_path = directory.path().join("scorchkit.toml");
+    let mut config = scorchkit::config::AppConfig {
+        engagement: Some(cli_job_engagement()),
+        ..scorchkit::config::AppConfig::default()
+    };
+    config.scan.timeout_seconds = 5;
+    config.database.url = Some(database_url.clone());
+    config.database.migrate_on_startup = true;
+    std::fs::write(&config_path, toml::to_string_pretty(&config).expect("serialize CLI config"))
+        .expect("write CLI config");
+
+    let run_config = config_path.clone();
+    let run_target = target.url("/");
+    let run_output = tokio::task::spawn_blocking(move || {
+        Command::cargo_bin("scorchkit")
+            .expect("resolve scorchkit binary")
+            .args([
+                "--config",
+                run_config.to_str().expect("UTF-8 config path"),
+                "job",
+                "run",
+                &run_target,
+                "--profile",
+                "quick",
+                "--modules",
+                "headers",
+            ])
+            .output()
+            .expect("run CLI job")
+    })
+    .await
+    .expect("CLI job process joined");
+    assert!(
+        run_output.status.success(),
+        "CLI job failed: {}",
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    let job: scorchkit::runner::job::ScanJob =
+        serde_json::from_slice(&run_output.stdout).expect("decode CLI job output");
+    assert_eq!(job.state, scorchkit::runner::job::ScanJobState::Succeeded);
+
+    let status_config = config_path.clone();
+    let job_id = job.id.to_string();
+    let status_output = tokio::task::spawn_blocking(move || {
+        Command::cargo_bin("scorchkit")
+            .expect("resolve scorchkit binary")
+            .args([
+                "--config",
+                status_config.to_str().expect("UTF-8 config path"),
+                "job",
+                "status",
+                &job_id,
+            ])
+            .output()
+            .expect("read CLI job")
+    })
+    .await
+    .expect("CLI status process joined");
+    assert!(status_output.status.success());
+    let stored: scorchkit::runner::job::ScanJob =
+        serde_json::from_slice(&status_output.stdout).expect("decode CLI status output");
+    assert_eq!(stored.id, job.id);
+    assert_eq!(stored.state, scorchkit::runner::job::ScanJobState::Succeeded);
+
+    let pool = scorchkit::storage::connect(&database_url).await.expect("connect cleanup pool");
+    sqlx::query("DELETE FROM scan_jobs WHERE id = $1")
+        .bind(job.id)
+        .execute(&pool)
+        .await
+        .expect("delete CLI job fixture");
 }
 
 /// Verify `assess --help` works when the `infra` feature is compiled and

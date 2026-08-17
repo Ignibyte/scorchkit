@@ -41,6 +41,10 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-cancellation-whole-lifecycle-001` | Race cancellation across central work and adjacent async effects, then check it before publishing success. | `AAR-002-shared-job-executor` |
 | `PR-scorchkit-public-mode-dependency-contract-001` | Assert producer/consumer ordering through every public execution mode that owns a phase partition. | `AAR-002-shared-job-executor` |
 | `PR-scorchkit-ticket-diff-baseline-001` | Establish a canonical Git/receipt boundary before starting the next ticket that relies on diff mutation. | `AAR-002-shared-job-executor` |
+| `PR-scorchkit-store-invariants-falsification-001` | Enforce creation, replacement, transition, and lineage invariants inside every public store implementation and test direct callers against the shared contract. | `AAR-003-scan-job-lifecycle` |
+| `PR-scorchkit-exact-failure-source-001` | When fail-closed branches share a status, assert the selected error or state rather than failure status alone. | `AAR-003-scan-job-lifecycle` |
+| `PR-scorchkit-focused-evidence-generic-001` | Discover approved focused evidence from ticket metadata and verify its raw outcomes, timeouts, input transitions, and receipt-bound digest without ticket-number branches. | `AAR-003-scan-job-lifecycle` |
+| `PR-scorchkit-clippy-before-mutation-seal-001` | Run strict all-target Clippy after mutation assertions and before sealing the current-tree mutation hash. | `AAR-003-scan-job-lifecycle` |
 
 ## Register
 
@@ -63,3 +67,8 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-public-mode-proof-gap-001` | test gap | `AAR-002-shared-job-executor` |
 | `BF-scorchkit-accumulated-diff-mutation-scope-001` | process failure | `AAR-002-shared-job-executor` |
 | `AD-scorchkit-boxed-borrowed-jobs-001` | architecture decision | `AAR-002-shared-job-executor` |
+| `BF-scorchkit-job-owner-drop-001` | lifecycle bug | `AAR-003-scan-job-lifecycle` |
+| `BF-scorchkit-concurrent-cancel-same-state-001` | concurrency bug | `AAR-003-scan-job-lifecycle` |
+| `BF-scorchkit-resume-fork-001` | integrity bug | `AAR-003-scan-job-lifecycle` |
+| `BF-scorchkit-ambiguous-failure-source-001` | test gap | `AAR-003-scan-job-lifecycle` |
+| `BF-scorchkit-focused-evidence-ticket-coupling-001` | process failure | `AAR-003-scan-job-lifecycle` |
