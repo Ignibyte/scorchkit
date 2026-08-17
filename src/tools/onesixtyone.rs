@@ -17,7 +17,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Built-in community-string list. Operators with their own lists
 /// invoke onesixtyone directly.
@@ -66,8 +65,7 @@ impl ScanModule for OnesixtyoneModule {
         let path = tmp.path().to_string_lossy().to_string();
         // onesixtyone -c <community-file> <host>
         let output =
-            subprocess::run_tool("onesixtyone", &["-c", &path, host], Duration::from_secs(45))
-                .await?;
+            ctx.run_tool("onesixtyone", &["-c", &path, host], Duration::from_secs(45)).await?;
         Ok(parse_onesixtyone_output(&output.stdout, ctx.target.url.as_str(), host))
     }
 }

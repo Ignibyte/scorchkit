@@ -291,7 +291,7 @@ fn check_mx(mx_records: &[String], domain: &str, url: &str, findings: &mut Vec<F
 mod tests {
     use super::*;
 
-    /// Test suite for DNS/email security module.
+    // Test suite for DNS/email security module.
 
     /// Verify SPF permissiveness analysis for different mechanisms.
     #[test]
@@ -325,7 +325,7 @@ mod tests {
         assert_eq!(parse_dmarc_policy("v=DMARC1"), "unknown");
     }
 
-    /// Verify DoH JSON response parsing.
+    /// Verify `DoH` JSON response parsing.
     #[test]
     fn test_doh_response_parsing() {
         let response = r#"{

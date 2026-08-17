@@ -33,9 +33,9 @@ Tests WebSocket endpoints for security vulnerabilities. Discovers WebSocket endp
 ## How It Works
 
 1. **Discovery**: Sends HTTP GET requests with `Upgrade: websocket`, `Connection: Upgrade`, and WebSocket handshake headers to 19 common paths. A response with status 101 or status 200 with `Upgrade: websocket` header confirms a WebSocket endpoint.
-2. **CSWSH test**: Uses `tokio-tungstenite` to attempt a real WebSocket connection to the discovered endpoint with `Origin: https://evil-attacker.com`. If the connection succeeds (within 5-second timeout), the server does not validate origins.
+2. **CSWSH test**: Uses `tokio-tungstenite` over a `PolicyNetwork` TCP stream to attempt a real WebSocket connection to the discovered endpoint with `Origin: https://evil-attacker.com`. ScorchKit authorizes the hostname, every DNS answer, and the concrete address before the handshake. If the connection succeeds within the timeout, the server does not validate origins.
 3. **Unencrypted check**: If the main target uses HTTPS but the WebSocket URL starts with `ws://`, a finding is emitted. The `http_to_ws_url` function converts HTTP(S) URLs to their WS(S) equivalents.
-4. **Auth check**: Attempts a plain WebSocket connection without any authentication headers or cookies. If the connection succeeds, the endpoint may lack authentication requirements.
+4. **Auth check**: Attempts a plain WebSocket connection without any authentication headers or cookies through the same policy-owned connection. If the connection succeeds, the endpoint may lack authentication requirements.
 
 ## Paths Probed
 

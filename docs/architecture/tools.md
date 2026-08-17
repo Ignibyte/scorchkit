@@ -6,7 +6,7 @@ Tool wrappers live in `src/tools/`. Each wrapper implements `ScanModule` with `r
 
 ```
 tools/
-  mod.rs           Module declarations and registration (32 wrappers)
+  mod.rs           Module declarations and registration (46 wrappers)
   amass.rs         OWASP Amass subdomain enumeration
   arjun.rs         Hidden HTTP parameter discovery
   cewl.rs          Custom wordlist generation
@@ -63,8 +63,8 @@ impl ScanModule for ToolNameModule {
         // 1. Build arguments for the tool
         let args = build_args(&ctx.target, &ctx.config);
 
-        // 2. Run the tool via subprocess
-        let output = subprocess::run_tool(
+        // 2. Run the tool through the context-owned executor
+        let output = ctx.run_tool(
             "tool-binary-name",
             &args,
             Duration::from_secs(timeout),
@@ -94,17 +94,19 @@ This means tool wrappers are zero-cost if the tool isn't installed. Users see th
 
 ## Subprocess API
 
-All wrappers use `runner::subprocess::run_tool()`:
+All bounded wrappers use the executor carried by `ScanContext`:
 
 ```rust
-pub async fn run_tool(
+pub async fn ScanContext::run_tool(
     tool_name: &str,   // Binary name or path
     args: &[&str],     // Command arguments
     timeout: Duration, // Max execution time
 ) -> Result<ToolOutput>
 ```
 
-Returns `ToolOutput { stdout, stderr, exit_code, duration }` on success.
+Returns bounded `ToolOutput { stdout, stderr, exit_code, duration, resolved_program }` on success.
+The executor records the canonical binary path, enforces a timeout, caps stdout and stderr at 8 MiB,
+and kills the child when the timeout expires. Interactsh uses a separate long-lived session manager.
 
 ## Tool Path Override
 

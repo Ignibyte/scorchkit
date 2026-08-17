@@ -19,7 +19,6 @@ use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::network_credentials::{format_redacted_argv, NetworkCredentials};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Built-in user list. Tiny by design — operators with bigger lists
 /// invoke kerbrute directly.
@@ -82,14 +81,14 @@ impl ScanModule for KerbruteModule {
         let owned = build_argv(&creds, host, &path);
         let args: Vec<&str> = owned.iter().map(String::as_str).collect();
         debug!("kerbrute: {}", format_redacted_argv(&args));
-        let output = subprocess::run_tool("kerbrute", &args, Duration::from_secs(60)).await?;
+        let output = ctx.run_tool("kerbrute", &args, Duration::from_mins(1)).await?;
         Ok(parse_kerbrute_output(&output.stdout, ctx.target.url.as_str(), host))
     }
 }
 
 /// Build the kerbrute argv. When a Kerberos principal is configured
 /// (`alice@CORP.EXAMPLE`), extract the domain portion and forward via
-/// `--domain <DOMAIN>`. Without a principal (or with an unparseable
+/// `--domain <DOMAIN>`. Without a principal (or with an unparsable
 /// one), fall back to the existing host-based default.
 #[must_use]
 fn build_argv(creds: &NetworkCredentials, host: &str, user_file: &str) -> Vec<String> {
@@ -217,9 +216,9 @@ mod tests {
         );
     }
 
-    /// A principal without an `@` (unparseable) falls back to the host.
+    /// A principal without an `@` (unparsable) falls back to the host.
     #[test]
-    fn kerbrute_argv_unparseable_principal_falls_back() {
+    fn kerbrute_argv_unparsable_principal_falls_back() {
         let creds = NetworkCredentials {
             kerberos_principal: Some("no-at-sign".to_string()),
             ..Default::default()

@@ -27,7 +27,7 @@
 //! ## OCSF parser duplication (deferred extraction)
 //!
 //! The OCSF JSON parser below mirrors
-//! [`crate::tools::prowler::parse_prowler_output`] in shape but emits
+//! `crate::tools::prowler::parse_prowler_output` in shape but emits
 //! cloud-tagged findings (provider:aws in evidence, CWE-1188). Sharing
 //! a single parser across the DAST and cloud families would force a
 //! generic finding-builder closure parameter; premature at one cloud
@@ -47,13 +47,12 @@ use crate::engine::cloud_target::CloudTarget;
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Wall-clock upper bound for a single Prowler invocation. Real scans
 /// against a populated AWS account land in the 5–10 min range; the
 /// 15-minute ceiling absorbs API-throttling without aborting the
 /// orchestrator.
-const PROWLER_TIMEOUT: Duration = Duration::from_secs(900);
+const PROWLER_TIMEOUT: Duration = Duration::from_mins(15);
 
 /// Prowler-driven AWS posture audit — CIS AWS Foundations + 400+
 /// checks across IAM, S3, EC2, `CloudTrail`, KMS, VPC, and more.
@@ -100,7 +99,7 @@ impl CloudModule for ProwlerCloudModule {
         let creds = ctx.credentials.as_deref();
         let argv = build_prowler_aws_argv(&ctx.target, creds)?;
         let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
-        let output = subprocess::run_tool_lenient("prowler", &argv_refs, PROWLER_TIMEOUT).await?;
+        let output = ctx.run_tool_lenient("prowler", &argv_refs, PROWLER_TIMEOUT).await?;
         let target_label = ctx.target.display_raw();
         Ok(parse_prowler_ocsf(&output.stdout, &target_label))
     }
@@ -535,7 +534,7 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// Array-form OCSF: mixed PASS / FAIL, 5 severity strings, finding
-    /// shape pinned (module_id, OWASP, CWE, provider:aws evidence tag).
+    /// shape pinned (`module_id`, OWASP, CWE, provider:aws evidence tag).
     #[test]
     fn test_parse_prowler_ocsf_array_skips_pass_maps_severities() {
         let output = r#"[
@@ -624,8 +623,8 @@ mod tests {
 
         let findings = parse_prowler_ocsf(output, "aws:all");
         assert_eq!(findings.len(), 2, "PASS + malformed line are both filtered");
-        assert!(findings[0].title.contains("A"));
-        assert!(findings[1].title.contains("C"));
+        assert!(findings[0].title.contains('A'));
+        assert!(findings[1].title.contains('C'));
     }
 
     // -----------------------------------------------------------------
@@ -693,7 +692,7 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// Pins the trait-surface metadata — id, name, category, providers,
-    /// required_tool, requires_external_tool.
+    /// `required_tool`, `requires_external_tool`.
     #[test]
     fn test_prowler_cloud_module_metadata() {
         let m = ProwlerCloudModule;

@@ -126,7 +126,7 @@ mod tests {
         assert_eq!(evidence.response_body.as_ref().map(String::len), Some(MAX_BODY_SIZE));
     }
 
-    /// Verify finding integration via with_http_evidence.
+    /// Verify finding integration via `with_http_evidence`.
     #[test]
     fn test_finding_with_evidence() {
         use crate::engine::finding::Finding;

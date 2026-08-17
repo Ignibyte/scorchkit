@@ -123,7 +123,7 @@ fn check_frame_protection(headers: &HeaderMap, url: &str, findings: &mut Vec<Fin
 mod tests {
     use super::*;
 
-    /// Tests for the clickjacking scanner module.
+    // Tests for the clickjacking scanner module.
 
     /// Verify module metadata.
     #[test]

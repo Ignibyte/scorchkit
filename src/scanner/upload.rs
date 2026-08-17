@@ -181,7 +181,7 @@ fn discover_upload_forms(html: &str, base_url: &Url) -> Vec<UploadForm> {
 
 /// Generate the set of upload test payloads covering major bypass techniques.
 #[must_use]
-#[allow(clippy::too_many_lines)] // Data function: 9 payload structs, each 10 fields — cannot meaningfully split
+#[allow(clippy::too_many_lines)] // JUSTIFICATION: cohesive declarative payload catalog.
 fn generate_upload_payloads() -> Vec<UploadPayload> {
     vec![
         UploadPayload {
@@ -381,10 +381,10 @@ fn is_upload_accepted(status: u16, body: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// Test suite for file upload vulnerability detection.
-    ///
-    /// Tests form discovery via HTML parsing and payload generation without
-    /// requiring a live HTTP target.
+    // Test suite for file upload vulnerability detection.
+    //
+    // Tests form discovery via HTML parsing and payload generation without
+    // requiring a live HTTP target.
 
     /// Verify upload form discovery from HTML with file inputs.
     ///
@@ -438,7 +438,7 @@ mod tests {
 
     /// Verify all 9 payload types are generated with correct content.
     ///
-    /// Each payload must have non-empty filename, content_type, body, and
+    /// Each payload must have non-empty filename, `content_type`, body, and
     /// appropriate severity/CWE classification.
     #[test]
     fn test_generate_payloads() {

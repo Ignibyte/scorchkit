@@ -142,7 +142,7 @@ pub fn resolve_project_id(
 /// # Errors
 ///
 /// Returns [`ScorchError::Config`] if authentication fails.
-pub async fn build_gcp_client(
+async fn build_gcp_client(
     creds: Option<&CloudCredentials>,
     scopes: &[&str],
 ) -> Result<(reqwest::Client, String)> {
@@ -175,7 +175,7 @@ pub async fn build_gcp_client(
 /// Order is lexicographic by module id: `gcp-audit`, `gcp-firewall`,
 /// `gcp-gcs`, `gcp-iam`.
 #[must_use]
-pub fn register_gcp_modules() -> Vec<Box<dyn CloudModule>> {
+fn register_gcp_modules() -> Vec<Box<dyn CloudModule>> {
     vec![
         Box::new(audit::GcpAuditCloudModule),
         Box::new(firewall::GcpFirewallCloudModule),
@@ -212,5 +212,12 @@ mod tests {
         let creds =
             CloudCredentials { gcp_project_id: Some("my-project".into()), ..Default::default() };
         assert!(resolve_project_id(&CloudTarget::All, Some(&creds)).is_ok());
+
+        let key = GcpServiceAccountKey {
+            service_account: "scanner@example.test".into(),
+            key_id: "fixture-key".into(),
+            key_type: "USER_MANAGED".into(),
+        };
+        assert_eq!(key.key_type, "USER_MANAGED");
     }
 }

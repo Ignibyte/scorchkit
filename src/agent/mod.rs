@@ -1,9 +1,8 @@
-//! Agent SDK support for autonomous pentest operations.
+//! Host-neutral agent support for autonomous security assessments.
 //!
 //! Provides configuration, system prompts, and manifest generation
-//! for integrating `ScorchKit` with the Claude Agent SDK. The agent
-//! module does not run agents directly — it produces the configuration
-//! that Agent SDK clients (Python/TypeScript) consume.
+//! for integrating `ScorchKit` with MCP-capable hosts. Codex is the
+//! preferred host, while the protocol and manifest remain vendor-neutral.
 //!
 //! # Usage
 //!
@@ -26,13 +25,13 @@ pub mod runner;
 use config::AgentConfig;
 use prompt::AGENT_SYSTEM_PROMPT;
 
-/// Generate a JSON manifest for Claude Agent SDK consumption.
+/// Generate a host-neutral JSON manifest for MCP agent consumption.
 ///
 /// The manifest contains everything an Agent SDK client needs to
 /// connect to `ScorchKit`'s MCP server and run an autonomous pentest:
 /// - MCP server connection command
 /// - System prompt with pentest methodology
-/// - Agent configuration (scope, depth, safety constraints)
+/// - Agent configuration (declared scope, depth, safety constraints)
 /// - Tool permissions
 #[must_use]
 pub fn generate_manifest(config: &AgentConfig) -> String {
@@ -40,6 +39,11 @@ pub fn generate_manifest(config: &AgentConfig) -> String {
         "name": "scorchkit-agent",
         "version": env!("CARGO_PKG_VERSION"),
         "description": "Autonomous penetration testing agent powered by ScorchKit",
+        "host": {
+            "preferred": "codex",
+            "interface": "mcp",
+            "vendor_lock_in": false,
+        },
         "mcp_server": {
             "command": "scorchkit",
             "args": ["serve"],
@@ -53,11 +57,12 @@ pub fn generate_manifest(config: &AgentConfig) -> String {
             "prompts": true,
         },
         "safety": {
-            "authorized_targets": &config.authorized_targets,
+            "declared_targets": &config.authorized_targets,
             "max_depth": &config.max_depth,
             "require_project": config.require_project,
-            "scope_enforcement": "strict",
-            "exploitation": "disabled",
+            "authorization_source": "engine_engagement_policy",
+            "scope_enforcement": "fail_closed",
+            "exploitation": "requires_explicit_engagement_grant",
             "rate_limiting": config.scan_delay_seconds > 0,
         },
     });
@@ -81,8 +86,9 @@ mod tests {
         assert!(parsed["mcp_server"]["command"].as_str().is_some());
         assert_eq!(parsed["mcp_server"]["args"][0], "serve");
         assert!(parsed["agent_config"]["authorized_targets"].is_array());
-        assert_eq!(parsed["safety"]["scope_enforcement"], "strict");
-        assert_eq!(parsed["safety"]["exploitation"], "disabled");
+        assert_eq!(parsed["host"]["preferred"], "codex");
+        assert_eq!(parsed["safety"]["scope_enforcement"], "fail_closed");
+        assert_eq!(parsed["safety"]["authorization_source"], "engine_engagement_policy");
     }
 
     /// Verify manifest includes the system prompt.

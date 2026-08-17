@@ -3,7 +3,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 use async_trait::async_trait;
 use std::time::Duration;
 
@@ -33,12 +32,13 @@ impl ScanModule for ArjunModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.url.as_str();
-        let output = subprocess::run_tool(
-            "arjun",
-            &["-u", target, "--json", "/dev/stdout", "-q"],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "arjun",
+                &["-u", target, "--json", "/dev/stdout", "-q"],
+                Duration::from_mins(2),
+            )
+            .await?;
 
         Ok(parse_arjun_output(&output.stdout, target))
     }
@@ -100,7 +100,7 @@ fn parse_arjun_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for Arjun JSON output parser.
+    // Tests for Arjun JSON output parser.
 
     /// Verify that `parse_arjun_output` correctly extracts discovered hidden
     /// parameters from Arjun JSON output keyed by URL.
@@ -113,7 +113,7 @@ mod tests {
         assert!(findings[0].title.contains("3 Hidden Parameters"));
         assert_eq!(findings[0].severity, Severity::Low);
         let evidence = findings[0].evidence.as_deref().unwrap_or("");
-        assert!(evidence.contains("q"));
+        assert!(evidence.contains('q'));
     }
 
     /// Verify that `parse_arjun_output` handles empty input gracefully.

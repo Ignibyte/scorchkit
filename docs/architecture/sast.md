@@ -50,6 +50,7 @@ Parallel to `ScanModule`. Adds `languages()` method for language-aware filtering
 - `config: Arc<AppConfig>`
 - `shared_data: Arc<SharedData>` — same inter-module store as DAST
 - `events: EventBus` — same lifecycle event bus as DAST
+- `tool_executor: Arc<dyn ToolExecutor>` — shared, injectable bounded-process boundary
 
 ### `CodeCategory` enum
 
@@ -97,7 +98,13 @@ Constructs a `Target` with `file://` URL scheme from a filesystem path. This ena
 | Kubescape | Iac | kubernetes | JSON | non-zero on findings |
 | ScoutSuite | Container | aws/gcp/azure/alicloud/oci | JSON | non-zero on findings |
 
-Tools that exit non-zero for "findings found" use `subprocess::run_tool_lenient()` instead of `run_tool()`.
+Tools that exit non-zero for "findings found" use `ctx.run_tool_lenient()`. Strict tools use
+`ctx.run_tool()`. Both methods create an owned invocation with a timeout and 8 MiB per-stream limit.
+
+`CodeOrchestrator` submits runnable modules to the shared job executor. The executor enforces
+`max_concurrent_modules`, a batch wall-time budget, caller cancellation, and submission-ordered
+outcomes. Post-module hooks and finding events consume that stable list. See
+[executor.md](executor.md).
 
 ## Language Detection
 

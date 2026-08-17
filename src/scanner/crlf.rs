@@ -248,8 +248,8 @@ fn build_crlf_finding(param_name: &str, crlf: &CrlfPayload, url_str: &str) -> Fi
 mod tests {
     use super::*;
 
-    /// Tests for the CRLF injection scanner module's pure helper functions
-    /// and constant data integrity.
+    // Tests for the CRLF injection scanner module's pure helper functions
+    // and constant data integrity.
 
     /// Verify that the module metadata returns correct values.
     #[test]

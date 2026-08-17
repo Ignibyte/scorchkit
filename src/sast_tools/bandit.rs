@@ -13,7 +13,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Python security analysis via Bandit.
 #[derive(Debug)]
@@ -46,12 +45,9 @@ impl CodeModule for BanditModule {
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
         // bandit exits 1 when issues are found — that's normal, not an error.
-        let output = subprocess::run_tool_lenient(
-            "bandit",
-            &["-r", "-f", "json", &path_str],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient("bandit", &["-r", "-f", "json", &path_str], Duration::from_mins(2))
+            .await?;
 
         Ok(parse_bandit_output(&output.stdout))
     }

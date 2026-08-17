@@ -140,7 +140,7 @@ const CSRF_TOKEN_NAMES: &[&str] = &[
 mod tests {
     use super::*;
 
-    /// Unit tests for the CSRF detection module's constant data integrity.
+    // Unit tests for the CSRF detection module's constant data integrity.
 
     /// Verify that `CSRF_TOKEN_NAMES` is non-empty and contains well-known CSRF token names.
     #[test]

@@ -37,12 +37,11 @@ use crate::engine::cloud_target::CloudTarget;
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Kubescape's per-scan timeout. K8s posture scans are usually
 /// well under 5 min even on large clusters; 10 min is a comfortable
 /// upper bound.
-const KUBESCAPE_TIMEOUT: Duration = Duration::from_secs(600);
+const KUBESCAPE_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// Kubescape K8s cluster posture audit — NSA / MITRE / `ArmoBest` /
 /// CIS Kubernetes Benchmark frameworks against a live cluster.
@@ -88,8 +87,7 @@ impl CloudModule for KubescapeCloudModule {
         let creds = ctx.credentials.as_deref();
         let argv = build_kubescape_argv(&ctx.target, creds)?;
         let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
-        let output =
-            subprocess::run_tool_lenient("kubescape", &argv_refs, KUBESCAPE_TIMEOUT).await?;
+        let output = ctx.run_tool_lenient("kubescape", &argv_refs, KUBESCAPE_TIMEOUT).await?;
         let target_label = ctx.target.display_raw();
         Ok(parse_kubescape_json(&output.stdout, &target_label))
     }

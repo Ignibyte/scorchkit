@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// `WordPress` vulnerability scanning via `WPScan`.
 #[derive(Debug)]
@@ -37,12 +36,13 @@ impl ScanModule for WpscanModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.url.as_str();
 
-        let output = subprocess::run_tool(
-            "wpscan",
-            &["--url", target, "--format", "json", "--no-banner", "--random-user-agent"],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "wpscan",
+                &["--url", target, "--format", "json", "--no-banner", "--random-user-agent"],
+                Duration::from_mins(5),
+            )
+            .await?;
 
         Ok(parse_wpscan_output(&output.stdout, target))
     }
@@ -128,10 +128,10 @@ fn parse_wpscan_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for WPScan JSON output parser.
+    // Tests for `WPScan` JSON output parser.
 
-    /// Verify that `parse_wpscan_output` correctly extracts WordPress version
-    /// info and plugin vulnerabilities from WPScan JSON output.
+    /// Verify that `parse_wpscan_output` correctly extracts `WordPress` version
+    /// info and plugin vulnerabilities from `WPScan` JSON output.
     #[test]
     fn test_parse_wpscan_output() {
         let output = r#"{"version":{"number":"5.8.1","vulnerabilities":[{"title":"WP 5.8.1 XSS Vulnerability","vuln_type":"XSS","fixed_in":"5.8.2"}]},"plugins":{"contact-form-7":{"vulnerabilities":[{"title":"CF7 RCE","fixed_in":"5.5.4"}]}}}"#;

@@ -14,7 +14,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// SSH hardening audit via ssh-audit.
 #[derive(Debug)]
@@ -48,8 +47,7 @@ impl ScanModule for SshAuditModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let host = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
-        let output =
-            subprocess::run_tool("ssh-audit", &["-j", host], Duration::from_secs(45)).await?;
+        let output = ctx.run_tool("ssh-audit", &["-j", host], Duration::from_secs(45)).await?;
         Ok(parse_ssh_audit_output(&output.stdout, ctx.target.url.as_str(), host))
     }
 }

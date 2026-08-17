@@ -123,7 +123,7 @@ impl ScanModule for CorsModule {
 }
 
 /// Send a request with a specific Origin and check the CORS response.
-#[allow(clippy::too_many_arguments)] // CORS test parameters are all distinct and required
+#[allow(clippy::too_many_arguments)] // JUSTIFICATION: distinct required CORS request dimensions.
 async fn test_origin(
     ctx: &ScanContext,
     url: &str,
@@ -166,7 +166,7 @@ async fn test_origin(
 fn check_preflight_max_age(max_age: u64, url: &str, findings: &mut Vec<Finding>) {
     // 2 hours = 7200 seconds — anything longer is suspicious
     if max_age > 7200 {
-        #[allow(clippy::cast_precision_loss)] // Display only — precision irrelevant
+        #[allow(clippy::cast_precision_loss)] // JUSTIFICATION: display-only hour conversion.
         let hours = max_age as f64 / 3600.0;
         findings.push(
             Finding::new(
@@ -278,7 +278,7 @@ const INTERNAL_ORIGINS: &[&str] = &[
 mod tests {
     use super::*;
 
-    /// Test suite for deep CORS analysis.
+    // Test suite for deep CORS analysis.
 
     /// Check if an origin is an internal/private network address.
     fn is_internal_origin(origin: &str) -> bool {
@@ -300,8 +300,7 @@ mod tests {
                     .nth(1)
                     .and_then(|s| s.parse::<u8>().ok())
                     .is_some_and(|n| (16..=31).contains(&n)))
-            || host.ends_with(".local")
-            || host.ends_with(".internal")
+            || matches!(host.rsplit('.').next(), Some("local" | "internal"))
     }
 
     /// Verify internal origin detection for RFC 1918 and localhost addresses.
@@ -329,6 +328,10 @@ mod tests {
 
         // Under threshold — no finding
         check_preflight_max_age(3600, "https://example.com", &mut findings);
+        assert!(findings.is_empty());
+
+        // At the threshold — no finding.
+        check_preflight_max_age(7200, "https://example.com", &mut findings);
         assert!(findings.is_empty());
 
         // Over threshold — finding

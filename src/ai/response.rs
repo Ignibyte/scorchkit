@@ -1,8 +1,7 @@
-//! Claude CLI response parsing with structured JSON extraction.
+//! Provider-neutral AI response parsing with structured JSON extraction.
 //!
-//! Parses the Claude CLI JSON output envelope, extracts the analysis text,
-//! and attempts to parse it into typed structs. Falls back to raw text when
-//! JSON extraction fails.
+//! Attempts to parse normalized provider text into typed structs. Legacy
+//! Claude CLI envelopes remain accepted at this boundary for compatibility.
 
 use serde::de::DeserializeOwned;
 
@@ -12,7 +11,19 @@ use crate::ai::types::{
     StructuredAnalysis, SummaryAnalysis,
 };
 
-/// Parse the Claude CLI JSON output into an [`AiAnalysis`].
+/// Parse normalized provider output into an [`AiAnalysis`].
+#[must_use]
+pub fn parse_analysis_response(
+    content: &str,
+    focus: AnalysisFocus,
+    cost_usd: Option<f64>,
+    model: Option<String>,
+) -> AiAnalysis {
+    let analysis = parse_structured_analysis(content, focus);
+    AiAnalysis { focus, analysis, raw_response: content.to_string(), cost_usd, model }
+}
+
+/// Parse a legacy Claude CLI JSON envelope into an [`AiAnalysis`].
 ///
 /// Extracts the analysis text from the Claude CLI response envelope, then
 /// attempts to parse it into the appropriate structured type based on the
@@ -40,9 +51,7 @@ pub fn parse_claude_response(output: &str, focus: AnalysisFocus) -> AiAnalysis {
         },
     );
 
-    let analysis = parse_structured_analysis(&content, focus);
-
-    AiAnalysis { focus, analysis, raw_response: content, cost_usd, model }
+    parse_analysis_response(&content, focus, cost_usd, model)
 }
 
 /// Attempt to parse the analysis text into a structured type based on focus.
@@ -50,7 +59,7 @@ pub fn parse_claude_response(output: &str, focus: AnalysisFocus) -> AiAnalysis {
 /// Uses a multi-tier extraction strategy:
 /// 1. Direct JSON parse of the full text
 /// 2. Extract from markdown code fences (` ```json ... ``` `)
-/// 3. Find the first `{...}` block in the text
+/// 3. Deserialize the first JSON object after the first `{`
 /// 4. Fall back to [`StructuredAnalysis::Raw`]
 fn parse_structured_analysis(content: &str, focus: AnalysisFocus) -> StructuredAnalysis {
     match focus {
@@ -78,7 +87,7 @@ fn parse_structured_analysis(content: &str, focus: AnalysisFocus) -> StructuredA
 /// Tries three strategies in order:
 /// 1. Direct parse of the entire string
 /// 2. Extract content from markdown ` ```json ``` ` code fences
-/// 3. Find the first `{` ... `}` balanced block
+/// 3. Deserialize the first object beginning at the first `{`
 ///
 /// Returns `None` if all strategies fail.
 #[must_use]
@@ -97,14 +106,12 @@ pub fn try_extract<T: DeserializeOwned>(raw: &str) -> Option<T> {
         }
     }
 
-    // Strategy 3: Find first balanced JSON block
-    if let Some(block) = extract_json_block(trimmed) {
-        if let Ok(val) = serde_json::from_str(block) {
-            return Some(val);
-        }
-    }
-
-    None
+    // Strategy 3: Let serde_json own string escaping, nesting, and object boundaries.
+    let start = trimmed.find('{')?;
+    serde_json::Deserializer::from_str(&trimmed[start..])
+        .into_iter::<T>()
+        .next()
+        .and_then(std::result::Result::ok)
 }
 
 /// Extract content from a markdown JSON code fence.
@@ -123,42 +130,9 @@ fn extract_code_fence(text: &str) -> Option<&str> {
     None
 }
 
-/// Find the first balanced `{...}` block in the text.
+/// Parse normalized or legacy provider output into a [`ScanPlan`].
 ///
-/// Handles nested braces and strings (to avoid counting braces inside strings).
-fn extract_json_block(text: &str) -> Option<&str> {
-    let start = text.find('{')?;
-    let bytes = text.as_bytes();
-    let mut depth: u32 = 0;
-    let mut in_string = false;
-    let mut escape_next = false;
-
-    for (i, &byte) in bytes[start..].iter().enumerate() {
-        if escape_next {
-            escape_next = false;
-            continue;
-        }
-
-        match byte {
-            b'\\' if in_string => escape_next = true,
-            b'"' => in_string = !in_string,
-            b'{' if !in_string => depth += 1,
-            b'}' if !in_string => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&text[start..=(start + i)]);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    None
-}
-
-/// Parse a Claude CLI response into a [`ScanPlan`].
-///
-/// Extracts the result text from the Claude CLI JSON envelope, then
+/// Extracts the result text from a legacy JSON envelope when present, then
 /// attempts to parse it into a `ScanPlan`. Returns an empty plan if
 /// parsing fails (graceful degradation).
 #[must_use]
@@ -187,7 +161,7 @@ pub fn parse_plan_response(output: &str, target: &str) -> ScanPlan {
 mod tests {
     use super::*;
 
-    /// Verify that parse_claude_response extracts structured summary from
+    /// Verify that `parse_claude_response` extracts structured summary from
     /// a Claude CLI JSON envelope containing valid JSON analysis.
     #[test]
     fn test_parse_claude_response_structured() {
@@ -213,7 +187,7 @@ mod tests {
         assert_eq!(result.focus, AnalysisFocus::Summary);
     }
 
-    /// Verify that unparseable content falls back to StructuredAnalysis::Raw.
+    /// Verify that unparsable content falls back to `StructuredAnalysis::Raw`.
     #[test]
     fn test_parse_claude_response_raw_fallback() {
         let envelope = serde_json::json!({
@@ -254,7 +228,7 @@ mod tests {
         assert!(result.is_some());
     }
 
-    /// Verify that try_extract returns None when no valid JSON is found.
+    /// Verify that `try_extract` returns None when no valid JSON is found.
     #[test]
     fn test_extract_json_fallback() {
         let text = "This is just plain text with no JSON at all.";
@@ -262,14 +236,13 @@ mod tests {
         assert!(result.is_none());
     }
 
-    /// Verify that nested braces in strings don't break JSON block extraction.
+    /// Verify serde-owned extraction handles escaped quotes, slashes, braces, and nesting.
     #[test]
-    fn test_extract_json_block_nested_braces() {
-        let text = r#"Preamble text {"key": "value with {braces}", "nested": {"inner": 1}} after"#;
-        let block = extract_json_block(text);
-        assert!(block.is_some());
-        let parsed: serde_json::Value =
-            serde_json::from_str(block.expect("should find block")).expect("should parse");
+    fn test_extract_json_with_escaped_content_and_nested_object() {
+        let text =
+            r#"Preamble text {"key":"quote: \" slash: \\ brace: }","nested":{"inner":1}} after"#;
+        let parsed: serde_json::Value = try_extract(text).expect("should parse first object");
+        assert_eq!(parsed["key"], "quote: \" slash: \\ brace: }");
         assert_eq!(parsed["nested"]["inner"], 1);
     }
 

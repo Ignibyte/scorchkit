@@ -25,7 +25,7 @@
 //!   passes: the existing presence check (Medium finding if the apex
 //!   has no DNSKEY), then a validating-resolver pass that triggers
 //!   hickory's parent-DS → DNSKEY → RRSIG chain walk. Failures map to
-//!   severity-tiered findings via [`classify_dnssec_error`] — Critical
+//!   severity-tiered findings via `classify_dnssec_error` — Critical
 //!   for bogus signatures, High for expired RRSIGs, Medium for missing
 //!   parent DS, Info for a validated chain.
 //! - **Native AXFR zone-transfer probe.** `probe_axfr` fans across each
@@ -36,17 +36,16 @@
 //!   server) are silent at `debug!`-level — they are the expected
 //!   happy path.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use hickory_resolver::config::ResolverOpts;
 use hickory_resolver::proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
-use hickory_resolver::proto::rr::{DNSClass, Name as ProtoName, RecordType};
+use hickory_resolver::proto::rr::{DNSClass, Name, Name as ProtoName, RData, RecordType};
 use hickory_resolver::proto::ProtoError;
-use hickory_resolver::ResolveError;
-use hickory_resolver::{Name, TokioResolver};
+use hickory_resolver::TokioResolver;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -65,8 +64,24 @@ use crate::engine::severity::Severity;
 const AXFR_NS_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Probe module for [`InfraCategory::Dns`].
-#[derive(Debug, Default)]
-pub struct DnsInfraModule;
+#[derive(Debug)]
+pub struct DnsInfraModule {
+    resolver_override: Option<Arc<dyn DnsResolver>>,
+    axfr_probe: Arc<dyn AxfrProbe>,
+}
+
+impl Default for DnsInfraModule {
+    fn default() -> Self {
+        Self { resolver_override: None, axfr_probe: Arc::new(SystemAxfrProbe) }
+    }
+}
+
+impl DnsInfraModule {
+    #[cfg(test)]
+    fn with_backends(resolver: Arc<dyn DnsResolver>, axfr_probe: Arc<dyn AxfrProbe>) -> Self {
+        Self { resolver_override: Some(resolver), axfr_probe }
+    }
+}
 
 #[async_trait]
 impl InfraModule for DnsInfraModule {
@@ -91,23 +106,119 @@ impl InfraModule for DnsInfraModule {
             return Ok(Vec::new());
         };
 
-        let Ok(resolver_builder) = TokioResolver::builder_tokio() else {
-            warn!("dns_infra: failed to construct resolver from system config; skipping");
-            return Ok(Vec::new());
+        let resolver: Arc<dyn DnsResolver> = if let Some(resolver) = &self.resolver_override {
+            Arc::clone(resolver)
+        } else {
+            let Some(resolver) = SystemDnsResolver::build() else {
+                warn!("dns_infra: failed to build resolver from system config; skipping");
+                return Ok(Vec::new());
+            };
+            Arc::new(resolver)
         };
-        // Keep defaults except: lower the overall attempt count so a
-        // zone that doesn't exist fails fast.
-        let mut opts = ResolverOpts::default();
-        opts.attempts = 2;
-        let resolver = resolver_builder.with_options(opts).build();
 
         let mut findings = Vec::new();
-        probe_wildcard(&resolver, &zone, &mut findings).await;
-        probe_dnssec(&resolver, &zone, &mut findings).await;
-        probe_caa(&resolver, &zone, &mut findings).await;
-        probe_ns(&resolver, &zone, &mut findings).await;
-        probe_axfr(&resolver, &zone, &mut findings).await;
+        probe_wildcard(ctx, resolver.as_ref(), &zone, &mut findings).await?;
+        probe_dnssec(ctx, resolver.as_ref(), &zone, &mut findings).await?;
+        probe_caa(ctx, resolver.as_ref(), &zone, &mut findings).await?;
+        probe_ns(ctx, resolver.as_ref(), &zone, &mut findings).await?;
+        probe_axfr(ctx, resolver.as_ref(), self.axfr_probe.as_ref(), &zone, &mut findings).await?;
         Ok(findings)
+    }
+}
+
+#[async_trait]
+trait DnsResolver: std::fmt::Debug + Send + Sync {
+    async fn lookup_ips(&self, name: Name) -> std::result::Result<Vec<String>, String>;
+    async fn has_records(
+        &self,
+        name: Name,
+        record_type: RecordType,
+    ) -> std::result::Result<bool, String>;
+    async fn nameservers(&self, name: Name) -> std::result::Result<Vec<String>, String>;
+    async fn validate_soa(&self, name: Name) -> Option<std::result::Result<(), String>>;
+}
+
+#[derive(Debug)]
+struct SystemDnsResolver {
+    resolver: TokioResolver,
+    validating_resolver: Option<TokioResolver>,
+}
+
+impl SystemDnsResolver {
+    fn build() -> Option<Self> {
+        let mut options = ResolverOpts::default();
+        options.attempts = 2;
+        let resolver = TokioResolver::builder_tokio().ok()?.with_options(options).build().ok()?;
+
+        let mut validating_options = ResolverOpts::default();
+        validating_options.attempts = 2;
+        validating_options.validate = true;
+        let validating_resolver = TokioResolver::builder_tokio()
+            .ok()
+            .and_then(|builder| builder.with_options(validating_options).build().ok());
+
+        Some(Self { resolver, validating_resolver })
+    }
+}
+
+#[async_trait]
+impl DnsResolver for SystemDnsResolver {
+    async fn lookup_ips(&self, name: Name) -> std::result::Result<Vec<String>, String> {
+        self.resolver
+            .lookup_ip(name)
+            .await
+            .map(|lookup| lookup.iter().map(|ip| ip.to_string()).collect())
+            .map_err(|error| error.to_string())
+    }
+
+    async fn has_records(
+        &self,
+        name: Name,
+        record_type: RecordType,
+    ) -> std::result::Result<bool, String> {
+        self.resolver
+            .lookup(name, record_type)
+            .await
+            .map(|lookup| !lookup.answers().is_empty())
+            .map_err(|error| error.to_string())
+    }
+
+    async fn nameservers(&self, name: Name) -> std::result::Result<Vec<String>, String> {
+        self.resolver
+            .lookup(name, RecordType::NS)
+            .await
+            .map(|lookup| {
+                let records: Vec<RData> =
+                    lookup.answers().iter().map(|record| record.data.clone()).collect();
+                extract_nameservers(&records)
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    async fn validate_soa(&self, name: Name) -> Option<std::result::Result<(), String>> {
+        let resolver = self.validating_resolver.as_ref()?;
+        Some(
+            resolver
+                .lookup(name, RecordType::SOA)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
+        )
+    }
+}
+
+#[async_trait]
+trait AxfrProbe: std::fmt::Debug + Send + Sync {
+    async fn attempt(&self, ctx: &InfraContext, zone: &ProtoName, nameserver: &str) -> AxfrOutcome;
+}
+
+#[derive(Debug)]
+struct SystemAxfrProbe;
+
+#[async_trait]
+impl AxfrProbe for SystemAxfrProbe {
+    async fn attempt(&self, ctx: &InfraContext, zone: &ProtoName, nameserver: &str) -> AxfrOutcome {
+        axfr_attempt(ctx, zone, nameserver).await
     }
 }
 
@@ -140,15 +251,23 @@ pub fn random_wildcard_label() -> String {
     s
 }
 
-async fn probe_wildcard(resolver: &TokioResolver, zone: &str, findings: &mut Vec<Finding>) {
+async fn probe_wildcard(
+    ctx: &InfraContext,
+    resolver: &dyn DnsResolver,
+    zone: &str,
+    findings: &mut Vec<Finding>,
+) -> Result<()> {
     let label = random_wildcard_label();
     let probe = format!("{label}.{zone}");
+    ctx.authorize_network_target(&probe)?;
     let Ok(name) = Name::from_ascii(&probe) else {
-        return;
+        return Ok(());
     };
     // NXDOMAIN is the expected healthy case — only act on a successful lookup.
-    if let Ok(lookup) = resolver.lookup_ip(name).await {
-        let ips: Vec<String> = lookup.iter().map(|ip| ip.to_string()).collect();
+    if let Ok(ips) = resolver.lookup_ips(name).await {
+        for ip in &ips {
+            ctx.authorize_network_target(ip)?;
+        }
         if !ips.is_empty() {
             findings.push(
                 Finding::new(
@@ -173,18 +292,22 @@ async fn probe_wildcard(resolver: &TokioResolver, zone: &str, findings: &mut Vec
             );
         }
     }
+    Ok(())
 }
 
-async fn probe_dnssec(resolver: &TokioResolver, zone: &str, findings: &mut Vec<Finding>) {
+async fn probe_dnssec(
+    ctx: &InfraContext,
+    resolver: &dyn DnsResolver,
+    zone: &str,
+    findings: &mut Vec<Finding>,
+) -> Result<()> {
+    ctx.authorize_network_target(zone)?;
     let Ok(name) = Name::from_ascii(zone) else {
-        return;
+        return Ok(());
     };
 
     // Pass 1 — presence check against the non-validating resolver.
-    let has_dnskey = resolver
-        .lookup(name.clone(), RecordType::DNSKEY)
-        .await
-        .is_ok_and(|lookup| lookup.iter().next().is_some());
+    let has_dnskey = resolver.has_records(name.clone(), RecordType::DNSKEY).await.unwrap_or(false);
     if !has_dnskey {
         findings.push(
             Finding::new(
@@ -206,25 +329,17 @@ async fn probe_dnssec(resolver: &TokioResolver, zone: &str, findings: &mut Vec<F
             .with_owasp("A02:2021 Cryptographic Failures")
             .with_confidence(0.7),
         );
-        return;
+        return Ok(());
     }
 
-    // Pass 2 — validating resolver. Build a second resolver with
-    // `validate = true`, ask for the apex SOA, inspect the outcome.
-    // The validating resolver triggers hickory's parent-DS → child
-    // DNSKEY → RRSIG chain walk under the hood; we classify its error
-    // surface into DnssecOutcome.
-    let Ok(validate_builder) = TokioResolver::builder_tokio() else {
-        // No validating resolver available — silently skip the chain pass.
-        return;
+    // Pass 2 — the production backend asks a validating resolver for the
+    // apex SOA, triggering the parent-DS → DNSKEY → RRSIG chain walk.
+    let Some(validation) = resolver.validate_soa(name).await else {
+        return Ok(());
     };
-    let mut validate_opts = ResolverOpts::default();
-    validate_opts.attempts = 2;
-    validate_opts.validate = true;
-    let validate_resolver = validate_builder.with_options(validate_opts).build();
 
-    match validate_resolver.lookup(name, RecordType::SOA).await {
-        Ok(_) => findings.push(
+    match validation {
+        Ok(()) => findings.push(
             Finding::new(
                 "dns_infra",
                 Severity::Info,
@@ -239,11 +354,12 @@ async fn probe_dnssec(resolver: &TokioResolver, zone: &str, findings: &mut Vec<F
             .with_evidence("Validating resolver accepted SOA at the apex")
             .with_confidence(0.9),
         ),
-        Err(e) => {
-            let outcome = classify_dnssec_error(&e);
-            findings.push(dnssec_outcome_to_finding(zone, outcome, &e));
+        Err(error) => {
+            let outcome = classify_dnssec_error(&error);
+            findings.push(dnssec_outcome_to_finding(zone, outcome, &error));
         }
     }
+    Ok(())
 }
 
 /// Outcome of a validating-resolver DNSSEC lookup.
@@ -260,9 +376,8 @@ pub(crate) enum DnssecOutcome {
     Indeterminate,
 }
 
-/// Classify a `ResolveError` from a validating resolver into a
-/// [`DnssecOutcome`]. Pure function — string-matches the error's
-/// display text against the patterns hickory emits for the documented
+/// Classify an error from a validating resolver into a [`DnssecOutcome`].
+/// Pure function — string-matches the text against the patterns hickory emits for the documented
 /// DNSSEC failure modes.
 ///
 /// Hickory's error surface for DNSSEC isn't a stable tagged enum, so
@@ -270,8 +385,8 @@ pub(crate) enum DnssecOutcome {
 /// [`DnssecOutcome::Indeterminate`] so we still report the probe, just
 /// at lower fidelity. See WORK-145 design §Issues Found.
 #[must_use]
-pub(crate) fn classify_dnssec_error(err: &ResolveError) -> DnssecOutcome {
-    let msg = err.to_string().to_ascii_lowercase();
+pub(crate) fn classify_dnssec_error(error: &str) -> DnssecOutcome {
+    let msg = error.to_ascii_lowercase();
     // Check expired first — hickory's expiry messages often mention
     // RRSIG by name (e.g. "RRSIG not valid yet"), which would otherwise
     // short-circuit into the Bogus branch.
@@ -293,7 +408,7 @@ pub(crate) fn classify_dnssec_error(err: &ResolveError) -> DnssecOutcome {
 /// Convert a [`DnssecOutcome`] into a finding. The base-case "validator
 /// error we can't pin down" still produces a Medium finding so
 /// operators see the probe ran, just without a precise cause.
-fn dnssec_outcome_to_finding(zone: &str, outcome: DnssecOutcome, err: &ResolveError) -> Finding {
+fn dnssec_outcome_to_finding(zone: &str, outcome: DnssecOutcome, error: &str) -> Finding {
     let (severity, title, description) = match outcome {
         DnssecOutcome::Bogus => (
             Severity::Critical,
@@ -335,7 +450,7 @@ fn dnssec_outcome_to_finding(zone: &str, outcome: DnssecOutcome, err: &ResolveEr
     };
 
     Finding::new("dns_infra", severity, title, description, zone.to_string())
-        .with_evidence(format!("Validator error: {err}"))
+        .with_evidence(format!("Validator error: {error}"))
         .with_remediation(
             "Inspect the zone's DNSSEC signing state (key expiry, DS publication \
              at the registrar, RRSIG coverage). `dig +dnssec <zone> SOA` + \
@@ -345,14 +460,17 @@ fn dnssec_outcome_to_finding(zone: &str, outcome: DnssecOutcome, err: &ResolveEr
         .with_confidence(0.8)
 }
 
-async fn probe_caa(resolver: &TokioResolver, zone: &str, findings: &mut Vec<Finding>) {
+async fn probe_caa(
+    ctx: &InfraContext,
+    resolver: &dyn DnsResolver,
+    zone: &str,
+    findings: &mut Vec<Finding>,
+) -> Result<()> {
+    ctx.authorize_network_target(zone)?;
     let Ok(name) = Name::from_ascii(zone) else {
-        return;
+        return Ok(());
     };
-    let has_caa = resolver
-        .lookup(name, RecordType::CAA)
-        .await
-        .is_ok_and(|lookup| lookup.iter().next().is_some());
+    let has_caa = resolver.has_records(name, RecordType::CAA).await.unwrap_or(false);
     if !has_caa {
         findings.push(
             Finding::new(
@@ -374,21 +492,34 @@ async fn probe_caa(resolver: &TokioResolver, zone: &str, findings: &mut Vec<Find
             .with_confidence(0.7),
         );
     }
+    Ok(())
 }
 
-async fn probe_ns(resolver: &TokioResolver, zone: &str, findings: &mut Vec<Finding>) {
-    let Ok(name) = Name::from_ascii(zone) else {
-        return;
-    };
-    let Ok(lookup) = resolver.lookup(name, RecordType::NS).await else {
-        return;
-    };
-    let servers: Vec<String> = lookup
+fn extract_nameservers(records: &[RData]) -> Vec<String> {
+    records
         .iter()
-        .filter_map(|rdata| rdata.as_ns().map(std::string::ToString::to_string))
-        .collect();
+        .filter_map(|record| match record {
+            RData::NS(name) => Some(name.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+async fn probe_ns(
+    ctx: &InfraContext,
+    resolver: &dyn DnsResolver,
+    zone: &str,
+    findings: &mut Vec<Finding>,
+) -> Result<()> {
+    ctx.authorize_network_target(zone)?;
+    let Ok(name) = Name::from_ascii(zone) else {
+        return Ok(());
+    };
+    let Ok(servers) = resolver.nameservers(name).await else {
+        return Ok(());
+    };
     if servers.is_empty() {
-        return;
+        return Ok(());
     }
     findings.push(
         Finding::new(
@@ -401,6 +532,7 @@ async fn probe_ns(resolver: &TokioResolver, zone: &str, findings: &mut Vec<Findi
         .with_evidence(format!("NS: {}", servers.join(", ")))
         .with_confidence(0.95),
     );
+    Ok(())
 }
 
 // =============================================================
@@ -426,20 +558,24 @@ pub(crate) enum AxfrOutcome {
 /// Enumerate the zone's NS `RRset` and run [`axfr_attempt`] against each,
 /// emitting one Critical finding per accepting NS. Rejections and
 /// errors are silent (`debug!`-level trace only).
-async fn probe_axfr(resolver: &TokioResolver, zone: &str, findings: &mut Vec<Finding>) {
+async fn probe_axfr(
+    ctx: &InfraContext,
+    resolver: &dyn DnsResolver,
+    axfr_probe: &dyn AxfrProbe,
+    zone: &str,
+    findings: &mut Vec<Finding>,
+) -> Result<()> {
+    ctx.authorize_network_target(zone)?;
     let Ok(zone_name) = Name::from_ascii(zone) else {
-        return;
+        return Ok(());
     };
-    let Ok(lookup) = resolver.lookup(zone_name.clone(), RecordType::NS).await else {
-        return;
+    let Ok(servers) = resolver.nameservers(zone_name.clone()).await else {
+        return Ok(());
     };
-    let servers: Vec<String> = lookup
-        .iter()
-        .filter_map(|rdata| rdata.as_ns().map(std::string::ToString::to_string))
-        .collect();
 
     for ns in servers {
-        match axfr_attempt(&zone_name, &ns).await {
+        ctx.authorize_network_target(ns.trim_end_matches('.'))?;
+        match axfr_probe.attempt(ctx, &zone_name, &ns).await {
             AxfrOutcome::Accepted { record_count } => {
                 findings.push(
                     Finding::new(
@@ -476,22 +612,21 @@ async fn probe_axfr(resolver: &TokioResolver, zone: &str, findings: &mut Vec<Fin
             }
         }
     }
+    Ok(())
 }
 
 /// Open a TCP connection to the NS, send an AXFR query, read the first
 /// response, classify the outcome.
-async fn axfr_attempt(zone: &ProtoName, ns: &str) -> AxfrOutcome {
+async fn axfr_attempt(ctx: &InfraContext, zone: &ProtoName, ns: &str) -> AxfrOutcome {
     // NS strings are FQDN-with-trailing-dot (`ns1.example.com.`). We
     // connect to port 53/TCP. Trailing dots and socket-addr parsing
     // don't mix; strip the dot before resolving.
     let host = ns.trim_end_matches('.');
-    let addr = format!("{host}:53");
-
     let Ok(query) = build_axfr_query(zone) else {
         return AxfrOutcome::Unknown;
     };
 
-    let Ok(Ok(tcp)) = timeout(AXFR_NS_TIMEOUT, TcpStream::connect(&addr)).await else {
+    let Ok(tcp) = ctx.network_policy().connect(host, 53, AXFR_NS_TIMEOUT).await else {
         return AxfrOutcome::Unknown;
     };
     let mut tcp = tcp;
@@ -516,10 +651,9 @@ async fn axfr_attempt(zone: &ProtoName, ns: &str) -> AxfrOutcome {
     if timeout(AXFR_NS_TIMEOUT, tcp.read_exact(&mut len_buf)).await.is_err() {
         return AxfrOutcome::Unknown;
     }
-    let resp_len = u16::from_be_bytes(len_buf) as usize;
-    if resp_len == 0 || resp_len > 65535 {
+    let Some(resp_len) = dns_frame_length(len_buf) else {
         return AxfrOutcome::Unknown;
-    }
+    };
 
     let mut resp = vec![0u8; resp_len];
     if timeout(AXFR_NS_TIMEOUT, tcp.read_exact(&mut resp)).await.is_err() {
@@ -527,6 +661,15 @@ async fn axfr_attempt(zone: &ProtoName, ns: &str) -> AxfrOutcome {
     }
 
     classify_axfr_response(&resp)
+}
+
+const fn dns_frame_length(length_prefix: [u8; 2]) -> Option<usize> {
+    let length = u16::from_be_bytes(length_prefix) as usize;
+    if length == 0 {
+        None
+    } else {
+        Some(length)
+    }
 }
 
 /// Build a DNS AXFR query message for `zone` and serialize to wire
@@ -544,20 +687,14 @@ pub(crate) fn build_axfr_query(zone: &ProtoName) -> std::result::Result<Vec<u8>,
     query.set_query_type(RecordType::AXFR);
     query.set_query_class(DNSClass::IN);
 
-    let mut msg = Message::new();
     // 16-bit transaction ID — DNS's `id` field. Truncating the UUID is
     // fine: we don't care which value, we only need it to vary between
     // concurrent probes so matched responses don't cross-talk.
-    #[allow(clippy::cast_possible_truncation)]
     // JUSTIFICATION: intentional truncation — DNS ID is 16 bits and we
     // only need per-query uniqueness, not full UUID fidelity.
+    #[allow(clippy::cast_possible_truncation)]
     let txid = Uuid::new_v4().as_u128() as u16;
-    msg.set_id(txid);
-    msg.set_message_type(MessageType::Query);
-    msg.set_op_code(OpCode::Query);
-    msg.set_recursion_desired(false);
-    msg.set_authentic_data(false);
-    msg.set_checking_disabled(false);
+    let mut msg = Message::new(txid, MessageType::Query, OpCode::Query);
     msg.add_query(query);
     msg.to_vec()
 }
@@ -579,13 +716,13 @@ pub(crate) fn classify_axfr_response(bytes: &[u8]) -> AxfrOutcome {
     let Ok(msg) = Message::from_vec(bytes) else {
         return AxfrOutcome::Unknown;
     };
-    if msg.response_code() != ResponseCode::NoError {
+    if msg.response_code != ResponseCode::NoError {
         return AxfrOutcome::Rejected;
     }
-    if !msg.authoritative() {
+    if !msg.authoritative {
         return AxfrOutcome::Rejected;
     }
-    let answers = msg.answers();
+    let answers = &msg.answers;
     if answers.is_empty() {
         return AxfrOutcome::Rejected;
     }
@@ -604,6 +741,7 @@ mod tests {
 
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// `InfraTarget::Host` is what we probe — hand it straight back.
     #[test]
@@ -663,17 +801,190 @@ mod tests {
     /// and `--modules` CLI flags key off.
     #[test]
     fn dns_infra_module_metadata() {
-        let module = DnsInfraModule;
+        let module = DnsInfraModule::default();
+        assert_eq!(module.name(), "DNS Infra Probe");
         assert_eq!(module.id(), "dns_infra");
         assert_eq!(module.category(), InfraCategory::Dns);
+        assert_eq!(
+            module.description(),
+            "Check DNS hygiene: wildcard A/AAAA, DNSSEC chain validation, CAA, NS enumeration, AXFR"
+        );
         assert!(!module.requires_external_tool());
+    }
+
+    #[tokio::test]
+    async fn system_resolver_builds_from_local_configuration() {
+        assert!(SystemDnsResolver::build().is_some());
+    }
+
+    #[tokio::test]
+    async fn system_resolver_maps_loopback_dns_responses() {
+        use std::net::{IpAddr, Ipv4Addr};
+
+        use hickory_resolver::config::{
+            ConnectionConfig, LookupIpStrategy, NameServerConfig, ResolverConfig,
+        };
+        use hickory_resolver::net::runtime::TokioRuntimeProvider;
+        use hickory_resolver::proto::rr::rdata::{A, NS as NsRdata};
+        use tokio::net::UdpSocket;
+
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.expect("bind loopback DNS");
+        let address = socket.local_addr().expect("loopback DNS address");
+        let server = tokio::spawn(async move {
+            let mut buffer = [0_u8; 2048];
+            loop {
+                let (length, peer) =
+                    socket.recv_from(&mut buffer).await.expect("receive DNS query");
+                let request = Message::from_vec(&buffer[..length]).expect("decode DNS query");
+                let query = request.queries.first().expect("DNS question").clone();
+                let mut response =
+                    Message::new(request.metadata.id, MessageType::Response, request.op_code);
+                response.metadata.authoritative = true;
+                response.metadata.recursion_available = true;
+                response.metadata.recursion_desired = request.metadata.recursion_desired;
+                response.add_query(query.clone());
+
+                match query.query_type() {
+                    RecordType::A => {
+                        response.add_answer(Record::from_rdata(
+                            query.name().clone(),
+                            60,
+                            RData::A(A::new(192, 0, 2, 55)),
+                        ));
+                    }
+                    RecordType::NS => {
+                        response.add_answer(Record::from_rdata(
+                            query.name().clone(),
+                            60,
+                            RData::NS(NsRdata(
+                                ProtoName::from_ascii("ns1.fixture.test.").expect("fixture NS"),
+                            )),
+                        ));
+                    }
+                    RecordType::CAA => response.metadata.response_code = ResponseCode::NXDomain,
+                    RecordType::SOA => response.metadata.response_code = ResponseCode::ServFail,
+                    _ => response.metadata.response_code = ResponseCode::NotImp,
+                }
+
+                let bytes = response.to_vec().expect("encode DNS response");
+                socket.send_to(&bytes, peer).await.expect("send DNS response");
+            }
+        });
+
+        let mut connection = ConnectionConfig::udp();
+        connection.port = address.port();
+        let config = ResolverConfig::from_parts(
+            None,
+            Vec::new(),
+            vec![NameServerConfig::new(address.ip(), true, vec![connection])],
+        );
+        let mut options = ResolverOpts::default();
+        options.attempts = 1;
+        options.timeout = Duration::from_secs(1);
+        options.ip_strategy = LookupIpStrategy::Ipv4Only;
+        options.cache_size = 0;
+        let resolver = TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
+            .with_options(options)
+            .build()
+            .expect("build loopback resolver");
+        let production =
+            SystemDnsResolver { resolver: resolver.clone(), validating_resolver: Some(resolver) };
+        let name = Name::from_ascii("fixture.test.").expect("fixture name");
+
+        assert_eq!(production.lookup_ips(name.clone()).await, Ok(vec!["192.0.2.55".to_string()]));
+        assert_eq!(production.has_records(name.clone(), RecordType::A).await, Ok(true));
+        assert!(production.has_records(name.clone(), RecordType::CAA).await.is_err());
+        assert_eq!(
+            production.nameservers(name.clone()).await,
+            Ok(vec!["ns1.fixture.test.".to_string()])
+        );
+        assert!(
+            matches!(production.validate_soa(name.clone()).await, Some(Err(error)) if !error.is_empty())
+        );
+
+        let without_validation =
+            SystemDnsResolver { resolver: production.resolver.clone(), validating_resolver: None };
+        assert!(without_validation.validate_soa(name).await.is_none());
+
+        server.abort();
+        assert!(matches!(address.ip(), IpAddr::V4(ip) if ip.is_loopback()));
+    }
+
+    #[derive(Debug)]
+    struct FixtureDnsResolver;
+
+    #[async_trait]
+    impl DnsResolver for FixtureDnsResolver {
+        async fn lookup_ips(&self, _name: Name) -> std::result::Result<Vec<String>, String> {
+            Ok(vec!["192.0.2.44".to_string()])
+        }
+
+        async fn has_records(
+            &self,
+            _name: Name,
+            record_type: RecordType,
+        ) -> std::result::Result<bool, String> {
+            match record_type {
+                RecordType::DNSKEY => Ok(true),
+                RecordType::CAA => Ok(false),
+                other => Err(format!("unexpected record type: {other}")),
+            }
+        }
+
+        async fn nameservers(&self, _name: Name) -> std::result::Result<Vec<String>, String> {
+            Ok(vec!["ns1.example.test.".to_string()])
+        }
+
+        async fn validate_soa(&self, _name: Name) -> Option<std::result::Result<(), String>> {
+            Some(Err("signature expired at 2026-01-01".to_string()))
+        }
+    }
+
+    #[derive(Debug)]
+    struct FixtureAxfrProbe {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl AxfrProbe for FixtureAxfrProbe {
+        async fn attempt(
+            &self,
+            _ctx: &InfraContext,
+            _zone: &ProtoName,
+            nameserver: &str,
+        ) -> AxfrOutcome {
+            assert_eq!(nameserver, "ns1.example.test.");
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            AxfrOutcome::Accepted { record_count: 3 }
+        }
+    }
+
+    #[tokio::test]
+    async fn run_observes_every_dns_probe_through_fixture_backends() {
+        let axfr_calls = Arc::new(AtomicUsize::new(0));
+        let module = DnsInfraModule::with_backends(
+            Arc::new(FixtureDnsResolver),
+            Arc::new(FixtureAxfrProbe { calls: Arc::clone(&axfr_calls) }),
+        );
+        let target = InfraTarget::Host("example.test".to_string());
+        let config = Arc::new(crate::config::AppConfig::default());
+        let context = InfraContext::new(target, config, Vec::new());
+
+        let findings = module.run(&context).await.expect("DNS module run");
+        assert_eq!(findings.len(), 5);
+        assert!(findings.iter().any(|finding| finding.title == "Wildcard DNS Records Configured"));
+        assert!(findings.iter().any(|finding| finding.title == "DNSSEC Signature Expired"));
+        assert!(findings.iter().any(|finding| finding.title == "CAA Record Missing"));
+        assert!(findings.iter().any(|finding| finding.title == "Authoritative Nameservers"));
+        assert!(findings.iter().any(|finding| finding.title == "AXFR Zone Transfer Allowed"));
+        assert_eq!(axfr_calls.load(Ordering::SeqCst), 1);
     }
 
     // =============================================================
     // WORK-145: AXFR + DNSSEC classifier tests
     // =============================================================
 
-    use hickory_resolver::proto::op::{Header, Message, MessageType, OpCode, ResponseCode};
+    use hickory_resolver::proto::op::{Message, MessageType, OpCode, ResponseCode};
     use hickory_resolver::proto::rr::rdata::{NS as NsRdata, SOA};
     use hickory_resolver::proto::rr::{DNSClass, Name as ProtoName, RData, Record, RecordType};
 
@@ -683,12 +994,12 @@ mod tests {
         let zone = ProtoName::from_ascii("example.com.").expect("name");
         let bytes = build_axfr_query(&zone).expect("encode");
         let msg = Message::from_vec(&bytes).expect("parse");
-        assert_eq!(msg.message_type(), MessageType::Query);
-        assert_eq!(msg.op_code(), OpCode::Query);
-        assert!(!msg.recursion_desired(), "AXFR queries are authoritative; no RD");
-        assert!(!msg.authentic_data());
-        assert!(!msg.checking_disabled());
-        assert_eq!(msg.queries().len(), 1);
+        assert_eq!(msg.message_type, MessageType::Query);
+        assert_eq!(msg.op_code, OpCode::Query);
+        assert!(!msg.recursion_desired, "AXFR queries are authoritative; no RD");
+        assert!(!msg.authentic_data);
+        assert!(!msg.checking_disabled);
+        assert_eq!(msg.queries.len(), 1);
     }
 
     #[test]
@@ -696,7 +1007,7 @@ mod tests {
         let zone = ProtoName::from_ascii("example.com.").expect("name");
         let bytes = build_axfr_query(&zone).expect("encode");
         let msg = Message::from_vec(&bytes).expect("parse");
-        let q = &msg.queries()[0];
+        let q = &msg.queries[0];
         assert_eq!(q.name().to_string(), "example.com.");
         assert_eq!(q.query_type(), RecordType::AXFR);
         assert_eq!(q.query_class(), DNSClass::IN);
@@ -718,13 +1029,9 @@ mod tests {
         authoritative: bool,
         answers: Vec<Record>,
     ) -> Vec<u8> {
-        let mut msg = Message::new();
-        let mut header = Header::new();
-        header.set_message_type(MessageType::Response);
-        header.set_op_code(OpCode::Query);
-        header.set_response_code(rcode);
-        header.set_authoritative(authoritative);
-        msg.set_header(header);
+        let mut msg = Message::new(0, MessageType::Response, OpCode::Query);
+        msg.metadata.response_code = rcode;
+        msg.metadata.authoritative = authoritative;
         for a in answers {
             msg.add_answer(a);
         }
@@ -743,6 +1050,12 @@ mod tests {
         let zone = ProtoName::from_ascii("example.com.").expect("name");
         let ns = ProtoName::from_ascii("ns2.example.com.").expect("name");
         Record::from_rdata(zone, 3600, RData::NS(NsRdata(ns)))
+    }
+
+    #[test]
+    fn nameserver_extraction_ignores_other_record_types() {
+        let records = vec![ns_record().data, soa_record().data];
+        assert_eq!(extract_nameservers(&records), ["ns2.example.com."]);
     }
 
     #[test]
@@ -796,54 +1109,51 @@ mod tests {
 
     // -------- DNSSEC classifier tests --------
 
-    /// Convenience: build a `ResolveError` whose display text we
-    /// control, so we can exercise the classifier without standing up
-    /// a real validating resolver.
-    fn err_from_msg(msg: &str) -> ResolveError {
-        // `ResolveError::from(String)` exists for arbitrary messages.
-        ResolveError::from(msg.to_string())
-    }
-
     #[test]
     fn classify_dnssec_error_bogus() {
-        assert_eq!(
-            classify_dnssec_error(&err_from_msg("RRSIG validation failed")),
-            DnssecOutcome::Bogus
-        );
-        assert_eq!(
-            classify_dnssec_error(&err_from_msg("chain is bogus — bad signature on DNSKEY")),
-            DnssecOutcome::Bogus
-        );
+        for message in [
+            "validation state is bogus",
+            "signer name mismatch",
+            "bad signature on DNSKEY",
+            "RRSIG validation failed",
+        ] {
+            assert_eq!(classify_dnssec_error(message), DnssecOutcome::Bogus, "{message}");
+        }
     }
 
     #[test]
     fn classify_dnssec_error_expired() {
-        assert_eq!(
-            classify_dnssec_error(&err_from_msg("signature expired at 2023-01-01")),
-            DnssecOutcome::Expired
-        );
-        assert_eq!(
-            classify_dnssec_error(&err_from_msg("RRSIG not valid yet (inception in future)")),
-            DnssecOutcome::Expired
-        );
+        for message in [
+            "signature expired at 2023-01-01",
+            "RRSIG not valid yet (inception in future)",
+            "outside the validity period",
+        ] {
+            assert_eq!(classify_dnssec_error(message), DnssecOutcome::Expired, "{message}");
+        }
     }
 
     #[test]
     fn classify_dnssec_error_missing_ds() {
-        assert_eq!(
-            classify_dnssec_error(&err_from_msg("no DS record found at parent")),
-            DnssecOutcome::MissingDs
-        );
-        assert_eq!(
-            classify_dnssec_error(&err_from_msg("chain insecure: zone not signed")),
-            DnssecOutcome::MissingDs
-        );
+        for message in [
+            "missing DS record at parent",
+            "no DS found at parent",
+            "chain insecure: zone not signed",
+        ] {
+            assert_eq!(classify_dnssec_error(message), DnssecOutcome::MissingDs, "{message}");
+        }
+    }
+
+    #[test]
+    fn dns_frame_length_accepts_the_full_u16_domain_except_zero() {
+        assert_eq!(dns_frame_length([0, 0]), None);
+        assert_eq!(dns_frame_length([0, 1]), Some(1));
+        assert_eq!(dns_frame_length([u8::MAX, u8::MAX]), Some(usize::from(u16::MAX)));
     }
 
     #[test]
     fn classify_dnssec_error_indeterminate() {
         assert_eq!(
-            classify_dnssec_error(&err_from_msg("unexpected network error: connection reset")),
+            classify_dnssec_error("unexpected network error: connection reset"),
             DnssecOutcome::Indeterminate
         );
     }
@@ -858,14 +1168,16 @@ mod tests {
         let Ok(zone) = std::env::var("SCORCHKIT_DNS_TEST_ZONE") else {
             return;
         };
-        let Ok(builder) = TokioResolver::builder_tokio() else {
+        let Some(resolver) = SystemDnsResolver::build() else {
             return;
         };
-        let mut opts = ResolverOpts::default();
-        opts.attempts = 2;
-        let resolver = builder.with_options(opts).build();
+        let ctx = InfraContext::new(
+            InfraTarget::Host(zone.clone()),
+            Arc::new(crate::config::AppConfig::default()),
+            Vec::new(),
+        );
         let mut findings = Vec::new();
-        probe_dnssec(&resolver, &zone, &mut findings).await;
+        probe_dnssec(&ctx, &resolver, &zone, &mut findings).await.expect("authorized DNSSEC probe");
         // Just verify it ran without panicking — specific outcomes
         // depend on the operator's choice of zone.
         assert!(findings.len() <= 2, "should emit at most one finding per pass");
@@ -878,11 +1190,17 @@ mod tests {
         let Ok(zone) = std::env::var("SCORCHKIT_DNS_TEST_ZONE") else {
             return;
         };
-        let Ok(builder) = TokioResolver::builder_tokio() else {
+        let Some(resolver) = SystemDnsResolver::build() else {
             return;
         };
-        let resolver = builder.with_options(ResolverOpts::default()).build();
+        let ctx = InfraContext::new(
+            InfraTarget::Host(zone.clone()),
+            Arc::new(crate::config::AppConfig::default()),
+            Vec::new(),
+        );
         let mut findings = Vec::new();
-        probe_axfr(&resolver, &zone, &mut findings).await;
+        probe_axfr(&ctx, &resolver, &SystemAxfrProbe, &zone, &mut findings)
+            .await
+            .expect("authorized AXFR probe");
     }
 }

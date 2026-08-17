@@ -1,7 +1,7 @@
 //! LLM-mediated remediation walks (WORK-141).
 //!
 //! Generates step-by-step remediation guidance for findings using
-//! Claude. Produces ordered fix sequences prioritized by risk score
+//! an AI provider. Produces ordered fix sequences prioritized by risk score
 //! and dependency relationships (fix X before Y).
 
 use std::fmt::Write;
@@ -56,7 +56,7 @@ pub fn build_remediation_walk(findings: &[Finding]) -> Vec<RemediationStep> {
         .collect()
 }
 
-/// Build a prompt for Claude to generate detailed remediation guidance.
+/// Build a prompt for an AI provider to generate detailed remediation guidance.
 #[must_use]
 pub fn build_remediation_prompt(findings: &[Finding]) -> (String, String) {
     let system = "You are a senior security engineer providing step-by-step remediation \
@@ -136,6 +136,7 @@ mod tests {
         ];
         let walk = build_remediation_walk(&findings);
         assert_eq!(walk.len(), 3);
+        assert_eq!(walk.iter().map(|step| step.step).collect::<Vec<_>>(), [1, 2, 3]);
         assert_eq!(walk[0].finding_title, "SQL Injection"); // highest risk first
         assert!(walk[0].risk_score >= walk[1].risk_score);
     }
@@ -143,11 +144,13 @@ mod tests {
     /// Cloud findings get "medium" effort.
     #[test]
     fn test_effort_estimation() {
-        let f = finding("aws-s3", "S3 Issue", Severity::High);
-        assert_eq!(estimate_effort(&f), "medium");
-
-        let f = finding("headers", "Missing Header", Severity::Low);
-        assert_eq!(estimate_effort(&f), "quick");
+        for module_id in ["headers", "misconfig"] {
+            assert_eq!(estimate_effort(&finding(module_id, "quick", Severity::Low)), "quick");
+        }
+        for module_id in ["cloud-posture", "aws-s3", "gcp-iam", "azure-storage"] {
+            assert_eq!(estimate_effort(&finding(module_id, "medium", Severity::High)), "medium");
+        }
+        assert_eq!(estimate_effort(&finding("xss", "significant", Severity::High)), "significant");
     }
 
     /// Format produces readable output.

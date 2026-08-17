@@ -264,7 +264,7 @@ fn test_parse_plan_response_structured() {
     assert_eq!(result.overall_strategy, "Focus on TLS");
 }
 
-/// Verify `parse_plan_response` returns empty plan for unparseable content.
+/// Verify `parse_plan_response` returns empty plan for unparsable content.
 #[test]
 fn test_parse_plan_response_fallback() {
     let envelope = serde_json::json!({

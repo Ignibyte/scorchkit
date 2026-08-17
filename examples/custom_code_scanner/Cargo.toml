@@ -12,7 +12,6 @@ path = "src/lib.rs"
 [dependencies]
 scorchkit = { path = "../.." }
 async-trait = "0.1"
-tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

@@ -3,8 +3,8 @@
 //! Complements [`crate::engine::tls_probe`] (which inspects *one* peer
 //! certificate after a successful handshake). This module answers a
 //! different question: **which TLS versions and cipher suites does the
-//! server accept at all?** Use [`probe_tls`](crate::engine::tls_probe::probe_tls)
-//! for certificate findings, [`probe_tls_version`] / [`probe_tls_cipher`]
+//! server accept at all?** Use the internal `probe_tls`
+//! helper for certificate findings and `probe_tls_version` / `probe_tls_cipher`
 //! for hardening findings.
 //!
 //! ## Approach
@@ -39,6 +39,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+use crate::engine::policy_network::PolicyNetwork;
 use crate::engine::severity::Severity;
 use crate::engine::tls_probe::{run_starttls_preamble, TlsMode};
 
@@ -358,10 +359,10 @@ pub enum ProbeOutcome {
 ///     server_name (SNI): type 0x0000, list with one host_name entry
 /// ```
 #[must_use]
-#[allow(clippy::too_many_lines)]
 // JUSTIFICATION: TLS ClientHello wire format is inherently monolithic.
 // Splitting across helpers fragments the spec-to-code mapping and hurts
 // readability for anyone cross-referencing RFC 5246 §7.4.1.2.
+#[allow(clippy::too_many_lines)]
 pub fn build_client_hello(
     client_version: TlsVersionId,
     ciphers: &[CipherSuiteId],
@@ -459,6 +460,7 @@ pub fn parse_server_response(bytes: &[u8]) -> ProbeOutcome {
 /// Probe whether the server accepts a legacy TLS version via
 /// raw-socket `ClientHello`.
 async fn probe_legacy_version(
+    network: &PolicyNetwork,
     host: &str,
     port: u16,
     mode: TlsMode,
@@ -473,31 +475,32 @@ async fn probe_legacy_version(
         CipherSuiteId(0x0005), // TLS_RSA_WITH_RC4_128_SHA
         CipherSuiteId(0x0004), // TLS_RSA_WITH_RC4_128_MD5
     ];
-    send_client_hello_and_classify(host, port, mode, version, &ciphers).await
+    send_client_hello_and_classify(network, host, port, mode, version, &ciphers).await
 }
 
 /// Probe whether the server accepts a specific cipher suite under
 /// `TLSv1.2` via raw-socket `ClientHello`.
-pub async fn probe_tls_cipher(
+pub(crate) async fn probe_tls_cipher(
+    network: &PolicyNetwork,
     host: &str,
     port: u16,
     mode: TlsMode,
     cipher: CipherSuiteId,
 ) -> ProbeOutcome {
-    send_client_hello_and_classify(host, port, mode, TlsVersionId::Tls12, &[cipher]).await
+    send_client_hello_and_classify(network, host, port, mode, TlsVersionId::Tls12, &[cipher]).await
 }
 
 /// Shared helper: open TCP, optionally run STARTTLS preamble, send
 /// `ClientHello`, read first record bytes, classify.
 async fn send_client_hello_and_classify(
+    network: &PolicyNetwork,
     host: &str,
     port: u16,
     mode: TlsMode,
     version: TlsVersionId,
     ciphers: &[CipherSuiteId],
 ) -> ProbeOutcome {
-    let addr = format!("{host}:{port}");
-    let Ok(Ok(tcp)) = timeout(PHASE_TIMEOUT, TcpStream::connect(&addr)).await else {
+    let Ok(tcp) = network.connect(host, port, PHASE_TIMEOUT).await else {
         return ProbeOutcome::Unknown;
     };
 
@@ -602,6 +605,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
 /// Probe whether the server accepts TLSv1.2 or TLSv1.3 via a
 /// rustls-driven handshake with a permissive cert verifier.
 async fn probe_modern_version(
+    network: &PolicyNetwork,
     host: &str,
     port: u16,
     mode: TlsMode,
@@ -622,8 +626,7 @@ async fn probe_modern_version(
         .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
         .with_no_client_auth();
 
-    let addr = format!("{host}:{port}");
-    let Ok(Ok(tcp)) = timeout(PHASE_TIMEOUT, TcpStream::connect(&addr)).await else {
+    let Ok(tcp) = network.connect(host, port, PHASE_TIMEOUT).await else {
         return ProbeOutcome::Unknown;
     };
 
@@ -678,16 +681,17 @@ fn classify_rustls_error(err: &std::io::Error) -> ProbeOutcome {
 ///
 /// Dispatches to the raw-socket path for SSLv3/TLSv1.0/TLSv1.1 and to
 /// the rustls path for TLSv1.2/TLSv1.3.
-pub async fn probe_tls_version(
+pub(crate) async fn probe_tls_version(
+    network: &PolicyNetwork,
     host: &str,
     port: u16,
     mode: TlsMode,
     version: TlsVersionId,
 ) -> ProbeOutcome {
     if version.is_legacy() {
-        probe_legacy_version(host, port, mode, version).await
+        probe_legacy_version(network, host, port, mode, version).await
     } else {
-        probe_modern_version(host, port, mode, version).await
+        probe_modern_version(network, host, port, mode, version).await
     }
 }
 
@@ -696,14 +700,15 @@ pub async fn probe_tls_version(
 /// Returns outcomes in order. Never fails — every probe contributes a
 /// ([version](TlsVersionId), [outcome](ProbeOutcome)) pair even on
 /// network error.
-pub async fn enumerate_tls_versions(
+pub(crate) async fn enumerate_tls_versions(
+    network: &PolicyNetwork,
     host: &str,
     port: u16,
     mode: TlsMode,
 ) -> Vec<(TlsVersionId, ProbeOutcome)> {
     let mut results = Vec::with_capacity(ALL_PROBED_VERSIONS.len());
     for version in ALL_PROBED_VERSIONS {
-        let outcome = probe_tls_version(host, port, mode, *version).await;
+        let outcome = probe_tls_version(network, host, port, mode, *version).await;
         results.push((*version, outcome));
     }
     results
@@ -715,7 +720,8 @@ pub async fn enumerate_tls_versions(
 /// `limit` caps the number of ciphers probed; `None` means probe the
 /// entire catalog (~38 probes). Use a small explicit limit for
 /// production scans — each probe is a full TCP handshake.
-pub async fn enumerate_weak_ciphers(
+pub(crate) async fn enumerate_weak_ciphers(
+    network: &PolicyNetwork,
     host: &str,
     port: u16,
     mode: TlsMode,
@@ -725,7 +731,7 @@ pub async fn enumerate_weak_ciphers(
     let take = limit.unwrap_or(catalog.len()).min(catalog.len());
     let mut accepted = Vec::new();
     for cipher in &catalog[..take] {
-        if probe_tls_cipher(host, port, mode, *cipher).await == ProbeOutcome::Accepted {
+        if probe_tls_cipher(network, host, port, mode, *cipher).await == ProbeOutcome::Accepted {
             accepted.push(*cipher);
         }
     }
@@ -741,6 +747,14 @@ mod tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
+
+    fn loopback_network() -> PolicyNetwork {
+        PolicyNetwork::for_test_target(
+            "127.0.0.1",
+            crate::engine::policy::Capability::InfraScan,
+            crate::engine::policy::EffectClass::ActiveSafe,
+        )
+    }
 
     // ---- Pure classifier tests ----
 
@@ -913,7 +927,7 @@ mod tests {
 
     // ---- Ephemeral-listener tests ----
 
-    /// Canned ServerHello bytes — minimal but parse-valid first record.
+    /// Canned `ServerHello` bytes — minimal but parse-valid first record.
     const CANNED_SERVER_HELLO: &[u8] = &[
         0x16, 0x03, 0x03, 0x00, 0x30, // record header
         0x02, 0x00, 0x00, 0x2C, // handshake header (server_hello, length=44)
@@ -925,7 +939,7 @@ mod tests {
         0x00, 0x00, // extensions length=0
     ];
 
-    /// Canned Alert bytes — level=fatal, description=handshake_failure.
+    /// Canned Alert bytes — level=fatal, `description=handshake_failure`.
     const CANNED_ALERT: &[u8] = &[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28];
 
     #[tokio::test]
@@ -941,9 +955,14 @@ mod tests {
             let _ = stream.shutdown().await;
         });
 
-        let outcome =
-            probe_tls_version("127.0.0.1", addr.port(), TlsMode::Implicit, TlsVersionId::Tls10)
-                .await;
+        let outcome = probe_tls_version(
+            &loopback_network(),
+            "127.0.0.1",
+            addr.port(),
+            TlsMode::Implicit,
+            TlsVersionId::Tls10,
+        )
+        .await;
         server.await.ok();
         assert_eq!(outcome, ProbeOutcome::Accepted);
     }
@@ -961,9 +980,14 @@ mod tests {
             let _ = stream.shutdown().await;
         });
 
-        let outcome =
-            probe_tls_version("127.0.0.1", addr.port(), TlsMode::Implicit, TlsVersionId::Tls10)
-                .await;
+        let outcome = probe_tls_version(
+            &loopback_network(),
+            "127.0.0.1",
+            addr.port(),
+            TlsMode::Implicit,
+            TlsVersionId::Tls10,
+        )
+        .await;
         server.await.ok();
         assert_eq!(outcome, ProbeOutcome::Rejected);
     }
@@ -979,9 +1003,14 @@ mod tests {
             drop(stream);
         });
 
-        let outcome =
-            probe_tls_version("127.0.0.1", addr.port(), TlsMode::Implicit, TlsVersionId::Tls10)
-                .await;
+        let outcome = probe_tls_version(
+            &loopback_network(),
+            "127.0.0.1",
+            addr.port(),
+            TlsMode::Implicit,
+            TlsVersionId::Tls10,
+        )
+        .await;
         server.await.ok();
         assert_eq!(outcome, ProbeOutcome::Unknown);
     }
@@ -999,11 +1028,56 @@ mod tests {
             let _ = stream.shutdown().await;
         });
 
-        let outcome =
-            probe_tls_cipher("127.0.0.1", addr.port(), TlsMode::Implicit, CipherSuiteId(0x0004))
-                .await;
+        let outcome = probe_tls_cipher(
+            &loopback_network(),
+            "127.0.0.1",
+            addr.port(),
+            TlsMode::Implicit,
+            CipherSuiteId(0x0004),
+        )
+        .await;
         server.await.ok();
         assert_eq!(outcome, ProbeOutcome::Accepted);
+    }
+
+    #[tokio::test]
+    async fn version_enumeration_preserves_every_catalog_entry_on_policy_denial() {
+        let results =
+            enumerate_tls_versions(&loopback_network(), "denied.invalid", 443, TlsMode::Implicit)
+                .await;
+
+        assert_eq!(results.len(), ALL_PROBED_VERSIONS.len());
+        assert_eq!(
+            results.iter().map(|(version, _)| *version).collect::<Vec<_>>(),
+            ALL_PROBED_VERSIONS
+        );
+        assert!(results.iter().all(|(_, outcome)| *outcome == ProbeOutcome::Unknown));
+    }
+
+    #[tokio::test]
+    async fn weak_cipher_enumeration_returns_an_accepted_catalog_entry() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept cipher probe");
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).await;
+            stream.write_all(CANNED_SERVER_HELLO).await.expect("write ServerHello");
+            let _ = stream.shutdown().await;
+        });
+
+        let accepted = enumerate_weak_ciphers(
+            &loopback_network(),
+            "127.0.0.1",
+            address.port(),
+            TlsMode::Implicit,
+            Some(1),
+        )
+        .await;
+        server.abort();
+        let _ = server.await;
+
+        assert_eq!(accepted, vec![weak_cipher_catalog()[0]]);
     }
 
     // ---- #[ignore]-gated live tests ----
@@ -1023,7 +1097,12 @@ mod tests {
         let Ok(port) = port_str.parse::<u16>() else {
             return;
         };
-        let results = enumerate_tls_versions(host, port, TlsMode::Implicit).await;
+        let network = PolicyNetwork::for_test_target(
+            host,
+            crate::engine::policy::Capability::InfraScan,
+            crate::engine::policy::EffectClass::ActiveSafe,
+        );
+        let results = enumerate_tls_versions(&network, host, port, TlsMode::Implicit).await;
         assert_eq!(results.len(), ALL_PROBED_VERSIONS.len());
     }
 
@@ -1040,6 +1119,12 @@ mod tests {
         let Ok(port) = port_str.parse::<u16>() else {
             return;
         };
-        let _accepted = enumerate_weak_ciphers(host, port, TlsMode::Implicit, Some(5)).await;
+        let network = PolicyNetwork::for_test_target(
+            host,
+            crate::engine::policy::Capability::InfraScan,
+            crate::engine::policy::EffectClass::ActiveSafe,
+        );
+        let _accepted =
+            enumerate_weak_ciphers(&network, host, port, TlsMode::Implicit, Some(5)).await;
     }
 }

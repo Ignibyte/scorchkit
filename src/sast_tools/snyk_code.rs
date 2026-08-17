@@ -12,7 +12,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Source code security analysis via Snyk Code.
 #[derive(Debug)]
@@ -42,12 +41,13 @@ impl CodeModule for SnykCodeModule {
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
         // snyk code test exits 1 when issues are found — that's normal.
-        let output = subprocess::run_tool_lenient(
-            "snyk",
-            &["code", "test", "--json", &path_str],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "snyk",
+                &["code", "test", "--json", &path_str],
+                Duration::from_mins(5),
+            )
+            .await?;
 
         Ok(parse_snyk_code_output(&output.stdout))
     }

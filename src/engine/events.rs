@@ -403,6 +403,7 @@ mod tests {
         assert_eq!(got.len(), 2);
         assert!(matches!(got[0], ScanEvent::ScanStarted { .. }));
         assert!(matches!(got[1], ScanEvent::ScanCompleted { .. }));
+        drop(got);
     }
 
     struct FailingHandler;
@@ -551,6 +552,7 @@ mod tests {
         let got = received.lock().expect("lock");
         assert_eq!(got.len(), 1);
         assert!(matches!(got[0], ScanEvent::ScanCompleted { .. }));
+        drop(got);
     }
 
     /// Two filtered handlers with disjoint predicates each only see their

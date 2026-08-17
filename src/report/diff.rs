@@ -1,6 +1,7 @@
 use colored::Colorize;
 
 use crate::engine::scan_result::ScanResult;
+use crate::report::terminal::escape_terminal_text;
 
 /// Print a diff between two scan reports.
 pub fn print_diff(baseline: &ScanResult, current: &ScanResult) {
@@ -11,12 +12,12 @@ pub fn print_diff(baseline: &ScanResult, current: &ScanResult) {
     println!();
     println!(
         "  Baseline: {} ({})",
-        baseline.scan_id.dimmed(),
+        escape_terminal_text(&baseline.scan_id).dimmed(),
         baseline.started_at.format("%Y-%m-%d %H:%M")
     );
     println!(
         "  Current:  {} ({})",
-        current.scan_id.dimmed(),
+        escape_terminal_text(&current.scan_id).dimmed(),
         current.started_at.format("%Y-%m-%d %H:%M")
     );
     println!();
@@ -79,7 +80,12 @@ pub fn print_diff(baseline: &ScanResult, current: &ScanResult) {
             if new_findings.len() == 1 { "" } else { "s" }
         );
         for f in &new_findings {
-            println!("    {} [{}] {}", "+".green(), f.severity.colored_str(), f.title);
+            println!(
+                "    {} [{}] {}",
+                "+".green(),
+                f.severity.colored_str(),
+                escape_terminal_text(&f.title)
+            );
         }
     }
 
@@ -97,7 +103,7 @@ pub fn print_diff(baseline: &ScanResult, current: &ScanResult) {
                 "    {} [{}] {}",
                 "-".red(),
                 f.severity.to_string().dimmed(),
-                f.title.dimmed()
+                escape_terminal_text(&f.title).dimmed()
             );
         }
     }

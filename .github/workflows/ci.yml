@@ -1,0 +1,197 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * *"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  format:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy feature matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          while IFS= read -r state; do
+            echo "clippy feature state: $state"
+            if [ "$state" = '<default>' ]; then
+              cargo clippy --all-targets -- -D warnings
+            else
+              read -r -a flags <<< "$state"
+              cargo clippy --all-targets "${flags[@]}" -- -D warnings
+            fi
+          done < <(bash bin/feature-states.sh)
+
+  test:
+    name: Tests with PostgreSQL
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: scorchkit_test
+          POSTGRES_USER: scorchkit
+          POSTGRES_PASSWORD: scorchkit_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scorchkit -d scorchkit_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://scorchkit:scorchkit_test_password@localhost:5432/scorchkit_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-features
+      - name: Strict test runner
+        run: |
+          cargo install cargo-nextest --locked
+          listing="$(cargo nextest list --all-features --message-format json)"
+          empty="$(printf '%s' "$listing" \
+            | jq -r '."rust-suites" | to_entries[] | select((.value.testcases | length) == 0) | .key' \
+            | grep -v '::bin/' || true)"
+          test -z "$empty" || { echo "empty test suites:"; echo "$empty"; exit 1; }
+          cargo nextest run --all-features
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --all-features --no-deps
+
+  security:
+    name: Security and dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit cargo-deny cargo-machete --locked
+      # rsa is lockfile-only through sqlx's disabled MySQL backend. The next
+      # step checks the active dependency graph and has no corresponding ignore.
+      # Review by 2026-11-14; remove or replace sqlx before expiry 2027-02-14.
+      - run: cargo audit --ignore RUSTSEC-2023-0071
+      - run: cargo deny check
+      - run: cargo machete
+      - name: Install Gitleaks
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh \
+            | sh -s -- -b "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: "$HOME/.local/bin/gitleaks dir . --no-banner --redact=100"
+      - name: Semgrep
+        run: |
+          pipx install semgrep
+          semgrep --config .semgrep.yml --error --quiet src tests
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: scorchkit_test
+          POSTGRES_USER: scorchkit
+          POSTGRES_PASSWORD: scorchkit_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scorchkit -d scorchkit_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://scorchkit:scorchkit_test_password@localhost:5432/scorchkit_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-llvm-cov --locked
+      - run: |
+          cargo llvm-cov --all-features \
+            --ignore-filename-regex '(^|/)main\.rs$' \
+            --fail-under-lines 62
+
+  gate-fast:
+    name: Canonical fast gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo install cargo-audit cargo-deny cargo-machete cargo-sort taplo-cli typos-cli --locked
+          pipx install semgrep
+          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh \
+            | sh -s -- -b "$HOME/.local/bin"
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - run: |
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+          bash bin/pipeline.sh check
+          bash bin/gate.sh --fast
+
+  mutation:
+    name: Mutation testing shard
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: scorchkit_mutation
+          POSTGRES_USER: scorchkit
+          POSTGRES_PASSWORD: scorchkit_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scorchkit -d scorchkit_mutation"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SCORCHKIT_MUTATION_DATABASE_URL: postgres://scorchkit:scorchkit_test_password@localhost:5432/scorchkit_mutation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-mutants --locked
+      - name: Run daily shard
+        run: |
+          shard=$(( $(date +%u) % 7 ))
+          SCORCHKIT_MUTATION_JOBS=1 bash bin/mutants.sh --shard "${shard}/7"

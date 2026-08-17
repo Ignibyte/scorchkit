@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Automated SQL injection detection and exploitation via sqlmap.
 #[derive(Debug)]
@@ -55,23 +54,24 @@ impl ScanModule for SqlmapModule {
             .with_confidence(0.9)]);
         }
 
-        let output = subprocess::run_tool(
-            "sqlmap",
-            &[
-                "-u",
-                target,
-                "--batch",
-                "--level",
-                "1",
-                "--risk",
-                "1",
-                "--forms",
-                "--crawl=2",
-                "--output-dir=/tmp/scorchkit-sqlmap",
-            ],
-            Duration::from_secs(600),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "sqlmap",
+                &[
+                    "-u",
+                    target,
+                    "--batch",
+                    "--level",
+                    "1",
+                    "--risk",
+                    "1",
+                    "--forms",
+                    "--crawl=2",
+                    "--output-dir=/tmp/scorchkit-sqlmap",
+                ],
+                Duration::from_mins(10),
+            )
+            .await?;
 
         Ok(parse_sqlmap_output(&output.stdout, target))
     }
@@ -166,7 +166,7 @@ fn parse_sqlmap_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for sqlmap console output parser.
+    // Tests for sqlmap console output parser.
 
     /// Verify that `parse_sqlmap_output` correctly extracts confirmed SQL
     /// injection findings and identified database type.

@@ -1,267 +1,223 @@
-# ScorchKit Plugin SDK
+# Rust module extension API
 
-ScorchKit exposes its module traits as a public Rust SDK. Third-party
-developers can write native Rust scan modules that plug into the same
-orchestrator and reporting pipeline as built-in modules.
+ScorchKit exposes Rust traits for trusted in-process DAST and SAST modules. An extension receives a
+policy-sealed context and returns normal `Finding` values, so it can share orchestration, events,
+reports, and error handling with built-in modules.
 
-## Quick Start
+This is a source-level Rust API, not a stable binary plugin ABI or a sandbox. Loading a Rust module
+means trusting its code with the host process. Versioned plugin definitions and a stronger plugin
+contract are tracked in the roadmap.
 
-Add ScorchKit to your `Cargo.toml`:
+## Choose a module type
 
-```toml
-[dependencies]
-scorchkit = "1.0"
-async-trait = "0.1"
-```
+| Trait | Context | Use |
+|---|---|---|
+| `ScanModule` | `ScanContext` | URL-based DAST and reconnaissance |
+| `CodeModule` | `CodeContext` | local static analysis and dependency checks |
+| `InfraModule` | `InfraContext` | host, address, protocol, and network checks |
+| `CloudModule` | `CloudContext` | cloud posture checks |
 
-Implement `ScanModule` or `CodeModule`:
+Infrastructure and cloud traits require their Cargo features. The examples below cover the public
+DAST and SAST integration paths.
 
-```rust
+## DAST module
+
+Use `ScanContext::http_client()` for target HTTP. The returned client already carries the
+engagement-aware DNS resolver and redirect policy plus configured authentication, proxy, cookie,
+TLS, user-agent, and timeout settings.
+
+```rust,no_run
 use async_trait::async_trait;
 use scorchkit::prelude::*;
 
-pub struct MyScanner;
+#[derive(Debug)]
+struct DebugMarker;
 
 #[async_trait]
-impl ScanModule for MyScanner {
-    fn name(&self) -> &'static str { "My Custom Scanner" }
-    fn id(&self) -> &'static str { "my-scanner" }
+impl ScanModule for DebugMarker {
+    fn name(&self) -> &str { "Debug marker" }
+    fn id(&self) -> &str { "debug-marker" }
     fn category(&self) -> ModuleCategory { ModuleCategory::Scanner }
-    fn description(&self) -> &'static str { "What this module does" }
+    fn description(&self) -> &str { "Find a debug marker in the target response" }
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
-        // Your scan logic here.
-        // Use ctx.http_client for HTTP requests.
-        // Return findings as Vec<Finding>.
-        Ok(vec![])
+        let response = ctx
+            .http_client()
+            .get(ctx.target.url.clone())
+            .send()
+            .await
+            .map_err(|source| ScorchError::Http {
+                url: ctx.target.url.to_string(),
+                source,
+            })?;
+        let body = response.text().await.map_err(|source| ScorchError::Http {
+            url: ctx.target.url.to_string(),
+            source,
+        })?;
+
+        if !body.to_ascii_lowercase().contains("debug") {
+            return Ok(Vec::new());
+        }
+        Ok(vec![
+            Finding::new(
+                self.id(),
+                Severity::Low,
+                "Debug marker in response",
+                "The response contains a debug marker that may expose development behavior.",
+                ctx.target.url.as_str(),
+            )
+            .with_evidence("case-insensitive response marker: debug")
+            .with_remediation("Disable debug output in the deployed application.")
+            .with_cwe(489)
+            .with_confidence(0.6),
+        ])
     }
 }
 ```
 
-## Module Types
+A target method should use the context client or another explicit context seam. Constructing a new
+HTTP client, resolver, raw socket, subprocess launcher, credential loader, or temporary path bypasses
+shared controls and requires a reviewed ScorchKit architecture change.
 
-ScorchKit has two module traits:
+## SAST module
 
-| Trait | Use For | Context | Examples |
-|-------|---------|---------|----------|
-| `ScanModule` | DAST (runtime web testing) | `ScanContext` (URL + HTTP client) | XSS, SQL injection, headers |
-| `CodeModule` | SAST (static code analysis) | `CodeContext` (filesystem path) | Secret detection, dep audit |
+`CodeContext::path` is canonicalized and authorized before the context is returned. Keep traversal
+under that root and decide how symlinks are handled before reading them.
 
-Pick the trait that matches your scan target. A URL-based security check
-is `ScanModule`. A code-level analyzer is `CodeModule`.
+```rust,no_run
+use async_trait::async_trait;
+use scorchkit::prelude::*;
 
-## The Finding Builder
+#[derive(Debug)]
+struct ManifestPresence;
 
-Every module produces `Vec<Finding>`. Use the fluent builder:
+#[async_trait]
+impl CodeModule for ManifestPresence {
+    fn name(&self) -> &str { "Manifest presence" }
+    fn id(&self) -> &str { "manifest-presence" }
+    fn category(&self) -> CodeCategory { CodeCategory::Sca }
+    fn description(&self) -> &str { "Report projects with no recognized root manifest" }
+
+    async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
+        if !ctx.manifests.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(vec![Finding::new(
+            self.id(),
+            Severity::Info,
+            "No recognized root manifest",
+            "ScorchKit did not find a supported dependency manifest at the scan root.",
+            ctx.path.display().to_string(),
+        )
+        .with_confidence(1.0)])
+    }
+}
+```
+
+Return an empty language list for a language-neutral module. A nonempty `languages()` list lets the
+code orchestrator filter it against the selected or detected language.
+
+## Register a trusted module
+
+Contexts come from `Engine`; direct constructors are intentionally not public.
+
+```rust,no_run
+use std::sync::Arc;
+
+use scorchkit::config::AppConfig;
+use scorchkit::engine::policy::{
+    Capability, EffectClass, Engagement, EngagementPolicy,
+};
+use scorchkit::engine::scope::ScopeRule;
+use scorchkit::facade::Engine;
+use scorchkit::runner::orchestrator::Orchestrator;
+
+# use async_trait::async_trait;
+# use scorchkit::prelude::*;
+# #[derive(Debug)] struct DebugMarker;
+# #[async_trait] impl ScanModule for DebugMarker {
+# fn name(&self) -> &str { "Debug marker" }
+# fn id(&self) -> &str { "debug-marker" }
+# fn category(&self) -> ModuleCategory { ModuleCategory::Scanner }
+# fn description(&self) -> &str { "fixture" }
+# async fn run(&self, _ctx: &ScanContext) -> Result<Vec<Finding>> { Ok(Vec::new()) }
+# }
+# async fn example() -> scorchkit::Result<()> {
+let policy = EngagementPolicy::default()
+    .allow_scope(ScopeRule::parse("127.0.0.1").expect("scope"))
+    .allow_capability(Capability::DastScan)
+    .allow_effect(EffectClass::ActiveSafe);
+let engine = Engine::for_engagement(
+    Arc::new(AppConfig::default()),
+    Arc::new(Engagement::new("local extension test", policy)),
+);
+let context = engine.dast_context("http://127.0.0.1:8080", "quick")?;
+let mut runner = Orchestrator::new(context);
+runner.add_module(Box::new(DebugMarker));
+let result = runner.run(true).await?;
+# let _ = result;
+# Ok(())
+# }
+```
+
+Call `register_default_modules()` before `add_module()` when the extension should run alongside the
+built-in registry. `CodeOrchestrator`, `InfraOrchestrator`, and `CloudOrchestrator` expose the same
+`add_module` pattern.
+
+## Finding contract
 
 ```rust
 use scorchkit::prelude::*;
 
 let finding = Finding::new(
-    "my-scanner",                           // module_id
-    Severity::High,                         // severity
-    "Vulnerability Title",                  // title
-    "Description of what was found",        // description
-    "https://example.com/endpoint",         // affected_target (URL or file:line)
+    "module-id",
+    Severity::High,
+    "Specific observed issue",
+    "What was observed and why it matters.",
+    "affected target",
 )
-.with_evidence("Raw request/response or proof")
-.with_remediation("Step-by-step fix instructions")
+.with_evidence("raw or normalized proof")
+.with_remediation("specific corrective action")
 .with_owasp("A03:2021 Injection")
 .with_cwe(89)
-.with_confidence(0.85);                     // 0.0-1.0, default 0.5
+.with_confidence(0.9);
+# let _ = finding;
 ```
 
-### Confidence Values
+Module IDs are stable, short, and user-facing. Confidence is evidence strength, not severity. Keep
+raw observations in evidence and do not present agent inference as scanner proof.
 
-Confidence indicates false-positive likelihood:
+## Errors and failure behavior
 
-| Range | Meaning |
-|-------|---------|
-| 0.9-1.0 | Definitive — proof-of-concept exploit or deterministic check |
-| 0.7-0.89 | High — strong signal, minor chance of FP |
-| 0.5-0.69 | Medium — pattern match, could be FP depending on context |
-| 0.3-0.49 | Low — heuristic or speculative |
+Return `Result<Vec<Finding>>`. Empty findings mean the module ran and observed no issue. An error
+means the module could not complete its contract. The orchestrator records the module error, marks it
+skipped, and continues independent modules.
 
-Users filter by confidence with `--min-confidence`.
+Do not turn a timeout, parser error, missing executable, policy denial, or connection failure into a
+positive finding. Preserve the typed error where possible.
 
-## ScanContext (DAST modules)
+## External-tool definitions
 
-```rust
-pub struct ScanContext {
-    pub target: Target,                 // URL, domain, port, TLS flag
-    pub config: Arc<AppConfig>,         // Full config (scan, auth, tools)
-    pub http_client: reqwest::Client,   // Preconfigured with auth/proxy/TLS
-    pub shared_data: Arc<SharedData>,   // Inter-module data sharing
-}
+The TOML plugin loader in `runner::plugin` supports declarative wrappers around external programs.
+Those wrappers still execute through `ScanContext::run_tool`, so target and `ExternalTool` grants,
+canonical executable resolution, timeout, output caps, exit policy, and process-tree cleanup remain
+active. Plugin definitions are trusted configuration and should be reviewed like code.
+
+## Verification
+
+The repository ships two standalone extension crates:
+
+- `examples/custom_scanner`
+- `examples/custom_code_scanner`
+
+Compile and test them against the current checkout:
+
+```bash
+cargo test --manifest-path examples/custom_scanner/Cargo.toml
+cargo test --manifest-path examples/custom_code_scanner/Cargo.toml
 ```
 
-**Always use `ctx.http_client`** — it's configured with auth headers,
-proxy routing, cookie jar, timeouts, and TLS settings from user config.
-Building your own client defeats those settings.
-
-### Inter-Module Data Sharing
-
-Modules can publish and consume shared data via `ctx.shared_data`:
-
-```rust
-// Publish (typically in recon modules)
-ctx.shared_data.push(scorchkit::engine::shared_data::URLS, "https://example.com/api");
-
-// Consume (typically in scanner modules)
-let urls = ctx.shared_data.get(scorchkit::engine::shared_data::URLS);
-```
-
-Standard keys: `URLS`, `FORMS`, `PARAMS`, `TECHNOLOGIES`, `SUBDOMAINS`.
-
-## CodeContext (SAST modules)
-
-```rust
-pub struct CodeContext {
-    pub path: PathBuf,                  // Root directory to scan
-    pub language: Option<String>,       // Auto-detected from manifests
-    pub manifests: Vec<PathBuf>,        // Discovered Cargo.toml, package.json, etc.
-    pub config: Arc<AppConfig>,         // Full config
-    pub shared_data: Arc<SharedData>,   // Same as ScanContext
-}
-```
-
-### Language Filtering
-
-Return supported languages from `languages()`:
-
-```rust
-fn languages(&self) -> &[&str] {
-    &["python", "javascript"]  // Only runs on Python/JS projects
-}
-
-// Return empty to run on any codebase:
-fn languages(&self) -> &[&str] { &[] }
-```
-
-The orchestrator uses this for automatic filtering — a Python-only
-scanner won't run on a Go project.
-
-## Error Handling
-
-Return `scorchkit::engine::error::Result<Vec<Finding>>` (re-exported as
-`Result` in the prelude):
-
-```rust
-async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
-    let response = ctx.http_client
-        .get(ctx.target.url.as_str())
-        .send()
-        .await
-        .map_err(|e| ScorchError::Config(format!("request failed: {e}")))?;
-    // ...
-}
-```
-
-Module failures are non-fatal — a single module erroring won't abort
-the whole scan. But return meaningful errors so users can diagnose issues.
-
-## Registering Your Module
-
-Since ScorchKit doesn't yet load native Rust plugins dynamically, the
-typical integration is to **build your own binary** that wraps ScorchKit:
-
-```rust
-use scorchkit::prelude::*;
-use scorchkit::runner::orchestrator::Orchestrator;
-use std::sync::Arc;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let config = Arc::new(AppConfig::default());
-    let http_client = scorchkit::facade::build_http_client(&config)?;
-    let target = Target::parse("https://example.com")?;
-    let ctx = ScanContext::new(target, config, http_client);
-
-    let mut orchestrator = Orchestrator::new(ctx);
-    orchestrator.register_default_modules();
-
-    // Add your custom module alongside the built-ins:
-    // (requires accessing the modules vec directly — see src/runner/orchestrator.rs)
-
-    let result = orchestrator.run(false).await?;
-    println!("Found {} findings", result.findings.len());
-    Ok(())
-}
-```
-
-For the simpler **TOML-based plugin system** (no Rust compilation required),
-see `src/runner/plugin.rs` — it loads scanner definitions from `.toml`
-files that wrap external CLI tools.
-
-## Testing Your Module
-
-The Finding builder and module trait are fully testable without a real
-HTTP server:
-
-```rust
-#[test]
-fn test_build_finding() {
-    let finding = Finding::new(
-        "my-module",
-        Severity::Medium,
-        "Test",
-        "Description",
-        "https://example.com",
-    )
-    .with_confidence(0.8);
-
-    assert_eq!(finding.module_id, "my-module");
-}
-```
-
-For integration testing with HTTP, use `wiremock` or `mockito` crates.
-
-## Complete Examples
-
-See the `examples/` directory in the ScorchKit repository:
-
-- `examples/custom_scanner/` — complete DAST `ScanModule` implementation
-- `examples/custom_code_scanner/` — complete SAST `CodeModule` implementation
-
-Both examples compile as standalone crates that depend on the main
-`scorchkit` crate via path dependency.
-
-## Key Types Reference
-
-All core types are re-exported from `scorchkit::prelude`:
-
-| Type | Purpose |
-|------|---------|
-| `Finding` | Single security finding with builder methods |
-| `Severity` | `Critical`, `High`, `Medium`, `Low`, `Info` |
-| `Target` | Parsed URL/domain target for DAST |
-| `ScanResult` | Complete scan output (findings + metadata) |
-| `ScanModule` | DAST module trait |
-| `CodeModule` | SAST module trait |
-| `ModuleCategory` | `Recon` or `Scanner` (DAST categorization) |
-| `CodeCategory` | `Sast`, `Sca`, `Secrets`, `Iac`, `Container` |
-| `ScanContext` | DAST execution context |
-| `CodeContext` | SAST execution context |
-| `AppConfig` | User configuration |
-| `Result<T>` | `std::result::Result<T, ScorchError>` alias |
-| `ScorchError` | Error enum with typed variants |
-| `Engine` | High-level facade for library consumers |
-
-## Design Principles
-
-When writing a module:
-
-1. **One module, one concern.** Don't try to do auth *and* injection
-   in one module — split them.
-2. **Deterministic IDs.** The `id()` string is stable and user-facing
-   (appears in CLI flags, config, findings). Pick something short and
-   descriptive: `my-auth-check`, not `MyAuthChecker_v2`.
-3. **Graceful failure.** A missing optional input shouldn't error —
-   return empty `Vec<Finding>`. Reserve errors for real failures
-   (network down, malformed config).
-4. **Explicit confidence.** Always call `.with_confidence(...)`. The
-   default is 0.5 which is rarely accurate.
-5. **Use `ctx.http_client`.** Never build your own reqwest client —
-   you'll bypass user proxy/auth/TLS settings.
-6. **Test pure functions.** Extract parsing/analysis logic into pure
-   functions and test those directly. Mock HTTP only when necessary.
+Module tests should cover metadata, clean input, positive input, parser failures, bounds, and the
+declared effect path. Network integration tests use loopback servers. External-tool modules should
+use an injected executor and assert the exact program, arguments, timeout, exit policy, and output
+limit.

@@ -105,7 +105,7 @@ The factory dispatch in `infra::cve_lookup::build_cve_lookup` extends to a fourt
 | OSV 429 (rate-limited) | `ScorchError::Config`; the conservative 10 RPS limiter should prevent this in practice |
 | Response missing `vulns` | Treated as `{"vulns": []}` (serde `default`) |
 | Response field shape mismatch | `ScorchError::Json` |
-| CVSS vector unparseable | `cvss_v3_base_score` returns `None`; severity → `Severity::Info`; record still emitted with the OSV summary |
+| CVSS vector unparsable | `cvss_v3_base_score` returns `None`; severity → `Severity::Info`; record still emitted with the OSV summary |
 | FsCache failures | Identical to WORK-103b — best-effort, log-and-continue, never abort |
 
 **Architectural Decisions:**

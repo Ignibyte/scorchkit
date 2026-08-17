@@ -14,7 +14,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Terraform linter via tflint.
 #[derive(Debug)]
@@ -46,12 +45,13 @@ impl CodeModule for TflintModule {
 
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
-        let output = subprocess::run_tool_lenient(
-            "tflint",
-            &["--format", "json", "--chdir", &path_str],
-            Duration::from_secs(60),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "tflint",
+                &["--format", "json", "--chdir", &path_str],
+                Duration::from_mins(1),
+            )
+            .await?;
         Ok(parse_tflint_output(&output.stdout))
     }
 }

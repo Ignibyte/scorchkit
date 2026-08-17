@@ -68,7 +68,7 @@ impl SharedData {
 mod tests {
     use super::*;
 
-    /// Verify a new SharedData store is empty.
+    /// Verify a new `SharedData` store is empty.
     #[test]
     fn shared_data_starts_empty() {
         let sd = SharedData::new();
@@ -103,7 +103,7 @@ mod tests {
         assert!(!sd.has(keys::URLS));
     }
 
-    /// Verify has() returns true after publish.
+    /// Verify `has()` returns true after publish.
     #[test]
     fn shared_data_has_after_publish() {
         let sd = SharedData::new();

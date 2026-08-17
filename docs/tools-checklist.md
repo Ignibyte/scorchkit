@@ -128,7 +128,8 @@ Run `scorchkit doctor` (or `scorchkit doctor --deep` for version checks) to see 
 
 | Tool | Binary | Min version | Install |
 |------|--------|-------------|---------|
-| Claude Code | `claude` | — | `npm install -g @anthropic-ai/claude-code` |
+| Codex CLI | `codex` | — | [Official Codex CLI guide](https://developers.openai.com/codex/cli) |
+| Claude Code compatibility adapter | `claude` | — | `npm install -g @anthropic-ai/claude-code` |
 
 ## Quick Install (Debian/Ubuntu)
 

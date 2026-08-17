@@ -1,0 +1,4 @@
+interface:
+  display_name: "ScorchKit Pipeline"
+  short_description: "Run ticket work from intake through delivery"
+  default_prompt: "Use $scorchkit-pipeline to take this ScorchKit change through the ticket-to-delivery workflow."

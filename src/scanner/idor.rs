@@ -260,10 +260,10 @@ fn calculate_similarity(a: &str, b: &str) -> f64 {
 mod tests {
     use super::*;
 
-    /// Unit tests for the IDOR detection module's pure helper functions.
+    // Unit tests for the IDOR detection module's pure helper functions.
 
     /// Verify that `looks_like_id` returns true for parameters whose names match
-    /// common ID patterns (e.g., "user_id", "id").
+    /// common ID patterns (e.g., "`user_id`", "id").
     #[test]
     fn test_looks_like_id_by_name() {
         assert!(looks_like_id("user_id", "abc"));

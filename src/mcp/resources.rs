@@ -124,6 +124,7 @@ fn resource_templates() -> Vec<ResourceTemplate> {
 /// MCP JSON-RPC error for resource operations.
 /// This function is used as a function pointer with `map_err(db_error)`,
 /// which requires taking ownership of the error value.
+// JUSTIFICATION: map_err requires this exact by-value function-pointer signature.
 #[allow(clippy::needless_pass_by_value)]
 fn db_error(e: crate::engine::error::ScorchError) -> rmcp::ErrorData {
     rmcp::ErrorData::internal_error(format!("database error: {e}"), None)
@@ -282,9 +283,9 @@ impl ScorchKitServer {
 mod tests {
     use super::*;
 
-    /// Test suite for resource URI parsing. Verifies that all supported
-    /// URI patterns are correctly parsed into [`ResourceKind`] variants
-    /// and that invalid URIs return `None`.
+    // Test suite for resource URI parsing. Verifies that all supported
+    // URI patterns are correctly parsed into [`ResourceKind`] variants
+    // and that invalid URIs return `None`.
 
     /// Verify `scorchkit://projects` parses to [`ResourceKind::Projects`].
     #[test]

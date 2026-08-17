@@ -218,7 +218,7 @@ async fn enumerate_buckets(
 mod tests {
     use super::*;
 
-    /// Tests for the cloud metadata and bucket enumeration module.
+    // Tests for the cloud metadata and bucket enumeration module.
 
     /// Verify module metadata.
     #[test]

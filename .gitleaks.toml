@@ -1,0 +1,14 @@
+# Scan the working tree with the default Gitleaks rules. Generated trees are
+# excluded because `gitleaks dir` does not honor .gitignore.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API key"
+regex = '''sk-ant-[A-Za-z0-9-]{20,}'''
+keywords = ["sk-ant-"]
+
+[allowlist]
+description = "Generated build, mutation, and report output"
+paths = ['''^\.git/''', '''^target/''', '''^mutants\.out/''', '''^reports/''']

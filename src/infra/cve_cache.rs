@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn fs_cache_round_trip() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_secs(3600));
+        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_hours(1));
         let cpe = "cpe:2.3:a:nginx:nginx:1.25:*:*:*:*:*:*:*";
         cache.put(cpe, &[record("CVE-2024-X", cpe, 9.8)]);
         let got = cache.get(cpe).expect("hit");
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn fs_cache_get_with_meta_round_trip() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_secs(3600));
+        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_hours(1));
         let cpe = "cpe:2.3:a:nginx:nginx:1.25:*:*:*:*:*:*:*";
         let before = now_unix();
         cache.put(cpe, &[record("CVE-2024-X", cpe, 9.8)]);
@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn fs_cache_get_with_meta_miss_returns_none() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_secs(3600));
+        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_hours(1));
         let cpe = "cpe:2.3:a:nonexistent:*:*:*:*:*:*:*:*:*";
         assert!(cache.get_with_meta(cpe).is_none());
     }
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn fs_cache_get_with_meta_corrupt_returns_none() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_secs(3600));
+        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_hours(1));
         let cpe = "cpe:2.3:a:corrupt:*:*:*:*:*:*:*:*:*";
         // Write garbage to the cache file for this CPE.
         let path = path_for_cpe(dir.path(), cpe);
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn fs_cache_negative_cache_round_trip() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_secs(3600));
+        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_hours(1));
         let cpe = "cpe:2.3:a:unknown:product:0.0:*:*:*:*:*:*:*";
         cache.put(cpe, &[]);
         let got = cache.get(cpe).expect("hit");
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn fs_cache_missing_file_returns_none() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_secs(3600));
+        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_hours(1));
         assert!(cache.get("cpe:2.3:a:nope:nope:0:*:*:*:*:*:*:*").is_none());
     }
 
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn fs_cache_corrupt_file_returns_none() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_secs(3600));
+        let cache = FsCache::new(dir.path().to_path_buf(), Duration::from_hours(1));
         let cpe = "cpe:2.3:a:nginx:nginx:1.25:*:*:*:*:*:*:*";
         let path = path_for_cpe(dir.path(), cpe);
         fs::write(&path, b"not json at all").expect("seed corrupt entry");

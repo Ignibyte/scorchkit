@@ -1,0 +1,27 @@
+[files]
+extend-exclude = [
+  "Cargo.lock",
+  "target/",
+  "mutants.out/",
+  "docs/planning/pipeline/completed/",
+]
+
+[default.extend-words]
+AKS = "AKS"
+EDE = "EDE"
+PN = "PN"
+PNGs = "PNGs"
+arjun = "arjun"
+dalfox = "dalfox"
+feroxbuster = "feroxbuster"
+gosec = "gosec"
+gitleaks = "gitleaks"
+nikto = "nikto"
+nuclei = "nuclei"
+prowler = "prowler"
+scorchkit = "scorchkit"
+semgrep = "semgrep"
+sqlmap = "sqlmap"
+sslyze = "sslyze"
+subfinder = "subfinder"
+wapiti = "wapiti"

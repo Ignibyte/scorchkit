@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::http::{HeaderValue, Request};
 
-use crate::engine::error::Result;
+use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
@@ -56,11 +56,11 @@ impl ScanModule for WebSocketModule {
             let http_url = format!("{base}{path}");
 
             let Ok(response) = ctx
-                .http_client
+                .http_client()
                 .get(&http_url)
                 .header("Upgrade", "websocket")
                 .header("Connection", "Upgrade")
-                .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+                .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==") // gitleaks:allow -- fixed RFC 6455 example nonce
                 .header("Sec-WebSocket-Version", "13")
                 .send()
                 .await
@@ -81,7 +81,7 @@ impl ScanModule for WebSocketModule {
         // Phase 2: Test each discovered endpoint
         for endpoint in &discovered {
             // Test CSWSH (origin validation)
-            test_cswsh(endpoint, &base, &mut findings).await;
+            test_cswsh(ctx, endpoint, &base, &mut findings).await?;
 
             // Check for unencrypted WS when HTTPS is available
             if ctx.target.is_https && endpoint.url.starts_with("ws://") {
@@ -110,7 +110,7 @@ impl ScanModule for WebSocketModule {
             }
 
             // Test unauthenticated access
-            test_unauth_access(endpoint, &mut findings).await;
+            test_unauth_access(ctx, endpoint, &mut findings).await?;
         }
 
         Ok(findings)
@@ -192,20 +192,22 @@ fn is_upgrade_response(status: u16, headers: &reqwest::header::HeaderMap) -> boo
 /// Attempts a WebSocket connection with a spoofed `Origin` header. If the
 /// server accepts the connection without validating the origin, an attacker
 /// could hijack the WebSocket from a malicious page.
-async fn test_cswsh(endpoint: &WsEndpoint, legitimate_origin: &str, findings: &mut Vec<Finding>) {
+async fn test_cswsh(
+    ctx: &ScanContext,
+    endpoint: &WsEndpoint,
+    legitimate_origin: &str,
+    findings: &mut Vec<Finding>,
+) -> Result<()> {
     let evil_origin = "https://evil-attacker.com";
 
     // Try connecting with the evil origin
     let Ok(mut request) = endpoint.url.as_str().into_client_request() else {
-        return;
+        return Ok(());
     };
 
     request.headers_mut().insert("Origin", HeaderValue::from_static("https://evil-attacker.com"));
 
-    let connect_result =
-        tokio::time::timeout(WS_TIMEOUT, tokio_tungstenite::connect_async(request)).await;
-
-    if let Ok(Ok((_ws_stream, _response))) = connect_result {
+    if websocket_connection_accepted(ctx, request).await? {
         // Connection succeeded with evil origin — CSWSH!
         findings.push(
             Finding::new(
@@ -235,21 +237,23 @@ async fn test_cswsh(endpoint: &WsEndpoint, legitimate_origin: &str, findings: &m
             .with_confidence(0.7),
         );
     }
+    Ok(())
 }
 
 /// Test for unauthenticated WebSocket access.
 ///
 /// Attempts a plain WebSocket connection without any authentication credentials.
 /// If the connection succeeds, the endpoint may lack proper authentication.
-async fn test_unauth_access(endpoint: &WsEndpoint, findings: &mut Vec<Finding>) {
+async fn test_unauth_access(
+    ctx: &ScanContext,
+    endpoint: &WsEndpoint,
+    findings: &mut Vec<Finding>,
+) -> Result<()> {
     let Ok(request) = endpoint.url.as_str().into_client_request() else {
-        return;
+        return Ok(());
     };
 
-    let connect_result =
-        tokio::time::timeout(WS_TIMEOUT, tokio_tungstenite::connect_async(request)).await;
-
-    if let Ok(Ok((_ws_stream, _response))) = connect_result {
+    if websocket_connection_accepted(ctx, request).await? {
         findings.push(
             Finding::new(
                 "websocket",
@@ -277,16 +281,48 @@ async fn test_unauth_access(endpoint: &WsEndpoint, findings: &mut Vec<Finding>) 
             .with_confidence(0.7),
         );
     }
+    Ok(())
+}
+
+/// Open a WebSocket only after policy-owned resolution and concrete-address connection.
+async fn websocket_connection_accepted(ctx: &ScanContext, request: Request<()>) -> Result<bool> {
+    let Some(host) = request.uri().host() else {
+        return Ok(false);
+    };
+    let default_port = match request.uri().scheme_str() {
+        Some("ws") => 80,
+        Some("wss") => 443,
+        _ => return Ok(false),
+    };
+    let port = request.uri().port_u16().unwrap_or(default_port);
+    let stream = match ctx.connect_network_target(host, port, WS_TIMEOUT).await {
+        Ok(stream) => stream,
+        Err(error @ ScorchError::Policy(_)) => return Err(error),
+        Err(_) => return Ok(false),
+    };
+
+    Ok(matches!(
+        tokio::time::timeout(WS_TIMEOUT, tokio_tungstenite::client_async_tls(request, stream),)
+            .await,
+        Ok(Ok(_))
+    ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
 
-    /// Test suite for WebSocket security module.
-    ///
-    /// Tests URL conversion, path generation, and upgrade response detection
-    /// without requiring a live WebSocket server.
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::engine::target::Target;
+
+    // Test suite for WebSocket security module.
+    //
+    // Tests URL conversion, path generation, and upgrade response detection
+    // without requiring a live WebSocket server.
 
     /// Verify HTTP-to-WS URL conversion for standard schemes.
     ///
@@ -384,5 +420,111 @@ mod tests {
             http_to_ws_url("https://example.com/ws?token=abc"),
             "wss://example.com/ws?token=abc"
         );
+    }
+
+    #[tokio::test]
+    async fn run_observes_a_permissive_loopback_websocket() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let server = tokio::spawn(async move {
+            while let Ok((stream, _peer)) = listener.accept().await {
+                tokio::spawn(async move {
+                    serve_fixture_connection(stream).await.expect("serve fixture connection");
+                });
+            }
+        });
+
+        let target = Target::parse(&format!("http://{address}")).expect("loopback target");
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(1))
+            .build()
+            .expect("HTTP client");
+        let context = ScanContext::new(target, Arc::new(AppConfig::default()), client, Vec::new());
+        let findings = tokio::time::timeout(Duration::from_secs(3), WebSocketModule.run(&context))
+            .await
+            .expect("module timeout")
+            .expect("module run");
+        server.abort();
+
+        assert_eq!(findings.len(), 2);
+        assert!(findings.iter().any(|finding| finding.cwe_id == Some(346)));
+        assert!(findings.iter().any(|finding| finding.cwe_id == Some(306)));
+        assert!(findings.iter().all(|finding| finding.affected_target.ends_with("/ws")));
+    }
+
+    #[tokio::test]
+    async fn websocket_connection_denies_an_ungranted_hostname_before_connecting() {
+        let target = Target::parse("http://127.0.0.1:8080").expect("loopback target");
+        let client = reqwest::Client::builder().build().expect("HTTP client");
+        let context = ScanContext::new(target, Arc::new(AppConfig::default()), client, Vec::new());
+        let request = "ws://denied.invalid/ws".into_client_request().expect("WebSocket request");
+
+        let error = websocket_connection_accepted(&context, request)
+            .await
+            .expect_err("ungranted WebSocket hostname must be denied");
+
+        assert!(matches!(error, ScorchError::Policy(_)));
+    }
+
+    #[tokio::test]
+    async fn secure_websocket_connection_uses_the_same_denial_boundary() {
+        let target = Target::parse("http://127.0.0.1:8080").expect("loopback target");
+        let client = reqwest::Client::builder().build().expect("HTTP client");
+        let context = ScanContext::new(target, Arc::new(AppConfig::default()), client, Vec::new());
+        let request = "wss://denied.invalid/ws".into_client_request().expect("WebSocket request");
+
+        let error = websocket_connection_accepted(&context, request)
+            .await
+            .expect_err("ungranted secure WebSocket hostname must be denied");
+
+        assert!(matches!(error, ScorchError::Policy(_)));
+    }
+
+    async fn serve_fixture_connection(mut stream: TcpStream) -> std::io::Result<()> {
+        let mut preview = [0_u8; 8192];
+        let request_len = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let length = stream.peek(&mut preview).await?;
+                if length == 0 || preview[..length].windows(4).any(|window| window == b"\r\n\r\n") {
+                    return Ok::<usize, std::io::Error>(length);
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "request header timeout")
+        })??;
+        let request = String::from_utf8_lossy(&preview[..request_len]);
+        let first_line = request.lines().next().unwrap_or_default();
+        let is_ws_path = first_line == "GET /ws HTTP/1.1";
+        let is_discovery_probe = request.contains("dGhlIHNhbXBsZSBub25jZQ==");
+
+        if is_ws_path && !is_discovery_probe {
+            let websocket =
+                tokio_tungstenite::accept_async(stream).await.map_err(std::io::Error::other)?;
+            drop(websocket);
+            return Ok(());
+        }
+
+        let mut consumed = vec![0_u8; request_len];
+        stream.read_exact(&mut consumed).await?;
+        if is_ws_path {
+            stream
+                .write_all(
+                    b"HTTP/1.1 101 Switching Protocols\r\n\
+                      Upgrade: websocket\r\n\
+                      Connection: Upgrade\r\n\
+                      Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n",
+                )
+                .await?;
+        } else {
+            stream
+                .write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await?;
+        }
+        stream.shutdown().await
     }
 }

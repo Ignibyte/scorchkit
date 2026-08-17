@@ -16,7 +16,6 @@ use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::network_credentials::{format_redacted_argv, NetworkCredentials};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// SMB share enumerator via smbmap.
 #[derive(Debug)]
@@ -54,7 +53,7 @@ impl ScanModule for SmbmapModule {
         let owned = build_argv(&creds, host);
         let args: Vec<&str> = owned.iter().map(String::as_str).collect();
         debug!("smbmap: {}", format_redacted_argv(&args));
-        let output = subprocess::run_tool("smbmap", &args, Duration::from_secs(120)).await?;
+        let output = ctx.run_tool("smbmap", &args, Duration::from_mins(2)).await?;
         Ok(parse_smbmap_output(&output.stdout, ctx.target.url.as_str(), host))
     }
 }

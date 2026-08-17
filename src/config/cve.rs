@@ -12,6 +12,7 @@
 //! The lookup factory in [`crate::infra::cve_lookup::build_cve_lookup`]
 //! consumes this block to construct a boxed [`crate::engine::cve::CveLookup`].
 
+use std::fmt;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -91,7 +92,7 @@ pub struct CompositeConfig {
 }
 
 /// NVD-specific configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NvdConfig {
     /// Optional NVD API key. Can be overridden by the
@@ -116,6 +117,19 @@ pub struct NvdConfig {
     /// merge them with the cached set. Reduces NVD load + scan latency
     /// for operators running frequent scans. Default: `false`.
     pub delta_sync: bool,
+}
+
+impl fmt::Debug for NvdConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NvdConfig")
+            .field("api_key", &self.api_key.as_ref().map(|_| "***"))
+            .field("base_url", &self.base_url)
+            .field("cache_dir", &self.cache_dir)
+            .field("cache_ttl_secs", &self.cache_ttl_secs)
+            .field("delta_sync", &self.delta_sync)
+            .finish()
+    }
 }
 
 impl Default for NvdConfig {
@@ -187,6 +201,14 @@ mod tests {
         assert!(cfg.nvd.cache_dir.is_none());
         assert_eq!(cfg.nvd.cache_ttl_secs, 86_400);
         assert!(!cfg.nvd.delta_sync, "delta_sync defaults to false (safe-by-default)");
+    }
+
+    #[test]
+    fn nvd_debug_redacts_api_key() {
+        let config = NvdConfig { api_key: Some("nvd-secret".to_string()), ..NvdConfig::default() };
+        let rendered = format!("{config:?}");
+        assert!(rendered.contains("***"));
+        assert!(!rendered.contains("nvd-secret"));
     }
 
     /// `delta_sync` round-trips through `[cve.nvd]` TOML.

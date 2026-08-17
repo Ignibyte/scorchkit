@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// WAF detection via wafw00f.
 #[derive(Debug)]
@@ -37,12 +36,9 @@ impl ScanModule for Wafw00fModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.url.as_str();
 
-        let output = subprocess::run_tool(
-            "wafw00f",
-            &[target, "-o", "-", "-f", "json"],
-            Duration::from_secs(60),
-        )
-        .await?;
+        let output = ctx
+            .run_tool("wafw00f", &[target, "-o", "-", "-f", "json"], Duration::from_mins(1))
+            .await?;
 
         Ok(parse_wafw00f_output(&output.stdout, target))
     }
@@ -117,7 +113,7 @@ fn parse_wafw00f_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for wafw00f output parser (JSON and text fallback).
+    // Tests for wafw00f output parser (JSON and text fallback).
 
     /// Verify that `parse_wafw00f_output` correctly extracts WAF detection
     /// results from wafw00f JSON array output.

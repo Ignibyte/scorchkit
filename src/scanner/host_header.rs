@@ -209,8 +209,8 @@ async fn test_forwarded_host(
 mod tests {
     use super::*;
 
-    /// Tests for the host header injection scanner module's pure helper
-    /// functions and constant data integrity.
+    // Tests for the host header injection scanner module's pure helper
+    // functions and constant data integrity.
 
     /// Verify that the module metadata returns correct values.
     #[test]

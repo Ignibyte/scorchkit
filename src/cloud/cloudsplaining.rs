@@ -14,10 +14,9 @@ use crate::engine::cloud_module::{CloudCategory, CloudModule, CloudProvider};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Timeout for a `cloudsplaining` scan.
-const CLOUDSPLAINING_TIMEOUT: Duration = Duration::from_secs(300);
+const CLOUDSPLAINING_TIMEOUT: Duration = Duration::from_mins(5);
 
 /// Salesforce `cloudsplaining` IAM least-privilege auditor.
 ///
@@ -62,8 +61,7 @@ impl CloudModule for CloudsplainingCloudModule {
             .map_err(|e| crate::engine::error::ScorchError::Config(format!("tempdir: {e}")))?;
         let output_dir = tmp.path().to_string_lossy().to_string();
         let argv = vec!["scan", "--output", &output_dir, "--skip-open-report"];
-        let _output =
-            subprocess::run_tool_lenient("cloudsplaining", &argv, CLOUDSPLAINING_TIMEOUT).await?;
+        let _output = ctx.run_tool_lenient("cloudsplaining", &argv, CLOUDSPLAINING_TIMEOUT).await?;
 
         let target_label = ctx.target.display_raw();
 

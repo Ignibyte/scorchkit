@@ -35,6 +35,6 @@ pub fn register_modules() -> Vec<Box<dyn InfraModule>> {
         Box::new(tcp_probe::TcpProbeModule::default()),
         Box::new(nmap::NmapModule),
         Box::new(tls_probe::TlsInfraModule::default()),
-        Box::new(dns_probe::DnsInfraModule),
+        Box::new(dns_probe::DnsInfraModule::default()),
     ]
 }

@@ -185,14 +185,6 @@ mod tests {
     //! other concurrent tests that read the same variables.
 
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    /// Process-global mutex guarding `std::env::set_var` test paths.
-    /// Parallel tests serialize here so env-var state is deterministic.
-    fn env_mutex() -> &'static Mutex<()> {
-        static M: OnceLock<Mutex<()>> = OnceLock::new();
-        M.get_or_init(|| Mutex::new(()))
-    }
 
     /// Clear every credential env var that the tests manipulate. Keeps
     /// state between tests hermetic.
@@ -276,7 +268,8 @@ mod tests {
 
     #[test]
     fn from_config_with_env_prefers_env() {
-        let _g = env_mutex().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard =
+            crate::TEST_ENVIRONMENT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         clear_env();
         std::env::set_var(ENV_SMB_PASSWORD, "from-env");
         let base = NetworkCredentials {
@@ -290,7 +283,8 @@ mod tests {
 
     #[test]
     fn from_config_with_env_falls_through_to_config() {
-        let _g = env_mutex().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard =
+            crate::TEST_ENVIRONMENT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         clear_env();
         let base =
             NetworkCredentials { smb_username: Some("alice".to_string()), ..Default::default() };
@@ -300,7 +294,8 @@ mod tests {
 
     #[test]
     fn from_config_with_env_empty_env_treated_as_unset() {
-        let _g = env_mutex().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard =
+            crate::TEST_ENVIRONMENT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         clear_env();
         std::env::set_var(ENV_SMB_PASSWORD, "");
         let base = NetworkCredentials {

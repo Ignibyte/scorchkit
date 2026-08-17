@@ -516,8 +516,8 @@ fn extract_forms(body: &str, base_url: &Url) -> Vec<FormInfo> {
 mod tests {
     use super::*;
 
-    /// Tests for the SSTI scanner module's pure helper functions and constant
-    /// data integrity.
+    // Tests for the SSTI scanner module's pure helper functions and constant
+    // data integrity.
 
     /// Verify that the module metadata returns correct values for id, name,
     /// category, and description.

@@ -9,11 +9,12 @@
 //! wrapper that pipes HTML to `weasyprint - output.pdf`.
 
 use std::path::PathBuf;
-use std::process::Stdio;
+use std::time::Duration;
 
 use crate::config::ReportConfig;
-use crate::engine::error::{Result, ScorchError};
+use crate::engine::error::Result;
 use crate::engine::scan_result::ScanResult;
+use crate::runner::subprocess::{SystemToolExecutor, ToolExecutor, ToolInvocation};
 
 /// Save a scan result as a professional PDF pentest report.
 ///
@@ -23,23 +24,11 @@ use crate::engine::scan_result::ScanResult;
 ///
 /// # Errors
 ///
-/// Returns [`ScorchError::ToolNotFound`] if `weasyprint` is not installed,
-/// [`ScorchError::ToolFailed`] if PDF conversion fails, or
-/// [`ScorchError::Report`] if the output file cannot be written.
-pub fn save_report(result: &ScanResult, config: &ReportConfig) -> Result<PathBuf> {
-    // Check weasyprint is installed
-    let which = std::process::Command::new("which").arg("weasyprint").output().map_err(|e| {
-        ScorchError::ToolFailed {
-            tool: "weasyprint".to_string(),
-            status: -1,
-            stderr: e.to_string(),
-        }
-    })?;
-
-    if !which.status.success() {
-        return Err(ScorchError::ToolNotFound { tool: "weasyprint".to_string() });
-    }
-
+/// Returns [`crate::engine::error::ScorchError::ToolNotFound`] if `weasyprint`
+/// is not installed, [`crate::engine::error::ScorchError::ToolFailed`] if PDF
+/// conversion fails, or [`crate::engine::error::ScorchError::Report`] if the
+/// output file cannot be written.
+pub async fn save_report(result: &ScanResult, config: &ReportConfig) -> Result<PathBuf> {
     let output_dir = &config.output_dir;
     std::fs::create_dir_all(output_dir)?;
 
@@ -48,39 +37,17 @@ pub fn save_report(result: &ScanResult, config: &ReportConfig) -> Result<PathBuf
 
     let html = render_pdf_html(result);
 
-    // Pipe HTML to weasyprint via stdin
-    let mut child = std::process::Command::new("weasyprint")
-        .args(["-", path.to_str().unwrap_or("report.pdf")])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| ScorchError::ToolFailed {
-            tool: "weasyprint".to_string(),
-            status: -1,
-            stderr: e.to_string(),
-        })?;
-
-    // Write HTML to stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        let _ = stdin.write_all(html.as_bytes());
-    }
-
-    let output = child.wait_with_output().map_err(|e| ScorchError::ToolFailed {
-        tool: "weasyprint".to_string(),
-        status: -1,
-        stderr: e.to_string(),
-    })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ScorchError::ToolFailed {
-            tool: "weasyprint".to_string(),
-            status: output.status.code().unwrap_or(-1),
-            stderr: stderr.to_string(),
-        });
-    }
+    let output_path = path.to_string_lossy().into_owned();
+    SystemToolExecutor
+        .execute(
+            ToolInvocation::strict(
+                "weasyprint",
+                &["-", output_path.as_str()],
+                Duration::from_mins(2),
+            )
+            .with_stdin(html.into_bytes()),
+        )
+        .await?;
 
     Ok(path)
 }
@@ -91,7 +58,7 @@ pub fn save_report(result: &ScanResult, config: &ReportConfig) -> Result<PathBuf
 /// professional layout sections, and page break controls. This is a
 /// pure function — testable without `weasyprint`.
 #[must_use]
-#[allow(clippy::too_many_lines)] // Report template with 6 HTML sections — cannot meaningfully split
+#[allow(clippy::too_many_lines)] // JUSTIFICATION: one cohesive six-section HTML template.
 pub fn render_pdf_html(result: &ScanResult) -> String {
     let s = &result.summary;
     let target = html_escape(&result.target.raw);
@@ -394,9 +361,9 @@ mod tests {
     use crate::engine::target::Target;
     use chrono::Utc;
 
-    /// Test suite for PDF report generation.
-    ///
-    /// Tests the pure HTML template function without requiring weasyprint.
+    // Test suite for PDF report generation.
+    //
+    // Tests the pure HTML template function without requiring weasyprint.
 
     /// Create a test scan result with sample findings.
     fn test_result() -> ScanResult {
@@ -531,5 +498,18 @@ mod tests {
             "&lt;script&gt;alert(1)&lt;/script&gt;"
         );
         assert_eq!(html_escape("a & b"), "a &amp; b");
+    }
+
+    #[tokio::test]
+    async fn save_report_rejects_an_output_directory_that_is_a_file() {
+        let temporary = tempfile::tempdir().expect("create PDF report fixture root");
+        let output_file = temporary.path().join("not-a-directory");
+        std::fs::write(&output_file, b"fixture").expect("write conflicting output file");
+        let config = ReportConfig { output_dir: output_file, ..ReportConfig::default() };
+
+        assert!(
+            save_report(&test_result(), &config).await.is_err(),
+            "PDF report creation must propagate an invalid output-directory error"
+        );
     }
 }

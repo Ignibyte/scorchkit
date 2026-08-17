@@ -15,7 +15,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Port scanner via naabu.
 #[derive(Debug)]
@@ -49,12 +48,13 @@ impl ScanModule for NaabuModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let host = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
-        let output = subprocess::run_tool(
-            "naabu",
-            &["-host", host, "-top-ports", "1000", "-silent", "-json"],
-            Duration::from_secs(180),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "naabu",
+                &["-host", host, "-top-ports", "1000", "-silent", "-json"],
+                Duration::from_mins(3),
+            )
+            .await?;
         Ok(parse_naabu_output(&output.stdout, ctx.target.url.as_str(), host))
     }
 }

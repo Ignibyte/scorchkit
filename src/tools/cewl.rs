@@ -3,7 +3,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 use async_trait::async_trait;
 use std::time::Duration;
 
@@ -33,12 +32,13 @@ impl ScanModule for CewlModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.url.as_str();
-        let output = subprocess::run_tool(
-            "cewl",
-            &[target, "-d", "2", "-m", "5", "--with-numbers"],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "cewl",
+                &[target, "-d", "2", "-m", "5", "--with-numbers"],
+                Duration::from_mins(2),
+            )
+            .await?;
 
         Ok(parse_cewl_output(&output.stdout, target))
     }
@@ -66,7 +66,7 @@ fn parse_cewl_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for CeWL wordlist output parser.
+    // Tests for `CeWL` wordlist output parser.
 
     /// Verify that `parse_cewl_output` correctly counts extracted words
     /// and includes a sample in the evidence.

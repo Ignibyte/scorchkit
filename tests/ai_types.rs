@@ -2,7 +2,7 @@
 //!
 //! Verifies serde round-trip correctness for all analysis types, JSON
 //! extraction from various response formats, and enum serialization
-//! with the expected snake_case conventions.
+//! with the expected `snake_case` conventions.
 
 use scorchkit::ai::prompts::AnalysisFocus;
 use scorchkit::ai::response::try_extract;
@@ -147,7 +147,7 @@ fn test_structured_analysis_tagged_enum() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-/// Verify `ExploitabilityRating` serializes with snake_case.
+/// Verify `ExploitabilityRating` serializes with `snake_case`.
 #[test]
 fn test_exploitability_rating_serde() -> Result<(), Box<dyn std::error::Error>> {
     let rating = ExploitabilityRating::Theoretical;
@@ -159,7 +159,7 @@ fn test_exploitability_rating_serde() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-/// Verify `EffortLevel` serializes with snake_case.
+/// Verify `EffortLevel` serializes with `snake_case`.
 #[test]
 fn test_effort_level_serde() -> Result<(), Box<dyn std::error::Error>> {
     let effort = EffortLevel::Major;
@@ -171,7 +171,7 @@ fn test_effort_level_serde() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Verify `FindingClassification` serializes with snake_case.
+/// Verify `FindingClassification` serializes with `snake_case`.
 #[test]
 fn test_finding_classification_serde() -> Result<(), Box<dyn std::error::Error>> {
     let cls = FindingClassification::LikelyFalsePositive;
@@ -212,7 +212,7 @@ fn test_project_context_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Verify `AnalysisFocus` round-trips through JSON with snake_case.
+/// Verify `AnalysisFocus` round-trips through JSON with `snake_case`.
 #[test]
 fn test_analysis_focus_serde() -> Result<(), Box<dyn std::error::Error>> {
     let focus = AnalysisFocus::Remediate;
@@ -246,7 +246,7 @@ fn test_try_extract_returns_none_for_garbage() {
 
 /// Verify `try_extract` handles whitespace-wrapped JSON.
 #[test]
-fn test_try_extract_handles_whitespace() -> Result<(), Box<dyn std::error::Error>> {
+fn test_try_extract_handles_whitespace() {
     let json = r#"
         {
             "risk_score": 2.0,
@@ -258,7 +258,6 @@ fn test_try_extract_handles_whitespace() -> Result<(), Box<dyn std::error::Error
     "#;
     let result: Option<SummaryAnalysis> = try_extract(json);
     assert!(result.is_some());
-    Ok(())
 }
 
 /// Verify `AnalyzeFindingsParams` MCP parameter type deserializes correctly.

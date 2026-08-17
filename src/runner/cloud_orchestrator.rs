@@ -6,21 +6,18 @@
 //! lifecycle sequence and wires the built-in audit-log subscriber at
 //! the top of `run()`.
 //!
-//! ## Intentional duplication with `InfraOrchestrator`
-//!
-//! This file is ~90% identical to `infra_orchestrator.rs`. The
-//! duplication is deliberate at the WORK-150 stage: the concrete
-//! orchestrators remain readable and separately verifiable, while
-//! refactoring both into a generic `Orchestrator<M: Module, C:
-//! Context, T: TargetLike>` is a separate pipeline to run once the
-//! count is 3+ and more pattern signal emerges.
+//! The shared job executor owns scheduling, budgets, and cancellation. This family adapter remains
+//! concrete so cloud target conversion, findings, events, and policy-sealed context behavior do not
+//! leak into a generic runner.
 
-use std::sync::Arc;
 use std::time::Instant;
+
+#[cfg(test)]
+use std::sync::Arc;
 
 use chrono::Utc;
 use colored::Colorize;
-use tokio::sync::Semaphore;
+use futures_util::FutureExt;
 use uuid::Uuid;
 
 use crate::engine::audit_log::subscribe_audit_log_if_enabled;
@@ -31,10 +28,11 @@ use crate::engine::events::ScanEvent;
 use crate::engine::finding::Finding;
 use crate::engine::scan_result::{ScanResult, ScanSummary};
 use crate::engine::target::Target;
+use crate::runner::job_executor::{ensure_not_cancelled, CancellationToken, JobExecutor};
 use crate::runner::progress;
+use crate::runner::subprocess::missing_required_tool;
 
-/// Returns all registered cloud modules (currently none — populated
-/// starting with WORK-151).
+/// Returns the policy-supported built-in cloud modules.
 #[must_use]
 pub fn all_cloud_modules() -> Vec<Box<dyn CloudModule>> {
     crate::cloud::register_modules()
@@ -44,23 +42,16 @@ pub fn all_cloud_modules() -> Vec<Box<dyn CloudModule>> {
 pub struct CloudOrchestrator {
     ctx: CloudContext,
     modules: Vec<Box<dyn CloudModule>>,
-    hook_runner: Option<crate::engine::hook_runner::HookRunner>,
 }
 
 impl CloudOrchestrator {
     /// Create a new orchestrator bound to the given context.
     #[must_use]
     pub fn new(ctx: CloudContext) -> Self {
-        Self { ctx, modules: Vec::new(), hook_runner: None }
+        Self { ctx, modules: Vec::new() }
     }
 
-    /// Attach a hook runner for `pre_scan` / `post_module` / `post_scan`
-    /// script invocations.
-    pub fn set_hook_runner(&mut self, runner: crate::engine::hook_runner::HookRunner) {
-        self.hook_runner = Some(runner);
-    }
-
-    /// Register every built-in cloud module (empty at WORK-150).
+    /// Register every policy-supported built-in cloud module.
     pub fn register_default_modules(&mut self) {
         self.modules = all_cloud_modules();
     }
@@ -85,12 +76,14 @@ impl CloudOrchestrator {
         self.modules.retain(|m| !ids.iter().any(|id| id == m.id()));
     }
 
-    /// Apply a profile name: `quick` keeps only
-    /// [`CloudCategory::Iam`] (fastest, no resource enumeration);
-    /// anything else keeps all registered modules.
+    /// Apply a profile name. `quick` keeps only [`CloudCategory::Iam`]; the other supported
+    /// profiles keep all registered modules. An unknown name clears the registry so low-level
+    /// callers fail closed.
     pub fn apply_profile(&mut self, profile: &str) {
-        if profile == "quick" {
-            self.modules.retain(|m| m.category() == CloudCategory::Iam);
+        match profile {
+            "quick" => self.modules.retain(|m| m.category() == CloudCategory::Iam),
+            "standard" | "thorough" | "pentest" => {}
+            _ => self.modules.clear(),
         }
     }
 
@@ -102,27 +95,45 @@ impl CloudOrchestrator {
     /// `ModuleSkipped` → [`ScanEvent::ScanCompleted`], matching the
     /// other orchestrators' lifecycle contract.
     ///
-    /// An empty module registry is a valid state — the orchestrator
+    /// An empty module registry is a valid state — callers may deliberately
+    /// filter every registered module. The orchestrator
     /// emits `ScanStarted` + `ScanCompleted` with zero findings and
     /// returns normally. This is exercised by
-    /// `test_cloud_orchestrator_empty_module_list` and is important
-    /// because [`crate::cloud::register_modules`] currently returns
-    /// an empty `Vec` until WORK-151+ populate it.
+    /// `test_cloud_orchestrator_empty_module_list`.
     ///
     /// # Errors
     ///
-    /// Returns an error if the semaphore is closed or a fatal scan
-    /// error occurs. Individual module failures are non-fatal.
+    /// Returns an error for invalid execution budgets, batch deadline, or a fatal scan error.
+    /// Individual module failures are non-fatal.
     // JUSTIFICATION: Event emission across scan start, module start,
     // module complete, module error, and scan complete forms a cohesive
     // lifecycle block — splitting would scatter the publication sites
     // without improving clarity (matches InfraOrchestrator).
     #[allow(clippy::too_many_lines)]
     pub async fn run(&self, quiet: bool) -> Result<ScanResult> {
+        let cancellation = CancellationToken::new();
+        self.run_with_cancellation(quiet, &cancellation).await
+    }
+
+    /// Run registered cloud modules with caller-controlled cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid execution budgets, caller cancellation, batch deadline,
+    /// target conversion, or another fatal orchestration failure. Individual module failures are
+    /// retained as skipped-module outcomes.
+    // JUSTIFICATION: Module event commits and deterministic result assembly share scan-owned state;
+    // extraction would scatter the cloud lifecycle contract.
+    #[allow(clippy::too_many_lines)]
+    pub async fn run_with_cancellation(
+        &self,
+        quiet: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<ScanResult> {
         let started_at = Utc::now();
         let scan_started = Instant::now();
         let scan_id = Uuid::new_v4().to_string();
-        let max_concurrent = self.ctx.config.scan.max_concurrent_modules;
+        let executor = JobExecutor::from_scan_config(&self.ctx.config.scan)?;
 
         let _audit_log_handle =
             subscribe_audit_log_if_enabled(&self.ctx.config.audit_log, &self.ctx.events);
@@ -133,7 +144,7 @@ impl CloudOrchestrator {
             target: target_display.clone(),
         });
 
-        if !quiet {
+        if progress::is_visible(quiet) {
             println!(
                 "{} {} cloud module{}",
                 "Running".bold(),
@@ -147,64 +158,73 @@ impl CloudOrchestrator {
         let mut modules_skipped: Vec<(String, String)> = Vec::new();
 
         for module in &self.modules {
-            if module.requires_external_tool() {
-                if let Some(tool) = module.required_tool() {
-                    if !is_tool_installed(tool) {
-                        if !quiet {
-                            println!(
-                                "  {} {} (requires: {})",
-                                "SKIP".yellow().bold(),
-                                module.name(),
-                                tool.dimmed()
-                            );
-                        }
-                        let reason = format!("external tool '{tool}' not found");
-                        self.ctx.events.publish(ScanEvent::ModuleSkipped {
-                            scan_id: scan_id.clone(),
-                            module_id: module.id().to_string(),
-                            reason: reason.clone(),
-                        });
-                        modules_skipped.push((module.id().to_string(), reason));
-                        continue;
-                    }
+            if let Some(tool) =
+                missing_required_tool(module.requires_external_tool(), module.required_tool())
+            {
+                if progress::is_visible(quiet) {
+                    println!(
+                        "  {} {} (requires: {})",
+                        "SKIP".yellow().bold(),
+                        module.name(),
+                        tool.dimmed()
+                    );
                 }
+                let reason = format!("external tool '{tool}' not found");
+                self.ctx.events.publish(ScanEvent::ModuleSkipped {
+                    scan_id: scan_id.clone(),
+                    module_id: module.id().to_string(),
+                    reason: reason.clone(),
+                });
+                modules_skipped.push((module.id().to_string(), reason));
+                continue;
             }
             runnable.push(module.as_ref());
         }
 
-        let semaphore = Arc::new(Semaphore::new(max_concurrent));
-        let ctx = &self.ctx;
         let mut all_findings: Vec<Finding> = Vec::new();
         let mut modules_run: Vec<String> = Vec::new();
 
+        let ctx = &self.ctx;
+        let mut jobs = Vec::with_capacity(runnable.len());
         for module in runnable {
-            let permit = semaphore.clone().acquire_owned().await.map_err(|e| {
-                crate::engine::error::ScorchError::Cancelled {
-                    reason: format!("semaphore error: {e}"),
+            let scan_id = scan_id.clone();
+            jobs.push(
+                async move {
+                    let module_name = module.name().to_string();
+                    let module_id = module.id().to_string();
+                    let spinner =
+                        progress::is_visible(quiet).then(|| progress::module_spinner(&module_name));
+                    ctx.events.publish(ScanEvent::ModuleStarted {
+                        scan_id,
+                        module_id: module_id.clone(),
+                        module_name: module_name.clone(),
+                    });
+                    let result = module.run(ctx).await;
+                    match &result {
+                        Ok(findings) => {
+                            if let Some(spinner) = &spinner {
+                                progress::finish_success(spinner, &module_name, findings.len());
+                            }
+                        }
+                        Err(error) => {
+                            if let Some(spinner) = &spinner {
+                                progress::finish_error(spinner, &module_name, &error.to_string());
+                            }
+                        }
+                    }
+                    (module_id, result)
                 }
-            })?;
+                .boxed(),
+            );
+        }
+        let outcomes = executor.execute(jobs, cancellation).await?;
 
-            let module_name = module.name().to_string();
-            let module_id = module.id().to_string();
-            let spinner = if quiet { None } else { Some(progress::module_spinner(&module_name)) };
-
-            self.ctx.events.publish(ScanEvent::ModuleStarted {
-                scan_id: scan_id.clone(),
-                module_id: module_id.clone(),
-                module_name: module_name.clone(),
-            });
-            let module_started = Instant::now();
-
-            let result = module.run(ctx).await;
-            drop(permit);
-            let duration_ms =
-                u64::try_from(module_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        for outcome in outcomes {
+            let duration_ms = u64::try_from(outcome.duration().as_millis()).unwrap_or(u64::MAX);
+            let (module_id, result) = outcome.into_output();
 
             match result {
                 Ok(findings) => {
-                    if let Some(pb) = &spinner {
-                        progress::finish_success(pb, &module_name, findings.len());
-                    }
                     for finding in &findings {
                         self.ctx.events.publish(ScanEvent::FindingProduced {
                             scan_id: scan_id.clone(),
@@ -223,9 +243,6 @@ impl CloudOrchestrator {
                 }
                 Err(e) => {
                     let err_str = e.to_string();
-                    if let Some(pb) = &spinner {
-                        progress::finish_error(pb, &module_name, &err_str);
-                    }
                     self.ctx.events.publish(ScanEvent::ModuleError {
                         scan_id: scan_id.clone(),
                         module_id: module_id.clone(),
@@ -236,8 +253,11 @@ impl CloudOrchestrator {
             }
         }
 
-        all_findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+        all_findings.sort_by_key(|finding| std::cmp::Reverse(finding.severity));
+        let target = Target::from_cloud(&target_display)?;
+        let summary = ScanSummary::from_findings(&all_findings);
 
+        ensure_not_cancelled(cancellation)?;
         let total_duration_ms =
             u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.ctx.events.publish(ScanEvent::ScanCompleted {
@@ -245,9 +265,6 @@ impl CloudOrchestrator {
             total_findings: all_findings.len(),
             duration_ms: total_duration_ms,
         });
-
-        let target = Target::from_cloud(&target_display)?;
-        let summary = ScanSummary::from_findings(&all_findings);
 
         Ok(ScanResult {
             scan_id,
@@ -260,14 +277,6 @@ impl CloudOrchestrator {
             summary,
         })
     }
-}
-
-fn is_tool_installed(tool: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(tool)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -286,9 +295,48 @@ mod tests {
         findings: usize,
     }
 
+    struct MissingToolModule;
+
+    #[async_trait]
+    impl CloudModule for MissingToolModule {
+        fn name(&self) -> &'static str {
+            "missing"
+        }
+
+        fn id(&self) -> &'static str {
+            "missing"
+        }
+
+        fn category(&self) -> CloudCategory {
+            CloudCategory::Iam
+        }
+
+        fn description(&self) -> &'static str {
+            "missing tool fixture"
+        }
+
+        async fn run(&self, _ctx: &CloudContext) -> Result<Vec<Finding>> {
+            Ok(vec![Finding::new(
+                "missing",
+                Severity::Low,
+                "unexpected execution",
+                "fixture",
+                "cloud://fixture",
+            )])
+        }
+
+        fn requires_external_tool(&self) -> bool {
+            true
+        }
+
+        fn required_tool(&self) -> Option<&str> {
+            Some("scorchkit-cloud-tool-that-does-not-exist")
+        }
+    }
+
     #[async_trait]
     impl CloudModule for StubModule {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "stub"
         }
         fn id(&self) -> &str {
@@ -297,7 +345,7 @@ mod tests {
         fn category(&self) -> CloudCategory {
             self.cat
         }
-        fn description(&self) -> &str {
+        fn description(&self) -> &'static str {
             "stub cloud module for tests"
         }
         async fn run(&self, _ctx: &CloudContext) -> Result<Vec<Finding>> {
@@ -341,7 +389,66 @@ mod tests {
     }
 
     fn fixture_ctx() -> CloudContext {
-        CloudContext::new(CloudTarget::All, Arc::new(AppConfig::default()))
+        CloudContext::new(CloudTarget::All, Arc::new(AppConfig::default()), Vec::new())
+    }
+
+    #[test]
+    fn unknown_profile_clears_cloud_modules() {
+        let mut orchestrator = CloudOrchestrator::new(fixture_ctx());
+        orchestrator.modules.push(Box::new(StubModule {
+            cat: CloudCategory::Iam,
+            module_id: "stub",
+            findings: 0,
+        }));
+
+        orchestrator.apply_profile("invalid");
+
+        assert!(orchestrator.modules.is_empty());
+    }
+
+    fn profile_fixture() -> CloudOrchestrator {
+        let mut orchestrator = CloudOrchestrator::new(fixture_ctx());
+        orchestrator.add_module(Box::new(StubModule {
+            cat: CloudCategory::Iam,
+            module_id: "iam",
+            findings: 0,
+        }));
+        orchestrator.add_module(Box::new(StubModule {
+            cat: CloudCategory::Storage,
+            module_id: "storage",
+            findings: 0,
+        }));
+        orchestrator
+    }
+
+    #[test]
+    fn cloud_profiles_select_exact_module_categories() {
+        let mut quick = profile_fixture();
+        quick.apply_profile("quick");
+        assert_eq!(quick.modules.iter().map(|module| module.id()).collect::<Vec<_>>(), ["iam"]);
+
+        for profile in ["standard", "thorough", "pentest"] {
+            let mut orchestrator = profile_fixture();
+            orchestrator.apply_profile(profile);
+            assert_eq!(
+                orchestrator.modules.iter().map(|module| module.id()).collect::<Vec<_>>(),
+                ["iam", "storage"],
+                "profile {profile}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_runner_skips_a_declared_missing_tool() {
+        let mut orchestrator = CloudOrchestrator::new(fixture_ctx());
+        orchestrator.add_module(Box::new(MissingToolModule));
+
+        let result = orchestrator.run(true).await.expect("cloud scan");
+
+        assert!(result.modules_run.is_empty());
+        assert_eq!(result.modules_skipped.len(), 1);
+        assert_eq!(result.modules_skipped[0].0, "missing");
+        assert!(result.findings.is_empty());
     }
 
     /// Regression: empty module registry (WORK-150 state) still emits
@@ -376,6 +483,7 @@ mod tests {
             vec!["ScanStarted", "ScanCompleted"],
             "empty registry emits only the scan boundary events"
         );
+        drop(events);
     }
 
     /// Regression: single stub module produces the full 5-event
@@ -416,6 +524,7 @@ mod tests {
             ],
             "event sequence"
         );
+        drop(events);
     }
 
     #[tokio::test]

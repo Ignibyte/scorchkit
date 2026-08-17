@@ -25,7 +25,7 @@
 //!   every scan is the most expensive way to use the rate budget.
 //! - **Pagination (WORK-147).** The query loop follows `startIndex`
 //!   until `records.len() >= totalResults` or the hard
-//!   [`MAX_PAGES`] cap trips. A zero-record page unconditionally
+//!   `MAX_PAGES` cap trips. A zero-record page unconditionally
 //!   breaks the loop so a misbehaving mirror can't trap us. Fixes the
 //!   silent-truncation bug that cost records for CPEs matching more
 //!   than one NVD page (2000 results).
@@ -64,8 +64,11 @@ use tracing::{debug, warn};
 use crate::config::cve::NvdConfig;
 use crate::engine::cve::{severity_from_cvss, CveLookup, CveRecord};
 use crate::engine::error::{Result, ScorchError};
+use crate::engine::policy::{Capability, EffectClass, Engagement};
+use crate::engine::policy_http::{build_service_client, RedirectMode};
 use crate::engine::severity::Severity;
 use crate::infra::cve_cache::FsCache;
+use crate::infra::cve_lookup::authorize_cve_resources;
 
 /// Environment variable that overrides [`NvdConfig::api_key`].
 pub const ENV_API_KEY: &str = "SCORCHKIT_NVD_API_KEY";
@@ -141,6 +144,10 @@ pub struct NvdCveLookup {
     /// Whether delta-sync is enabled. See
     /// [`NvdConfig::delta_sync`](crate::config::NvdConfig).
     delta_sync: bool,
+    /// Engagement rechecked before every cache or provider operation.
+    engagement: Arc<Engagement>,
+    /// Canonical authorized cache directory.
+    cache_dir: PathBuf,
 }
 
 impl std::fmt::Debug for NvdCveLookup {
@@ -166,7 +173,7 @@ impl NvdCveLookup {
     ///
     /// Returns [`ScorchError::Config`] if the underlying
     /// [`reqwest::Client`] cannot be built.
-    pub fn from_config(cfg: &NvdConfig) -> Result<Self> {
+    pub fn from_config(cfg: &NvdConfig, engagement: Arc<Engagement>) -> Result<Self> {
         let api_key = resolve_api_key(cfg);
         let base_url = cfg
             .base_url
@@ -174,19 +181,24 @@ impl NvdCveLookup {
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
             .trim_end_matches('/')
             .to_string();
+        let cache_dir = cfg.cache_dir.clone().unwrap_or_else(default_cache_dir);
+        let (endpoint, cache_dir) = authorize_cve_resources(&engagement, &base_url, &cache_dir)?;
 
         let user_agent = format!("ScorchKit-CVE/{}", env!("CARGO_PKG_VERSION"));
-        let http = reqwest::Client::builder()
-            .user_agent(user_agent)
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| ScorchError::Config(format!("nvd: failed to build http client: {e}")))?;
+        let http = build_service_client(
+            Arc::clone(&engagement),
+            &endpoint,
+            Capability::InfraScan,
+            EffectClass::Passive,
+            &user_agent,
+            Duration::from_secs(30),
+            RedirectMode::Follow { max_redirects: 3 },
+        )?;
 
         let burst = if api_key.is_some() { QUOTA_WITH_KEY_BURST } else { QUOTA_NO_KEY_BURST };
         let limiter = Arc::new(RateLimiter::direct(quota_for_burst(burst)));
 
-        let cache_dir = cfg.cache_dir.clone().unwrap_or_else(default_cache_dir);
-        let cache = FsCache::new(cache_dir, Duration::from_secs(cfg.cache_ttl_secs));
+        let cache = FsCache::new(cache_dir.clone(), Duration::from_secs(cfg.cache_ttl_secs));
 
         Ok(Self {
             api_key,
@@ -196,6 +208,8 @@ impl NvdCveLookup {
             limiter,
             cache,
             delta_sync: cfg.delta_sync,
+            engagement,
+            cache_dir,
         })
     }
 
@@ -212,6 +226,7 @@ impl NvdCveLookup {
 #[async_trait]
 impl CveLookup for NvdCveLookup {
     async fn query(&self, cpe: &str) -> Result<Vec<CveRecord>> {
+        authorize_cve_resources(&self.engagement, &self.base_url, &self.cache_dir)?;
         // Cache hit branch. With delta-sync disabled, serve straight
         // from cache. With delta-sync enabled, fetch only records
         // modified since the cache was written and merge.
@@ -700,7 +715,9 @@ mod tests {
             }
         }
 
-        let _guard = EnvGuard::set("env-wins");
+        let _environment_guard =
+            crate::TEST_ENVIRONMENT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _key_guard = EnvGuard::set("env-wins");
         let cfg = NvdConfig { api_key: Some("config-loses".into()), ..NvdConfig::default() };
         assert_eq!(resolve_api_key(&cfg).as_deref(), Some("env-wins"));
     }
@@ -708,6 +725,8 @@ mod tests {
     /// Default cache dir is rooted at `XDG_CACHE_HOME` when set.
     #[test]
     fn default_cache_dir_honours_xdg() {
+        let _guard =
+            crate::TEST_ENVIRONMENT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let prior_xdg = env::var("XDG_CACHE_HOME").ok();
         let prior_home = env::var("HOME").ok();
         env::set_var("XDG_CACHE_HOME", "/tmp/xdg-test");

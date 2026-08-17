@@ -50,7 +50,7 @@ use super::finding::Finding;
 ///
 /// Replaces the freeform pipe-delimited evidence strings previously
 /// assembled by cloud modules. All fields are accessible for
-/// programmatic consumption; [`Display`] serializes to the legacy
+/// programmatic consumption; [`std::fmt::Display`] serializes to the legacy
 /// pipe-delimited format for backward compatibility.
 #[derive(Debug, Clone)]
 pub struct CloudEvidence {
@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(s, "provider:kubernetes | service:pod");
     }
 
-    /// Detail keys are sorted alphabetically (BTreeMap).
+    /// Detail keys are sorted alphabetically (`BTreeMap`).
     #[test]
     fn test_cloud_evidence_detail_sorted() {
         let ev = CloudEvidence::new(CloudProvider::Gcp, "storage")

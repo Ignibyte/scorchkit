@@ -8,11 +8,19 @@ use crate::cli::args::{self, Cli, Commands, OutputFormat};
 use crate::config::AppConfig;
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::module_trait::ModuleCategory;
-use crate::engine::scan_context::ScanContext;
 use crate::engine::scan_result::ScanResult;
 use crate::engine::target::Target;
 use crate::report;
 use crate::runner::orchestrator::Orchestrator;
+
+#[cfg(any(feature = "infra", feature = "cloud", test))]
+const fn effective_quiet(command_quiet: bool, global_quiet: bool) -> bool {
+    command_quiet || global_quiet
+}
+
+const fn should_run_ai(requested: bool, automatic: bool, enabled: bool) -> bool {
+    (requested || automatic) && enabled
+}
 
 /// Execute the CLI command.
 ///
@@ -139,7 +147,12 @@ pub async fn execute(cli: Cli) -> Result<()> {
                     if total > 1 {
                         // Multi-target: log error and continue
                         if !cli.quiet {
-                            println!("{} Target {} failed: {e}", "ERR".red().bold(), target_str);
+                            println!(
+                                "{} Target {} failed: {}",
+                                "ERR".red().bold(),
+                                crate::report::terminal::escape_terminal_text(target_str),
+                                crate::report::terminal::escape_terminal_text(&e.to_string())
+                            );
                         }
                         errors.push((target_str.clone(), e.to_string()));
                     } else {
@@ -159,7 +172,12 @@ pub async fn execute(cli: Cli) -> Result<()> {
                     errors.len()
                 );
                 for (t, e) in &errors {
-                    println!("    {} {}: {}", "✗".red(), t, e);
+                    println!(
+                        "    {} {}: {}",
+                        "✗".red(),
+                        crate::report::terminal::escape_terminal_text(t),
+                        crate::report::terminal::escape_terminal_text(e)
+                    );
                 }
                 println!("{}", "━".repeat(50).dimmed());
             }
@@ -225,7 +243,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 .await
         }
 
-        Commands::Doctor { deep } => super::doctor::run_doctor(deep),
+        Commands::Doctor { deep } => super::doctor::run_doctor(deep).await,
 
         Commands::Agent { target, depth, project, database_url } => {
             crate::agent::runner::run_autonomous(
@@ -247,7 +265,12 @@ pub async fn execute(cli: Cli) -> Result<()> {
             analyze,
             project: _project,
             database_url: _database_url,
-        } => run_code_scan(&path, language, modules, skip, &profile, analyze, &config).await,
+        } => {
+            run_code_scan(
+                &path, language, modules, skip, &profile, analyze, &config, cli.output, cli.quiet,
+            )
+            .await
+        }
 
         Commands::Completions { shell } => {
             args::print_completions(shell);
@@ -271,85 +294,153 @@ pub async fn execute(cli: Cli) -> Result<()> {
 
         #[cfg(feature = "infra")]
         Commands::Infra { target, profile, modules, skip, quiet } => {
-            run_infra(&config, &target, &profile, modules.as_deref(), skip.as_deref(), quiet).await
+            run_infra(
+                &config,
+                &target,
+                &profile,
+                modules.as_deref(),
+                skip.as_deref(),
+                effective_quiet(quiet, cli.quiet),
+                cli.output,
+            )
+            .await
         }
 
         #[cfg(feature = "infra")]
         Commands::Assess { url, code, infra, cloud, profile, quiet } => {
             run_assess(
                 &config,
-                url.as_deref(),
-                code.as_deref(),
-                infra.as_deref(),
-                cloud.as_deref(),
+                AssessmentTargets {
+                    url: url.as_deref(),
+                    code: code.as_deref(),
+                    infra: infra.as_deref(),
+                    cloud: cloud.as_deref(),
+                },
                 &profile,
-                quiet,
+                effective_quiet(quiet, cli.quiet),
+                cli.output,
             )
             .await
         }
 
         #[cfg(feature = "cloud")]
         Commands::Cloud { target, profile, modules, skip, quiet } => {
-            run_cloud(&config, &target, &profile, modules.as_deref(), skip.as_deref(), quiet).await
+            run_cloud(
+                &config,
+                &target,
+                &profile,
+                modules.as_deref(),
+                skip.as_deref(),
+                effective_quiet(quiet, cli.quiet),
+                cli.output,
+            )
+            .await
         }
     }
 }
 
-/// Run a unified DAST + SAST + Infra assessment.
+/// Save and render one scan result according to the global CLI output contract.
+async fn emit_scan_report(
+    result: &ScanResult,
+    config: &AppConfig,
+    output_format: Option<&OutputFormat>,
+    quiet: bool,
+) -> Result<()> {
+    let saved_report = match output_format {
+        None | Some(OutputFormat::Json) => {
+            let path = report::json::save_report(result, &config.report)?;
+            Some(("Report saved:", path))
+        }
+        Some(OutputFormat::Html) => {
+            let path = report::html::save_report(result, &config.report)?;
+            Some(("HTML report saved:", path))
+        }
+        Some(OutputFormat::Sarif) => {
+            let path = report::sarif::save_report(result, &config.report)?;
+            Some(("SARIF report saved:", path))
+        }
+        Some(OutputFormat::Pdf) => {
+            let path = report::pdf::save_report(result, &config.report).await?;
+            Some(("PDF report saved:", path))
+        }
+        Some(OutputFormat::Terminal) => None,
+    };
+
+    if !quiet {
+        if let Some((label, path)) = saved_report {
+            println!("\n{} {}", label.green().bold(), path.display());
+        }
+        report::terminal::print_report(result);
+    }
+    if matches!(output_format, Some(OutputFormat::Json)) {
+        println!("{}", serde_json::to_string_pretty(result)?);
+    }
+    Ok(())
+}
+
+/// Optional targets accepted by the unified assessment command.
+#[cfg(feature = "infra")]
+struct AssessmentTargets<'a> {
+    url: Option<&'a str>,
+    code: Option<&'a std::path::Path>,
+    infra: Option<&'a str>,
+    cloud: Option<&'a str>,
+}
+
+/// Run a unified DAST, SAST, infrastructure, and cloud assessment.
 ///
-/// At least one of `url`, `code`, or `infra` must be `Some`. The three
-/// orchestrators run concurrently via `tokio::join!`; failures in any
-/// domain are logged at `warn` and the remaining results are returned
-/// merged into a single [`crate::engine::scan_result::ScanResult`].
+/// Requested family orchestrators run concurrently; successful results are merged into one
+/// [`crate::engine::scan_result::ScanResult`]. The selected profile and global report format apply
+/// to every family.
 ///
 /// # Errors
 ///
-/// Returns [`crate::engine::error::ScorchError::Config`] if every input
-/// is `None`. Returns the first available error only when every provided
-/// domain failed.
+/// Returns [`crate::engine::error::ScorchError::Config`] if every target is absent. Returns the
+/// first available error only when every requested family failed.
 #[cfg(feature = "infra")]
-pub async fn run_assess(
+async fn run_assess(
     config: &std::sync::Arc<crate::config::AppConfig>,
-    url: Option<&str>,
-    code: Option<&std::path::Path>,
-    infra: Option<&str>,
-    cloud: Option<&str>,
+    targets: AssessmentTargets<'_>,
     profile: &str,
     quiet: bool,
+    output_format: Option<OutputFormat>,
 ) -> crate::engine::error::Result<()> {
     use crate::engine::error::ScorchError;
 
-    if url.is_none() && code.is_none() && infra.is_none() && cloud.is_none() {
+    if targets.url.is_none()
+        && targets.code.is_none()
+        && targets.infra.is_none()
+        && targets.cloud.is_none()
+    {
         return Err(ScorchError::Config(
             "assess requires at least one of --url, --code, --infra, or --cloud".to_string(),
         ));
     }
 
     let engine = crate::facade::Engine::new(std::sync::Arc::clone(config));
-    // Apply profile via individual calls since full_assessment doesn't take a profile;
-    // for the simplest v1 we pass the profile to each underlying orchestrator through
-    // a dedicated helper. Until that helper exists, we use the default profile path —
-    // callers who need per-domain profile tuning should use `run --code` directly.
-    let _ = profile;
-
-    let result = engine.full_assessment(url, code, infra, cloud).await?;
-    if !quiet {
-        crate::report::terminal::print_report(&result);
-    }
+    let result = engine
+        .full_assessment_with_profile(
+            targets.url,
+            targets.code,
+            targets.infra,
+            targets.cloud,
+            profile,
+        )
+        .await?;
+    emit_scan_report(&result, config, output_format.as_ref(), quiet).await?;
     Ok(())
 }
 
 /// Execute an infrastructure scan against `target`.
 ///
-/// Parses the target string via [`crate::engine::infra_target::InfraTarget::parse`], constructs a
-/// fresh [`crate::engine::infra_context::InfraContext`], applies the profile and module filters,
-/// runs the orchestrator, and prints the resulting
-/// [`crate::engine::scan_result::ScanResult`] via the terminal reporter.
+/// Builds an authorized [`crate::engine::infra_context::InfraContext`] through the facade, injects
+/// the configured CVE lookup, applies profile and module filters, and sends the result through the
+/// global report contract.
 ///
 /// # Errors
 ///
 /// Returns [`crate::engine::error::ScorchError::InvalidTarget`] for
-/// unparseable target strings, and propagates any orchestrator failure.
+/// unparsable target strings, and propagates any orchestrator failure.
 #[cfg(feature = "infra")]
 pub async fn run_infra(
     config: &std::sync::Arc<crate::config::AppConfig>,
@@ -358,16 +449,23 @@ pub async fn run_infra(
     modules: Option<&str>,
     skip: Option<&str>,
     quiet: bool,
+    output_format: Option<OutputFormat>,
 ) -> crate::engine::error::Result<()> {
-    use crate::engine::infra_context::InfraContext;
-    use crate::engine::infra_target::InfraTarget;
+    use crate::infra::cve_lookup::build_cve_lookup;
+    use crate::infra::cve_match::CveMatchModule;
     use crate::runner::infra_orchestrator::InfraOrchestrator;
 
-    let infra_target = InfraTarget::parse(target)?;
-    let http_client = build_http_client(config)?;
-    let ctx = InfraContext::new(infra_target, std::sync::Arc::clone(config), http_client);
+    crate::facade::validate_scan_profile(profile)?;
+    let engine = crate::facade::Engine::new(Arc::clone(config));
+    let ctx = engine.infra_context(target)?;
     let mut orch = InfraOrchestrator::new(ctx);
     orch.register_default_modules();
+    let engagement = engine.engagement().ok_or_else(|| {
+        ScorchError::Config("CVE lookup denied: no engagement authorization is configured".into())
+    })?;
+    if let Some(lookup) = build_cve_lookup(config, Arc::new(engagement.clone()))? {
+        orch.add_module(Box::new(CveMatchModule::new(lookup)));
+    }
     orch.apply_profile(profile);
 
     if let Some(ids) = modules {
@@ -380,24 +478,20 @@ pub async fn run_infra(
     }
 
     let result = orch.run(quiet).await?;
-    crate::report::terminal::print_report(&result);
+    emit_scan_report(&result, config, output_format.as_ref(), quiet).await?;
     Ok(())
 }
 
 /// Execute a cloud-posture scan against `target` (WORK-150).
 ///
 /// Parses the target via [`crate::engine::cloud_target::CloudTarget::parse`],
-/// constructs a [`crate::engine::cloud_context::CloudContext`], applies
-/// the profile and module filters, runs the orchestrator, and prints
-/// the resulting [`crate::engine::scan_result::ScanResult`].
-///
-/// At WORK-150 the registry is empty so any scan returns zero
-/// findings. WORK-151+ will populate it.
+/// constructs a [`crate::engine::cloud_context::CloudContext`], applies the profile and module
+/// filters, runs the orchestrator, and sends the result through the global report contract.
 ///
 /// # Errors
 ///
 /// Returns [`crate::engine::error::ScorchError::InvalidTarget`] for
-/// unparseable targets and propagates any orchestrator failure.
+/// unparsable targets and propagates any orchestrator failure.
 #[cfg(feature = "cloud")]
 pub async fn run_cloud(
     config: &std::sync::Arc<crate::config::AppConfig>,
@@ -406,13 +500,12 @@ pub async fn run_cloud(
     modules: Option<&str>,
     skip: Option<&str>,
     quiet: bool,
+    output_format: Option<OutputFormat>,
 ) -> crate::engine::error::Result<()> {
-    use crate::engine::cloud_context::CloudContext;
-    use crate::engine::cloud_target::CloudTarget;
     use crate::runner::cloud_orchestrator::CloudOrchestrator;
 
-    let cloud_target = CloudTarget::parse(target)?;
-    let ctx = CloudContext::new(cloud_target, std::sync::Arc::clone(config));
+    crate::facade::validate_scan_profile(profile)?;
+    let ctx = crate::facade::Engine::new(Arc::clone(config)).cloud_context(target)?;
     let mut orch = CloudOrchestrator::new(ctx);
     orch.register_default_modules();
     orch.apply_profile(profile);
@@ -427,7 +520,7 @@ pub async fn run_cloud(
     }
 
     let result = orch.run(quiet).await?;
-    crate::report::terminal::print_report(&result);
+    emit_scan_report(&result, config, output_format.as_ref(), quiet).await?;
     Ok(())
 }
 
@@ -517,7 +610,7 @@ async fn run_schedule_command(
 
     match command {
         args::ScheduleCommands::Create { project, target, cron, profile } => {
-            crate::cli::schedule::create(&pool, &project, &target, &cron, &profile).await
+            crate::cli::schedule::create(config, &pool, &project, &target, &cron, &profile).await
         }
         args::ScheduleCommands::List { project } => {
             crate::cli::schedule::list(&pool, &project).await
@@ -548,9 +641,8 @@ async fn run_scan_with_resume(
 ) -> Result<()> {
     use crate::runner::checkpoint;
 
-    let target = Target::parse(&checkpoint.target)?;
-    let http_client = build_http_client(config)?;
-    let ctx = ScanContext::new(target, Arc::clone(config), http_client);
+    let engine = crate::facade::Engine::new(Arc::clone(config));
+    let ctx = engine.dast_context(&checkpoint.target, &checkpoint.profile)?;
 
     let module_filter: Option<Vec<String>> =
         modules.map(|m| m.split(',').map(|s| s.trim().to_string()).collect());
@@ -559,8 +651,6 @@ async fn run_scan_with_resume(
 
     let mut orchestrator = Orchestrator::new(ctx);
     orchestrator.register_default_modules();
-    let hook_runner = crate::engine::hook_runner::HookRunner::new(&config.hooks);
-    orchestrator.set_hook_runner(hook_runner);
     orchestrator.apply_profile(&checkpoint.profile);
 
     if let Some(ref include) = module_filter {
@@ -577,43 +667,7 @@ async fn run_scan_with_resume(
         result.filter_by_confidence(min_conf);
     }
 
-    // Save report
-    match output_format {
-        Some(OutputFormat::Json) | None => {
-            let path = report::json::save_report(&result, &config.report)?;
-            if !quiet {
-                println!("\n{} {}", "Report saved:".green().bold(), path.display());
-            }
-        }
-        Some(OutputFormat::Html) => {
-            let path = report::html::save_report(&result, &config.report)?;
-            if !quiet {
-                println!("\n{} {}", "HTML report saved:".green().bold(), path.display());
-            }
-        }
-        Some(OutputFormat::Sarif) => {
-            let path = report::sarif::save_report(&result, &config.report)?;
-            if !quiet {
-                println!("\n{} {}", "SARIF report saved:".green().bold(), path.display());
-            }
-        }
-        Some(OutputFormat::Pdf) => {
-            let path = report::pdf::save_report(&result, &config.report)?;
-            if !quiet {
-                println!("\n{} {}", "PDF report saved:".green().bold(), path.display());
-            }
-        }
-        _ => {}
-    }
-
-    if !quiet {
-        report::terminal::print_report(&result);
-    }
-
-    if matches!(output_format, Some(OutputFormat::Json)) {
-        let json = serde_json::to_string_pretty(&result)?;
-        println!("{json}");
-    }
+    emit_scan_report(&result, config, output_format.as_ref(), quiet).await?;
 
     // Persist to database if --project was specified
     if let Some(name) = project_name {
@@ -621,8 +675,7 @@ async fn run_scan_with_resume(
     }
 
     // AI analysis
-    let should_analyze = analyze || config.ai.auto_analyze;
-    if should_analyze && config.ai.enabled {
+    if should_run_ai(analyze, config.ai.auto_analyze, config.ai.enabled) {
         use crate::ai::prompts::AnalysisFocus;
         run_ai_analysis(config, &result, AnalysisFocus::Summary, quiet, None).await?;
     }
@@ -692,7 +745,14 @@ async fn run_scan(
             if !quiet {
                 println!("{} Running AI-guided scan planning...", "AI".cyan().bold());
             }
-            match planner.plan(&target, config).await {
+            let planning_engine = crate::facade::Engine::new(Arc::clone(config));
+            planning_engine.dast_context_for_target(target.clone(), "quick")?;
+            planning_engine.require_authorized(
+                crate::engine::policy::PolicyTarget::Web(target.url.clone()),
+                crate::engine::policy::Capability::ExternalTool,
+                crate::engine::policy::EffectClass::ActiveSafe,
+            )?;
+            match planner.plan(&target, &planning_engine).await {
                 Ok(p) => Some(p),
                 Err(e) => {
                     if !quiet {
@@ -707,8 +767,9 @@ async fn run_scan(
         } else {
             if !quiet {
                 println!(
-                    "{} claude CLI not found — falling back to '{profile}' profile",
+                    "{} {} not found — falling back to '{profile}' profile",
                     "note:".yellow(),
+                    planner.provider_name(),
                 );
             }
             None
@@ -717,8 +778,8 @@ async fn run_scan(
         None
     };
 
-    let http_client = build_http_client(config)?;
-    let ctx = ScanContext::new(target, Arc::clone(config), http_client);
+    let engine = crate::facade::Engine::new(Arc::clone(config));
+    let ctx = engine.dast_context_for_target(target, profile)?;
 
     let module_filter: Option<Vec<String>> =
         modules.map(|m| m.split(',').map(|s| s.trim().to_string()).collect());
@@ -728,13 +789,9 @@ async fn run_scan(
     let mut orchestrator = Orchestrator::new(ctx);
     orchestrator.register_default_modules();
 
-    // Set up lifecycle hooks
-    let hook_runner = crate::engine::hook_runner::HookRunner::new(&config.hooks);
-    orchestrator.set_hook_runner(hook_runner);
-
     // Apply AI plan or fall back to profile
     if let Some(ref scan_plan) = ai_plan {
-        if !quiet {
+        if crate::runner::progress::is_visible(quiet) {
             println!(
                 "{} Plan: {} module{} recommended — {}",
                 "AI".cyan().bold(),
@@ -745,8 +802,8 @@ async fn run_scan(
             println!();
         }
         if scan_plan.recommendations.is_empty() {
-            if !quiet {
-                println!("{} Empty plan — falling back to '{}' profile", "note:".yellow(), profile,);
+            if let Some(message) = empty_plan_fallback_message(quiet, profile) {
+                println!("{} {message}", "note:".yellow());
             }
             orchestrator.apply_profile(profile);
         } else {
@@ -789,16 +846,12 @@ async fn run_scan(
         if !quiet {
             println!("\n{} Running SAST code scan on {}...", "CODE".cyan().bold(), path.display());
         }
-        let code_ctx = crate::engine::code_context::CodeContext::new(
-            path.to_path_buf(),
-            None,
-            Arc::clone(config),
-        );
+        let code_ctx = engine.code_context(path, None)?;
         let mut code_orchestrator =
             crate::runner::code_orchestrator::CodeOrchestrator::new(code_ctx);
         code_orchestrator.register_default_modules();
 
-        match code_orchestrator.run().await {
+        match code_orchestrator.run_quiet(quiet).await {
             Ok(code_result) => {
                 let code_count = code_result.findings.len();
                 result.merge(code_result);
@@ -826,43 +879,7 @@ async fn run_scan(
         result.filter_by_confidence(min_conf);
     }
 
-    // Save report
-    match output_format {
-        Some(OutputFormat::Json) | None => {
-            let path = report::json::save_report(&result, &config.report)?;
-            if !quiet {
-                println!("\n{} {}", "Report saved:".green().bold(), path.display());
-            }
-        }
-        Some(OutputFormat::Html) => {
-            let path = report::html::save_report(&result, &config.report)?;
-            if !quiet {
-                println!("\n{} {}", "HTML report saved:".green().bold(), path.display());
-            }
-        }
-        Some(OutputFormat::Sarif) => {
-            let path = report::sarif::save_report(&result, &config.report)?;
-            if !quiet {
-                println!("\n{} {}", "SARIF report saved:".green().bold(), path.display());
-            }
-        }
-        Some(OutputFormat::Pdf) => {
-            let path = report::pdf::save_report(&result, &config.report)?;
-            if !quiet {
-                println!("\n{} {}", "PDF report saved:".green().bold(), path.display());
-            }
-        }
-        _ => {}
-    }
-
-    if !quiet {
-        report::terminal::print_report(&result);
-    }
-
-    if matches!(output_format, Some(OutputFormat::Json)) {
-        let json = serde_json::to_string_pretty(&result)?;
-        println!("{json}");
-    }
+    emit_scan_report(&result, config, output_format.as_ref(), quiet).await?;
 
     // Persist to database if --project was specified
     if let Some(name) = project_name {
@@ -870,8 +887,7 @@ async fn run_scan(
     }
 
     // AI analysis
-    let should_analyze = analyze || config.ai.auto_analyze;
-    if should_analyze && config.ai.enabled {
+    if should_run_ai(analyze, config.ai.auto_analyze, config.ai.enabled) {
         run_ai_analysis(config, &result, AnalysisFocus::Summary, quiet, None).await?;
     }
 
@@ -916,8 +932,12 @@ async fn persist_scan_results(
     if let Err(e) =
         crate::storage::intelligence::update_intelligence(&pool, project.id, result).await
     {
-        if !quiet {
-            println!("\n{} Intelligence update failed: {e}", "warning:".yellow().bold());
+        if crate::runner::progress::is_visible(quiet) {
+            println!(
+                "\n{} Intelligence update failed: {}",
+                "warning:".yellow().bold(),
+                crate::report::terminal::escape_terminal_text(&e.to_string())
+            );
         }
     }
 
@@ -1012,8 +1032,9 @@ async fn run_ai_analysis(
     if !ai.is_available() {
         if !quiet {
             println!(
-                "\n{} claude CLI not found. Install Claude Code to enable AI analysis.",
-                "note:".yellow()
+                "\n{} {} not found. Install or configure the selected AI provider.",
+                "note:".yellow(),
+                ai.provider_name(),
             );
         }
         return Ok(());
@@ -1021,19 +1042,30 @@ async fn run_ai_analysis(
 
     if !quiet {
         println!(
-            "\n{} Running {} analysis with Claude...",
+            "\n{} Running {} analysis with {}...",
             "AI".cyan().bold(),
-            focus.label().dimmed()
+            focus.label().dimmed(),
+            ai.provider_name(),
         );
     }
 
+    crate::facade::Engine::new(Arc::clone(config)).require_authorized(
+        crate::engine::policy::PolicyTarget::Web(result.target.url.clone()),
+        crate::engine::policy::Capability::ExternalTool,
+        crate::engine::policy::EffectClass::Passive,
+    )?;
+
     match ai.analyze(result, focus, project_context).await {
         Ok(analysis) => {
-            analyst::print_analysis(&analysis);
+            print!("{}", analyst::render_analysis(&analysis));
         }
         Err(e) => {
             if !quiet {
-                println!("\n{} AI analysis failed: {e}", "error:".red().bold());
+                println!(
+                    "\n{} AI analysis failed: {}",
+                    "error:".red().bold(),
+                    crate::report::terminal::escape_terminal_text(&e.to_string())
+                );
             }
         }
     }
@@ -1092,49 +1124,54 @@ async fn run_code_scan(
     profile: &str,
     analyze: bool,
     config: &Arc<AppConfig>,
+    output_format: Option<OutputFormat>,
+    quiet: bool,
 ) -> Result<()> {
-    use crate::engine::code_context::CodeContext;
     use crate::runner::code_orchestrator::CodeOrchestrator;
 
+    crate::facade::validate_scan_profile(profile)?;
     let abs_path = std::fs::canonicalize(path).map_err(|e| ScorchError::InvalidTarget {
         target: path.display().to_string(),
         reason: e.to_string(),
     })?;
+    let engine = crate::facade::Engine::new(Arc::clone(config));
 
-    println!();
-    println!(
-        "{}  {}",
-        "ScorchKit".red().bold(),
-        format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
-    );
-    println!("{}", "━".repeat(50).dimmed());
-    println!("    Mode: {}", "Code Analysis (SAST)".cyan());
-    println!("    Path: {}", abs_path.display().to_string().cyan());
-
-    let ctx = CodeContext::new(abs_path, language.clone(), Arc::clone(config));
-
-    if let Some(ref lang) = ctx.language {
-        println!("Language: {}", lang.cyan());
-    }
-    if !ctx.manifests.is_empty() {
+    if !quiet {
+        println!();
         println!(
-            "Manifests: {}",
-            ctx.manifests
-                .iter()
-                .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
-                .collect::<Vec<_>>()
-                .join(", ")
-                .cyan()
+            "{}  {}",
+            "ScorchKit".red().bold(),
+            format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
         );
+        println!("{}", "━".repeat(50).dimmed());
+        println!("    Mode: {}", "Code Analysis (SAST)".cyan());
+        println!("    Path: {}", abs_path.display().to_string().cyan());
     }
-    println!(" Profile: {}", profile.cyan());
-    println!("{}", "━".repeat(50).dimmed());
-    println!();
+
+    let ctx = engine.code_context(&abs_path, language.as_deref())?;
+
+    if !quiet {
+        if let Some(ref lang) = ctx.language {
+            println!("Language: {}", lang.cyan());
+        }
+        if !ctx.manifests.is_empty() {
+            println!(
+                "Manifests: {}",
+                ctx.manifests
+                    .iter()
+                    .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                    .cyan()
+            );
+        }
+        println!(" Profile: {}", profile.cyan());
+        println!("{}", "━".repeat(50).dimmed());
+        println!();
+    }
 
     let mut orchestrator = CodeOrchestrator::new(ctx);
     orchestrator.register_default_modules();
-    let hook_runner = crate::engine::hook_runner::HookRunner::new(&config.hooks);
-    orchestrator.set_hook_runner(hook_runner);
     orchestrator.apply_profile(profile);
 
     if let Some(ref mods) = modules {
@@ -1146,20 +1183,13 @@ async fn run_code_scan(
         orchestrator.exclude_by_ids(&ids);
     }
 
-    let result = orchestrator.run().await?;
-
-    // Display results using existing terminal reporter
-    report::terminal::print_report(&result);
-
-    // Save JSON report
-    let report_path = report::json::save_report(&result, &config.report)?;
-    println!("\n{} {}", "Report saved:".green().bold(), report_path.display());
+    let result = orchestrator.run_quiet(quiet).await?;
+    emit_scan_report(&result, config, output_format.as_ref(), quiet).await?;
 
     // AI analysis
-    let should_analyze = analyze || config.ai.auto_analyze;
-    if should_analyze && config.ai.enabled {
+    if should_run_ai(analyze, config.ai.auto_analyze, config.ai.enabled) {
         use crate::ai::prompts::AnalysisFocus;
-        run_ai_analysis(config, &result, AnalysisFocus::Summary, false, None).await?;
+        run_ai_analysis(config, &result, AnalysisFocus::Summary, quiet, None).await?;
     }
 
     Ok(())
@@ -1176,7 +1206,7 @@ fn list_modules(check_tools: bool) {
         let tool_status = if module.requires_external_tool() {
             let tool = module.required_tool().unwrap_or("unknown");
             if check_tools {
-                if is_tool_available(tool) {
+                if super::doctor::is_tool_available(tool) {
                     format!(" [{}]", tool.green())
                 } else {
                     format!(" [{} - {}]", tool.red(), "not found".red())
@@ -1199,74 +1229,221 @@ fn list_modules(check_tools: bool) {
     println!();
 }
 
-fn build_http_client(config: &AppConfig) -> Result<reqwest::Client> {
-    let mut headers = reqwest::header::HeaderMap::new();
-
-    // Add auth headers
-    if let Some(ref token) = config.auth.bearer_token {
-        if let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
-            headers.insert(reqwest::header::AUTHORIZATION, val);
-        }
-    }
-    if let Some(ref username) = config.auth.username {
-        let password = config.auth.password.as_deref().unwrap_or("");
-        let encoded = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            format!("{username}:{password}"),
-        );
-        if let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Basic {encoded}")) {
-            headers.insert(reqwest::header::AUTHORIZATION, val);
-        }
-    }
-    if let Some(ref cookies) = config.auth.cookies {
-        if let Ok(val) = reqwest::header::HeaderValue::from_str(cookies) {
-            headers.insert(reqwest::header::COOKIE, val);
-        }
-    }
-    if let (Some(ref name), Some(ref value)) =
-        (&config.auth.custom_header, &config.auth.custom_header_value)
-    {
-        if let (Ok(header_name), Ok(header_val)) = (
-            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
-            reqwest::header::HeaderValue::from_str(value),
-        ) {
-            headers.insert(header_name, header_val);
-        }
-    }
-
-    // Add custom scan headers
-    for (name, value) in &config.scan.headers {
-        if let (Ok(header_name), Ok(header_val)) = (
-            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
-            reqwest::header::HeaderValue::from_str(value),
-        ) {
-            headers.insert(header_name, header_val);
-        }
-    }
-
-    let mut builder = reqwest::Client::builder()
-        .user_agent(&config.scan.user_agent)
-        .timeout(std::time::Duration::from_secs(config.scan.timeout_seconds))
-        .default_headers(headers)
-        .cookie_store(true)
-        .danger_accept_invalid_certs(config.scan.insecure);
-
-    if config.scan.follow_redirects {
-        builder = builder.redirect(reqwest::redirect::Policy::limited(config.scan.max_redirects));
+fn empty_plan_fallback_message(quiet: bool, profile: &str) -> Option<String> {
+    if quiet {
+        None
     } else {
-        builder = builder.redirect(reqwest::redirect::Policy::none());
+        Some(format!("Empty plan — falling back to '{profile}' profile"))
     }
-
-    // Proxy support (Burp Suite, ZAP, etc.)
-    if let Some(ref proxy_url) = config.scan.proxy {
-        let proxy = reqwest::Proxy::all(proxy_url)
-            .map_err(|e| ScorchError::Config(format!("invalid proxy URL '{proxy_url}': {e}")))?;
-        builder = builder.proxy(proxy);
-    }
-
-    builder.build().map_err(|e| ScorchError::Config(format!("failed to build HTTP client: {e}")))
 }
 
-fn is_tool_available(tool: &str) -> bool {
-    super::doctor::is_tool_available(tool)
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use chrono::Utc;
+
+    #[cfg(feature = "storage")]
+    use super::persist_scan_results;
+    use super::{
+        effective_quiet, emit_scan_report, empty_plan_fallback_message, run_ai_analysis,
+        should_run_ai,
+    };
+    #[cfg(feature = "infra")]
+    use super::{run_assess, AssessmentTargets};
+    #[cfg(all(feature = "infra", feature = "cloud"))]
+    use super::{run_cloud, run_code_scan, run_infra};
+    use crate::cli::args::OutputFormat;
+    use crate::config::AppConfig;
+    use crate::engine::scan_result::ScanResult;
+    use crate::engine::target::Target;
+
+    #[test]
+    fn empty_plan_message_respects_quiet_mode() {
+        assert_eq!(empty_plan_fallback_message(true, "quick"), None);
+        assert_eq!(
+            empty_plan_fallback_message(false, "standard"),
+            Some("Empty plan — falling back to 'standard' profile".to_string())
+        );
+    }
+
+    #[test]
+    fn command_and_global_quiet_flags_compose_as_a_logical_or() {
+        assert!(!effective_quiet(false, false));
+        assert!(effective_quiet(true, false));
+        assert!(effective_quiet(false, true));
+        assert!(effective_quiet(true, true));
+    }
+
+    #[test]
+    fn explicit_and_automatic_ai_requests_require_an_enabled_provider() {
+        assert!(!should_run_ai(false, false, false));
+        assert!(!should_run_ai(false, false, true));
+        assert!(!should_run_ai(true, false, false));
+        assert!(!should_run_ai(false, true, false));
+        assert!(should_run_ai(true, false, true));
+        assert!(should_run_ai(false, true, true));
+        assert!(should_run_ai(true, true, true));
+    }
+
+    fn output_contract_result() -> ScanResult {
+        ScanResult::new(
+            "output-contract".to_string(),
+            Target::parse("http://127.0.0.1:8080").expect("loopback target"),
+            Utc::now(),
+            Vec::new(),
+            vec!["fixture".to_string()],
+            Vec::new(),
+        )
+    }
+
+    #[tokio::test]
+    async fn report_output_selection_controls_artifact_creation() {
+        let temporary = tempfile::tempdir().expect("temporary report root");
+        let mut config = AppConfig::default();
+        config.report.output_dir = temporary.path().join("reports");
+        let result = output_contract_result();
+
+        emit_scan_report(&result, &config, None, true).await.expect("default JSON report");
+        assert!(config.report.output_dir.join("scorchkit-output-contract.json").is_file());
+
+        std::fs::remove_dir_all(&config.report.output_dir).expect("remove default report");
+        let terminal = OutputFormat::Terminal;
+        emit_scan_report(&result, &config, Some(&terminal), true)
+            .await
+            .expect("terminal-only report");
+        assert!(
+            !config.report.output_dir.exists(),
+            "terminal output must not create a report artifact"
+        );
+
+        let sarif = OutputFormat::Sarif;
+        emit_scan_report(&result, &config, Some(&sarif), true).await.expect("SARIF report");
+        assert!(config.report.output_dir.join("scorchkit-output-contract.sarif").is_file());
+    }
+
+    #[tokio::test]
+    async fn ai_analysis_requires_policy_before_starting_an_available_provider() {
+        let mut config = AppConfig::default();
+        config.ai.enabled = true;
+        config.ai.binary = Some("/bin/sh".to_string());
+
+        let error = run_ai_analysis(
+            &Arc::new(config),
+            &output_contract_result(),
+            crate::ai::prompts::AnalysisFocus::Summary,
+            true,
+            None,
+        )
+        .await
+        .expect_err("AI analysis without an engagement must fail before provider execution");
+
+        assert!(
+            error.to_string().contains("no engagement authorization"),
+            "unexpected AI policy error: {error}"
+        );
+    }
+
+    #[cfg(feature = "infra")]
+    #[tokio::test]
+    async fn assessment_requires_a_target_and_denies_before_effects() {
+        let config = Arc::new(AppConfig::default());
+        let absent = run_assess(
+            &config,
+            AssessmentTargets { url: None, code: None, infra: None, cloud: None },
+            "quick",
+            true,
+            None,
+        )
+        .await;
+        assert_eq!(
+            absent.expect_err("assessment without targets must fail").to_string(),
+            "configuration error: assess requires at least one of --url, --code, --infra, or --cloud"
+        );
+
+        let denied = run_assess(
+            &config,
+            AssessmentTargets {
+                url: Some("http://127.0.0.1:9"),
+                code: None,
+                infra: None,
+                cloud: None,
+            },
+            "quick",
+            true,
+            None,
+        )
+        .await;
+        assert!(
+            denied.is_err_and(|error| error.to_string().contains("no engagement authorization")),
+            "assessment must distinguish a present denied target from no target"
+        );
+    }
+
+    #[cfg(all(feature = "infra", feature = "cloud"))]
+    #[tokio::test]
+    async fn family_cli_entry_points_deny_without_engagement() {
+        let config = Arc::new(AppConfig::default());
+
+        let infrastructure = run_infra(&config, "127.0.0.1", "quick", None, None, true, None).await;
+        assert!(
+            infrastructure
+                .is_err_and(|error| error.to_string().contains("no engagement authorization")),
+            "infrastructure CLI must fail before network effects"
+        );
+
+        let cloud = run_cloud(&config, "aws:123456789012", "quick", None, None, true, None).await;
+        assert!(
+            cloud.is_err_and(|error| error.to_string().contains("no engagement authorization")),
+            "cloud CLI must fail before credential or process effects"
+        );
+
+        let code_path = std::env::current_dir()
+            .unwrap_or_else(|error| panic!("failed to resolve test working directory: {error}"));
+        let code = run_code_scan(
+            &code_path,
+            Some("rust".to_string()),
+            None,
+            None,
+            "quick",
+            false,
+            &config,
+            None,
+            true,
+        )
+        .await;
+        assert!(
+            code.is_err_and(|error| error.to_string().contains("no engagement authorization")),
+            "code CLI must fail before source traversal"
+        );
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn cli_persistence_writes_scan_record() {
+        let Ok(database_url) = std::env::var("DATABASE_URL") else {
+            return;
+        };
+        let pool = crate::storage::connect(&database_url).await.expect("database connection");
+        crate::storage::migrate::run_migrations(&pool).await.expect("database migrations");
+        let project_name = format!("cli-persist-{}", uuid::Uuid::new_v4());
+        let project = crate::storage::projects::create_project(&pool, &project_name, "fixture")
+            .await
+            .expect("create project");
+
+        let persisted = persist_scan_results(
+            &Arc::new(AppConfig::default()),
+            &project_name,
+            Some(&database_url),
+            &output_contract_result(),
+            true,
+        )
+        .await;
+        let scan_count =
+            crate::storage::scans::list_scans(&pool, project.id).await.expect("list scans").len();
+        crate::storage::projects::delete_project(&pool, project.id).await.expect("delete project");
+
+        assert!(persisted.is_ok(), "CLI persistence failed: {persisted:?}");
+        assert_eq!(scan_count, 1);
+    }
 }

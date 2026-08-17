@@ -14,7 +14,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Solidity static analysis via slither.
 #[derive(Debug)]
@@ -46,12 +45,9 @@ impl CodeModule for SlitherModule {
 
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
-        let output = subprocess::run_tool_lenient(
-            "slither",
-            &[&path_str, "--json", "-"],
-            Duration::from_secs(180),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient("slither", &[&path_str, "--json", "-"], Duration::from_mins(3))
+            .await?;
         Ok(parse_slither_output(&output.stdout))
     }
 }

@@ -35,3 +35,16 @@ pub async fn run_migrate(config: &AppConfig) -> Result<()> {
     println!("{} Database migrations complete.", "success:".green().bold());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn migrate_observes_connection_errors() {
+        let mut config = AppConfig::default();
+        config.database.url = Some("invalid-database-scheme://localhost/scorchkit".to_string());
+
+        assert!(run_migrate(&config).await.is_err());
+    }
+}

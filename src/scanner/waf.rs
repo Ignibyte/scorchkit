@@ -195,7 +195,7 @@ fn detect_waf_body(
 mod tests {
     use super::*;
 
-    /// Unit tests for the WAF detection module's pure helper functions and pattern data.
+    // Unit tests for the WAF detection module's pure helper functions and pattern data.
 
     /// Verify that `detect_waf_from_server` identifies known WAF products from the
     /// Server header value and returns `None` for generic servers.
@@ -250,7 +250,7 @@ mod tests {
     }
 
     /// Verify that the WAF body signature patterns are non-empty, lowercase, and
-    /// cover major WAF products (Cloudflare, Sucuri, ModSecurity, Wordfence).
+    /// cover major WAF products (Cloudflare, Sucuri, `ModSecurity`, Wordfence).
     #[test]
     fn test_waf_body_signatures_integrity() {
         // Arrange: the waf_signatures array from detect_waf_body

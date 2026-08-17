@@ -8,7 +8,6 @@ use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::service_fingerprint::parse_nmap_xml_fingerprints;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Port scanning and service detection via nmap.
 #[derive(Debug)]
@@ -43,12 +42,13 @@ impl ScanModule for NmapModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
 
-        let output = subprocess::run_tool(
-            "nmap",
-            &["-sV", "--top-ports", "1000", "-oX", "-", target],
-            Duration::from_secs(600),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "nmap",
+                &["-sV", "--top-ports", "1000", "-oX", "-", target],
+                Duration::from_mins(10),
+            )
+            .await?;
 
         Ok(parse_nmap_xml(&output.stdout, ctx.target.url.as_str()))
     }
@@ -177,7 +177,7 @@ fn check_outdated_version(service: &str, version: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Tests for nmap XML output parser.
+    // Tests for nmap XML output parser.
 
     /// Verify that `parse_nmap_xml` correctly extracts open ports and service
     /// information from well-formed nmap XML output.

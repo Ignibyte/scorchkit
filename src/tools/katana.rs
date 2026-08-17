@@ -13,7 +13,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Web crawling with JS rendering via Katana.
 #[derive(Debug)]
@@ -48,12 +47,13 @@ impl ScanModule for KatanaModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let url = ctx.target.url.as_str();
 
-        let output = subprocess::run_tool(
-            "katana",
-            &["-u", url, "-json", "-silent", "-depth", "3", "-no-color"],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "katana",
+                &["-u", url, "-json", "-silent", "-depth", "3", "-no-color"],
+                Duration::from_mins(5),
+            )
+            .await?;
 
         Ok(parse_katana_output(&output.stdout, url))
     }
@@ -104,7 +104,7 @@ fn parse_katana_output(stdout: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Test suite for Katana tool wrapper.
+    // Test suite for Katana tool wrapper.
 
     /// Verify Katana JSON-lines output parsing.
     #[test]

@@ -1,11 +1,24 @@
 use async_trait::async_trait;
-use tokio::net;
+use std::time::Duration;
 
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
+
+const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn resolved_subdomain_entry(
+    subdomain: &str,
+    addresses: Vec<std::net::SocketAddr>,
+) -> Option<String> {
+    let mut unique_ips: Vec<String> =
+        addresses.into_iter().map(|address| address.ip().to_string()).collect();
+    unique_ips.sort();
+    unique_ips.dedup();
+    (!unique_ips.is_empty()).then(|| format!("{subdomain} -> {}", unique_ips.join(", ")))
+}
 
 /// Enumerates subdomains of the target domain.
 #[derive(Debug)]
@@ -53,18 +66,16 @@ impl ScanModule for SubdomainModule {
         for prefix in words {
             let subdomain = format!("{prefix}.{domain}");
 
-            // Use tokio's DNS resolution
-            if let Ok(addrs) = net::lookup_host(format!("{subdomain}:80")).await {
-                let ips: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
-                if !ips.is_empty() {
-                    // Deduplicate IPs
-                    let mut unique_ips = ips;
-                    unique_ips.sort();
-                    unique_ips.dedup();
-                    discovered.push(format!("{subdomain} -> {}", unique_ips.join(", ")));
+            match ctx.resolve_network_target(&subdomain, 80, DNS_LOOKUP_TIMEOUT).await {
+                Ok(addrs) => {
+                    if let Some(entry) = resolved_subdomain_entry(&subdomain, addrs) {
+                        discovered.push(entry);
+                    }
                 }
-            } else {
-                // NXDOMAIN or resolution failure - subdomain doesn't exist
+                Err(error @ ScorchError::Policy(_)) => return Err(error),
+                Err(_) => {
+                    // NXDOMAIN, timeout, or resolver failure means this candidate was not found.
+                }
             }
         }
 
@@ -214,8 +225,12 @@ const INTERESTING_SUBDOMAINS: &[(&str, &str, Severity)] = &[
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     /// Unit tests for subdomain enumeration constant data integrity.
     use super::*;
+    use crate::config::AppConfig;
+    use crate::engine::target::Target;
 
     /// Verify the subdomain wordlist is non-empty.
     #[test]
@@ -243,14 +258,47 @@ mod tests {
             assert!(!prefix.is_empty(), "SUBDOMAIN_WORDLIST[{i}] must not be empty");
             assert!(
                 prefix.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
-                "SUBDOMAIN_WORDLIST[{i}] = '{}' contains invalid hostname characters",
-                prefix
+                "SUBDOMAIN_WORDLIST[{i}] = '{prefix}' contains invalid hostname characters"
             );
             assert!(
                 !prefix.starts_with('-') && !prefix.ends_with('-'),
-                "SUBDOMAIN_WORDLIST[{i}] = '{}' must not start or end with a hyphen",
-                prefix
+                "SUBDOMAIN_WORDLIST[{i}] = '{prefix}' must not start or end with a hyphen"
             );
         }
+    }
+
+    #[test]
+    fn resolved_entry_omits_empty_answers_and_sorts_unique_addresses() {
+        assert_eq!(resolved_subdomain_entry("www.example.com", Vec::new()), None);
+        assert_eq!(
+            resolved_subdomain_entry(
+                "www.example.com",
+                vec![
+                    "127.0.0.2:80".parse().expect("fixture address"),
+                    "127.0.0.1:80".parse().expect("fixture address"),
+                    "127.0.0.2:443".parse().expect("duplicate fixture address"),
+                ],
+            ),
+            Some("www.example.com -> 127.0.0.1, 127.0.0.2".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn module_rejects_a_target_without_a_domain() {
+        let directory = tempfile::tempdir().expect("create file target");
+        let target = Target::from_path(directory.path()).expect("file target");
+        let context = ScanContext::new(
+            target,
+            Arc::new(AppConfig::default()),
+            reqwest::Client::new(),
+            Vec::new(),
+        );
+
+        let error = SubdomainModule
+            .run(&context)
+            .await
+            .expect_err("a file target has no domain to enumerate");
+
+        assert!(error.to_string().contains("no domain for subdomain enumeration"));
     }
 }

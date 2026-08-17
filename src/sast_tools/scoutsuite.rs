@@ -13,7 +13,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Multi-cloud audit via Scout Suite.
 #[derive(Debug)]
@@ -43,7 +42,7 @@ impl CodeModule for ScoutsuiteModule {
         Some("scout")
     }
 
-    async fn run(&self, _ctx: &CodeContext) -> Result<Vec<Finding>> {
+    async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         // Scout Suite reads cloud creds from the standard provider
         // environment (AWS_PROFILE, GOOGLE_APPLICATION_CREDENTIALS,
         // etc.). Default profile = aws; operators run scout
@@ -52,12 +51,13 @@ impl CodeModule for ScoutsuiteModule {
             return Ok(Vec::new());
         };
         let out_path = out_dir.path().to_string_lossy().to_string();
-        let _output = subprocess::run_tool_lenient(
-            "scout",
-            &["aws", "--report-dir", &out_path, "--no-browser"],
-            Duration::from_secs(600),
-        )
-        .await?;
+        let _output = ctx
+            .run_tool_lenient(
+                "scout",
+                &["aws", "--report-dir", &out_path, "--no-browser"],
+                Duration::from_mins(10),
+            )
+            .await?;
         // Scout Suite emits a JS file that wraps the raw JSON.
         // Look for results.json under the output dir; if present,
         // parse it. If absent, no findings.

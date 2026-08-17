@@ -14,7 +14,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// `JavaScript` endpoint extractor via `LinkFinder`.
 #[derive(Debug)]
@@ -43,12 +42,9 @@ impl ScanModule for LinkfinderModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let url = ctx.target.url.as_str();
-        let output = subprocess::run_tool_lenient(
-            "linkfinder",
-            &["-i", url, "-o", "cli"],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient("linkfinder", &["-i", url, "-o", "cli"], Duration::from_mins(2))
+            .await?;
         Ok(parse_linkfinder_output(&output.stdout, url))
     }
 }

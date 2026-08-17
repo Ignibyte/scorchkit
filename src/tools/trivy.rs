@@ -13,7 +13,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Container and dependency vulnerability scanning via Trivy.
 #[derive(Debug)]
@@ -48,12 +47,13 @@ impl ScanModule for TrivyModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
 
-        let output = subprocess::run_tool(
-            "trivy",
-            &["fs", "--format", "json", "--quiet", target],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "trivy",
+                &["fs", "--format", "json", "--quiet", target],
+                Duration::from_mins(5),
+            )
+            .await?;
 
         Ok(parse_trivy_output(&output.stdout, ctx.target.url.as_str()))
     }

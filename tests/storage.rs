@@ -1,6 +1,6 @@
 //! Integration tests for the storage layer.
 //!
-//! These tests require a running PostgreSQL instance. Set the
+//! These tests require a running `PostgreSQL` instance. Set the
 //! `DATABASE_URL` environment variable to run them:
 //!
 //! ```bash
@@ -17,12 +17,11 @@ mod storage_tests {
     use scorchkit::storage;
     use scorchkit::storage::models::VulnStatus;
 
-    /// Helper: connect to the test database, or skip if DATABASE_URL
+    /// Helper: connect to the test database, or skip if `DATABASE_URL`
     /// is not set.
     async fn test_pool() -> Option<sqlx::PgPool> {
-        let url = match std::env::var("DATABASE_URL") {
-            Ok(url) => url,
-            Err(_) => return None,
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            return None;
         };
         let pool = storage::connect(&url).await.ok()?;
         storage::migrate::run_migrations(&pool).await.ok()?;
@@ -34,7 +33,7 @@ mod storage_tests {
         let name = format!("test-project-{}", uuid::Uuid::new_v4());
         storage::projects::create_project(pool, &name, "test project")
             .await
-            .expect("create_project should succeed")
+            .unwrap_or_else(|error| panic!("failed to create test project: {error}"))
     }
 
     /// Verify that the pool connects and migrations run successfully.
@@ -125,7 +124,9 @@ mod storage_tests {
         assert_eq!(targets.len(), 2);
 
         // Remove
-        let removed = storage::projects::remove_target(&pool, t1.id).await.expect("remove target");
+        let removed = storage::projects::remove_target(&pool, project.id, t1.id)
+            .await
+            .expect("remove target");
         assert!(removed);
 
         let targets =
@@ -223,7 +224,7 @@ mod storage_tests {
     }
 
     /// Verify finding deduplication: first save creates the row,
-    /// second save with same fingerprint bumps seen_count.
+    /// second save with same fingerprint bumps `seen_count`.
     #[tokio::test]
     async fn test_save_and_dedup_findings() {
         let Some(pool) = test_pool().await else {
@@ -257,10 +258,14 @@ mod storage_tests {
         );
 
         // First save — should create 1 new finding
-        let new_count =
-            storage::findings::save_findings(&pool, project.id, scan1.id, &[finding.clone()])
-                .await
-                .expect("first save");
+        let new_count = storage::findings::save_findings(
+            &pool,
+            project.id,
+            scan1.id,
+            std::slice::from_ref(&finding),
+        )
+        .await
+        .expect("first save");
         assert_eq!(new_count, 1);
 
         // Second save with same fingerprint — should update, not create
@@ -595,8 +600,8 @@ mod storage_tests {
         .expect("remediate xss");
 
         // 8. Verify scans list
-        let scans = storage::scans::list_scans(&pool, project.id).await.expect("list scans");
-        assert_eq!(scans.len(), 2);
+        let stored_scans = storage::scans::list_scans(&pool, project.id).await.expect("list scans");
+        assert_eq!(stored_scans.len(), 2);
 
         // 9. Cleanup
         storage::projects::delete_project(&pool, project.id).await.expect("cleanup");

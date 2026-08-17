@@ -20,8 +20,9 @@ use super::types::{
     TargetRemoveParams,
 };
 use crate::engine::error::ScorchError;
-use crate::engine::scan_context::ScanContext;
+use crate::engine::policy::{Capability, EffectClass, PolicyTarget};
 use crate::engine::target::Target;
+use crate::facade::Engine;
 use crate::runner::orchestrator::Orchestrator;
 use crate::storage::{context, findings, metrics, projects, scans, schedules};
 
@@ -91,11 +92,7 @@ impl ScorchKitServer {
         let results: Vec<serde_json::Value> = tools
             .iter()
             .map(|&t| {
-                let available = std::process::Command::new("which")
-                    .arg(t)
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false);
+                let available = crate::runner::subprocess::is_tool_available(t);
                 serde_json::json!({ "tool": t, "installed": available })
             })
             .collect();
@@ -109,9 +106,9 @@ impl ScorchKitServer {
     /// Returns an error if the target URL is invalid, the HTTP client cannot
     /// be built, or the scan fails.
     pub async fn do_scan(&self, params: ScanParams) -> Result<String, String> {
-        let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
-        let http_client = build_scan_client(&self.config).map_err(|e| e.to_string())?;
-        let ctx = ScanContext::new(target, Arc::clone(&self.config), http_client);
+        let engine = Engine::new(Arc::clone(&self.config));
+        let ctx =
+            engine.dast_context(&params.target, &params.profile).map_err(|e| e.to_string())?;
 
         let module_filter: Option<Vec<String>> =
             params.modules.map(|m| m.split(',').map(|s| s.trim().to_string()).collect());
@@ -211,8 +208,12 @@ impl ScorchKitServer {
         let project =
             resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
         let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
-        let http_client = build_scan_client(&self.config).map_err(|e| e.to_string())?;
-        let ctx = ScanContext::new(target, Arc::clone(&self.config), http_client);
+        require_registered_project_target(&self.pool, project.id, &target)
+            .await
+            .map_err(|e| e.to_string())?;
+        let engine = Engine::new(Arc::clone(&self.config));
+        let ctx =
+            engine.dast_context_for_target(target, &params.profile).map_err(|e| e.to_string())?;
 
         let mut orchestrator = Orchestrator::new(ctx);
         orchestrator.register_default_modules();
@@ -372,12 +373,13 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project/target is not found or the database fails.
     pub async fn do_target_remove(&self, params: TargetRemoveParams) -> Result<String, String> {
-        let _project =
+        let project =
             resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
         let target_id = Uuid::parse_str(&params.id)
             .map_err(|e| format!("invalid target UUID '{}': {e}", params.id))?;
-        let removed =
-            projects::remove_target(&self.pool, target_id).await.map_err(|e| e.to_string())?;
+        let removed = projects::remove_target(&self.pool, project.id, target_id)
+            .await
+            .map_err(|e| e.to_string())?;
         if removed {
             Ok(format!("{{\"removed\": true, \"id\": \"{target_id}\"}}"))
         } else {
@@ -404,12 +406,23 @@ impl ScorchKitServer {
     pub async fn do_schedule_scan(&self, params: ScheduleScanParams) -> Result<String, String> {
         let project =
             resolve_project(&self.pool, &params.project).await.map_err(|e| e.to_string())?;
+        let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
+        require_registered_project_target(&self.pool, project.id, &target)
+            .await
+            .map_err(|e| e.to_string())?;
+        let engine = Engine::new(Arc::clone(&self.config));
+        engine
+            .authorize_web_scan_for_profile(&target.url, &params.profile)
+            .map_err(|e| e.to_string())?;
         let schedule = schedules::create_schedule(
             &self.pool,
             project.id,
-            &params.target,
+            target.url.as_str(),
             &params.profile,
             &params.cron,
+            engine.engagement().ok_or_else(|| {
+                "schedule creation denied: no engagement authorization is configured".to_string()
+            })?,
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -425,33 +438,18 @@ impl ScorchKitServer {
     /// Returns an error if the database query fails. Individual scan
     /// failures are captured in the results, not propagated.
     pub async fn do_run_due_scans(&self) -> Result<String, String> {
-        let due = schedules::find_due_schedules(&self.pool).await.map_err(|e| e.to_string())?;
+        let outcomes = crate::cli::schedule::execute_due_schedules(&self.pool, &self.config)
+            .await
+            .map_err(|e| e.to_string())?;
 
-        if due.is_empty() {
+        if outcomes.is_empty() {
             return Ok("{\"executed\": 0, \"message\": \"No schedules are due\"}".to_string());
         }
 
-        let mut results = Vec::new();
-        for schedule in &due {
-            let outcome = match crate::cli::schedule::run_due(&self.pool, &self.config).await {
-                Ok(()) => serde_json::json!({
-                    "schedule_id": schedule.id.to_string(),
-                    "target": &schedule.target_url,
-                    "status": "success",
-                }),
-                Err(e) => serde_json::json!({
-                    "schedule_id": schedule.id.to_string(),
-                    "target": &schedule.target_url,
-                    "status": "error",
-                    "error": e.to_string(),
-                }),
-            };
-            results.push(outcome);
-        }
-
+        let executed = outcomes.len();
         let output = serde_json::json!({
-            "executed": due.len(),
-            "results": results,
+            "executed": executed,
+            "results": outcomes,
         });
         serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
     }
@@ -473,16 +471,16 @@ impl ScorchKitServer {
         serde_json::to_string_pretty(&posture).map_err(|e| e.to_string())
     }
 
-    /// Run AI-guided scan planning: recon first, then Claude decides modules.
+    /// Run AI-guided scan planning: recon first, then the configured provider decides modules.
     ///
-    /// Returns a structured [`ScanPlan`] as JSON without executing the scan.
+    /// Returns a structured [`crate::ai::types::ScanPlan`] as JSON without executing the scan.
     /// The MCP client can inspect and approve the plan before calling `scan`
     /// or `project-scan` to execute.
     ///
     /// # Errors
     ///
     /// Returns an error if the target URL is invalid, AI is disabled, or
-    /// the Claude CLI is unavailable.
+    /// the configured provider is unavailable.
     pub async fn do_plan_scan(&self, params: PlanScanParams) -> Result<String, String> {
         if !self.config.ai.enabled {
             return Err("AI is disabled in config — scan planning requires AI".to_string());
@@ -490,13 +488,23 @@ impl ScorchKitServer {
 
         let planner = crate::ai::planner::ScanPlanner::from_config(&self.config.ai);
         if !planner.is_available() {
-            return Err(
-                "claude CLI not found. Install Claude Code to enable AI scan planning.".to_string()
-            );
+            return Err(format!(
+                "{} not found. Install or configure the selected AI provider.",
+                planner.provider_name()
+            ));
         }
 
         let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
-        let plan = planner.plan(&target, &self.config).await.map_err(|e| e.to_string())?;
+        let engine = Engine::new(Arc::clone(&self.config));
+        engine.dast_context_for_target(target.clone(), "quick").map_err(|e| e.to_string())?;
+        engine
+            .require_authorized(
+                PolicyTarget::Web(target.url.clone()),
+                Capability::ExternalTool,
+                EffectClass::ActiveSafe,
+            )
+            .map_err(|e| e.to_string())?;
+        let plan = planner.plan(&target, &engine).await.map_err(|e| e.to_string())?;
 
         serde_json::to_string_pretty(&plan).map_err(|e| e.to_string())
     }
@@ -504,7 +512,7 @@ impl ScorchKitServer {
     /// Analyze findings for a project using AI with structured output.
     ///
     /// Loads findings from the database, builds project context for trend
-    /// awareness, runs Claude analysis, and returns structured JSON results.
+    /// awareness, runs provider-neutral AI analysis, and returns structured JSON results.
     ///
     /// # Errors
     ///
@@ -566,10 +574,19 @@ impl ScorchKitServer {
 
         let analyst = crate::ai::analyst::AiAnalyst::from_config(&self.config.ai);
         if !analyst.is_available() {
-            return Err(
-                "claude CLI not found. Install Claude Code to enable AI analysis.".to_string()
-            );
+            return Err(format!(
+                "{} not found. Install or configure the selected AI provider.",
+                analyst.provider_name()
+            ));
         }
+
+        Engine::new(Arc::clone(&self.config))
+            .require_authorized(
+                PolicyTarget::Web(scan_result.target.url.clone()),
+                Capability::ExternalTool,
+                EffectClass::Passive,
+            )
+            .map_err(|e| e.to_string())?;
 
         let analysis = analyst
             .analyze(&scan_result, focus, Some(&project_context))
@@ -591,7 +608,7 @@ impl ScorchKitServer {
     /// run scan with the specified profile, and optionally persist results to
     /// a project.
     ///
-    /// This is the "one-shot" scanning tool — Claude can call this instead of
+    /// This is the "one-shot" scanning tool — an MCP agent can call this instead of
     /// manually composing `scan` + `project_scan`. Does NOT include AI
     /// planning or analysis (use `plan_scan` and `analyze_findings` separately).
     ///
@@ -601,8 +618,19 @@ impl ScorchKitServer {
     /// be built, the scan fails, or project persistence fails.
     pub async fn do_auto_scan(&self, params: AutoScanParams) -> Result<String, String> {
         let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
-        let http_client = build_scan_client(&self.config).map_err(|e| e.to_string())?;
-        let ctx = ScanContext::new(target, Arc::clone(&self.config), http_client);
+        let project = if let Some(project_ref) = params.project.as_deref() {
+            let project =
+                resolve_project(&self.pool, project_ref).await.map_err(|e| e.to_string())?;
+            require_registered_project_target(&self.pool, project.id, &target)
+                .await
+                .map_err(|e| e.to_string())?;
+            Some(project)
+        } else {
+            None
+        };
+        let engine = Engine::new(Arc::clone(&self.config));
+        let ctx =
+            engine.dast_context_for_target(target, &params.profile).map_err(|e| e.to_string())?;
 
         let mut orchestrator = Orchestrator::new(ctx);
         orchestrator.register_default_modules();
@@ -611,9 +639,7 @@ impl ScorchKitServer {
         let result = orchestrator.run(true).await.map_err(|e| e.to_string())?;
 
         // Optionally persist to project
-        if let Some(ref project_name) = params.project {
-            let project =
-                resolve_project(&self.pool, project_name).await.map_err(|e| e.to_string())?;
+        if let Some(project) = project {
             let modules_run: Vec<String> = result.modules_run.iter().map(String::clone).collect();
             let modules_skipped: Vec<String> = result
                 .modules_skipped
@@ -644,7 +670,7 @@ impl ScorchKitServer {
                 "scan_id": result.scan_id,
                 "target": result.target.raw,
                 "profile": params.profile,
-                "project": project_name,
+                "project": project.name,
                 "persisted": true,
                 "findings_saved": saved_count,
                 "summary": {
@@ -703,8 +729,8 @@ impl ScorchKitServer {
         params: TargetIntelligenceParams,
     ) -> Result<String, String> {
         let target = Target::parse(&params.target).map_err(|e| e.to_string())?;
-        let http_client = build_scan_client(&self.config).map_err(|e| e.to_string())?;
-        let ctx = ScanContext::new(target, Arc::clone(&self.config), http_client);
+        let engine = Engine::new(Arc::clone(&self.config));
+        let ctx = engine.dast_context_for_target(target, "quick").map_err(|e| e.to_string())?;
 
         let mut orchestrator = Orchestrator::new(ctx);
         orchestrator.register_default_modules();
@@ -853,11 +879,9 @@ impl ScorchKitServer {
             return Err(format!("path '{}' does not exist", params.path));
         }
 
-        let ctx = crate::engine::code_context::CodeContext::new(
-            path,
-            params.language.clone(),
-            Arc::clone(&self.config),
-        );
+        let ctx = Engine::new(Arc::clone(&self.config))
+            .code_context(&path, params.language.as_deref())
+            .map_err(|e| e.to_string())?;
 
         let mut orchestrator = crate::runner::code_orchestrator::CodeOrchestrator::new(ctx);
         orchestrator.register_default_modules();
@@ -886,11 +910,9 @@ impl ScorchKitServer {
 /// `#[tool_router]` — thin wrappers that delegate to `do_*` public methods.
 #[tool_router(vis = "pub(crate)")]
 impl ScorchKitServer {
-    #[tool(
-        description = "List all 41 available scan modules with their categories, descriptions, \
+    #[tool(description = "List all available scan modules with their categories, descriptions, \
         and external tool requirements. Use this first to understand what scanning capabilities \
-        are available. Returns JSON array. Use check_tools to verify external tool installation."
-    )]
+        are available. Returns JSON array. Use check_tools to verify external tool installation.")]
     async fn list_modules(&self) -> String {
         self.do_list_modules()
     }
@@ -905,9 +927,9 @@ impl ScorchKitServer {
 
     #[tool(description = "Run a security scan against a target URL without project persistence. \
         Use for quick ad-hoc testing when you don't need to track results over time. Set \
-        profile to 'quick' for fast recon (4 modules: headers, tech, ssl, misconfig), \
-        'standard' for all 20 built-in modules, or 'thorough' for all 41 including external \
-        tools. Use 'modules' to run only specific module IDs, or 'skip' to exclude specific \
+        profile to 'quick' for safe recon, 'standard' for built-ins, 'thorough' for \
+        non-restricted external tools, or 'pentest' for explicitly authorized credential/exploit \
+        modules. Use 'modules' to run only specific module IDs, or 'skip' to exclude specific \
         ones. Prefer project_scan when you want results persisted and deduplicated. Returns \
         JSON with findings array, summary statistics, and scan metadata.")]
     async fn scan(&self, params: Parameters<ScanParams>) -> Result<String, String> {
@@ -915,11 +937,11 @@ impl ScorchKitServer {
     }
 
     #[tool(description = "AI-guided scan planning: runs recon modules first to gather target \
-        intelligence, then uses Claude to analyze the tech stack and recommend which scanner \
+        intelligence, then uses the configured AI provider to analyze the tech stack and recommend which scanner \
         modules to run. Returns a structured plan with module recommendations, priorities, and \
         rationale — does NOT execute the scan. Review the plan, then use project_scan with the \
         recommended modules. Requires AI to be enabled in config. Falls back gracefully if \
-        Claude CLI is unavailable.")]
+        the configured provider is unavailable.")]
     async fn plan_scan(&self, params: Parameters<PlanScanParams>) -> Result<String, String> {
         self.do_plan_scan(params.0).await
     }
@@ -969,7 +991,8 @@ impl ScorchKitServer {
         to the database. Findings are deduplicated across scans — the same vulnerability found \
         again increments seen_count instead of creating a duplicate. This is the primary \
         scanning tool for tracked assessments. Use profile 'quick' for recon, 'standard' for \
-        full assessment, 'thorough' for deep dive. Returns JSON with scan ID, finding counts \
+        built-in assessment, 'thorough' for a non-restricted deep dive, or 'pentest' only with \
+        explicit credential/exploit grants. Returns JSON with scan ID, finding counts \
         (total, new, updated), and summary.")]
     async fn project_scan(&self, params: Parameters<ProjectScanParams>) -> Result<String, String> {
         self.do_project_scan(params.0).await
@@ -1078,12 +1101,14 @@ impl ScorchKitServer {
         self.do_project_status(params.0).await
     }
 
-    #[tool(description = "Analyze project findings using Claude AI with structured JSON output. \
+    #[tool(
+        description = "Analyze project findings using the configured AI provider with structured JSON output. \
         Set focus to: 'summary' for executive overview with risk score, 'prioritize' for \
         findings ranked by exploitability with attack chains, 'remediate' for fix steps with \
         effort estimates and code examples, or 'filter' for false positive classification with \
         confidence scores. Optionally specify scan_id to analyze a specific scan's findings \
-        instead of all project findings. Requires AI enabled in config.")]
+        instead of all project findings. Requires AI enabled in config."
+    )]
     async fn analyze_findings(
         &self,
         params: Parameters<AnalyzeFindingsParams>,
@@ -1092,7 +1117,7 @@ impl ScorchKitServer {
     }
 
     #[tool(description = "Run a complete security scan in one call. Parses the target, applies \
-        the scan profile (quick/standard/thorough), executes all matching modules, and optionally \
+        the scan profile (quick/standard/thorough/pentest), executes all matching modules, and optionally \
         persists results to a project for tracking. This is the 'one-shot' scanning tool — use \
         it when you want results fast without manually composing scan + project_scan. Does NOT \
         include AI planning or analysis — compose with plan_scan and analyze_findings for a full \
@@ -1165,25 +1190,20 @@ impl ScorchKitServer {
     }
 }
 
-/// Build an HTTP client for scan operations, applying proxy from config.
-fn build_scan_client(config: &crate::config::AppConfig) -> Result<reqwest::Client, ScorchError> {
-    let mut builder = reqwest::Client::builder()
-        .user_agent(&config.scan.user_agent)
-        .timeout(std::time::Duration::from_secs(config.scan.timeout_seconds))
-        .cookie_store(true)
-        .danger_accept_invalid_certs(false);
-
-    if config.scan.follow_redirects {
-        builder = builder.redirect(reqwest::redirect::Policy::limited(config.scan.max_redirects));
+async fn require_registered_project_target(
+    pool: &sqlx::PgPool,
+    project_id: Uuid,
+    requested: &Target,
+) -> Result<(), ScorchError> {
+    let registered = projects::list_targets(pool, project_id).await?.into_iter().any(|entry| {
+        Target::parse(&entry.url).is_ok_and(|candidate| candidate.url == requested.url)
+    });
+    if registered {
+        Ok(())
     } else {
-        builder = builder.redirect(reqwest::redirect::Policy::none());
+        Err(ScorchError::Config(format!(
+            "target '{}' is not registered to project {project_id}",
+            requested.url
+        )))
     }
-
-    if let Some(ref proxy_url) = config.scan.proxy {
-        let proxy = reqwest::Proxy::all(proxy_url)
-            .map_err(|e| ScorchError::Config(format!("invalid proxy URL '{proxy_url}': {e}")))?;
-        builder = builder.proxy(proxy);
-    }
-
-    builder.build().map_err(|e| ScorchError::Config(format!("failed to build HTTP client: {e}")))
 }

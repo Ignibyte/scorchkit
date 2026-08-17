@@ -271,7 +271,7 @@ const SSRF_PAYLOADS: &[(&str, &str)] = &[
 mod tests {
     use super::*;
 
-    /// Unit tests for the SSRF detection module's pure helper functions.
+    // Unit tests for the SSRF detection module's pure helper functions.
 
     /// Verify that `looks_like_url_param` identifies parameters whose names
     /// match common URL/redirect parameter patterns.

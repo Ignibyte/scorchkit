@@ -3,7 +3,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 use async_trait::async_trait;
 use std::time::Duration;
 
@@ -37,12 +36,13 @@ impl ScanModule for TheHarvesterModule {
             reason: "no domain".to_string(),
         })?;
 
-        let output = subprocess::run_tool(
-            "theHarvester",
-            &["-d", domain, "-b", "crtsh,dnsdumpster,hackertarget", "-f", "/dev/stdout"],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "theHarvester",
+                &["-d", domain, "-b", "crtsh,dnsdumpster,hackertarget", "-f", "/dev/stdout"],
+                Duration::from_mins(2),
+            )
+            .await?;
 
         Ok(parse_harvester_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -118,7 +118,7 @@ fn parse_harvester_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for theHarvester section-based text output parser.
+    // Tests for theHarvester section-based text output parser.
 
     /// Verify that `parse_harvester_output` correctly extracts emails and
     /// hosts from theHarvester section-delimited text output.

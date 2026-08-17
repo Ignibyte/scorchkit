@@ -14,10 +14,9 @@ use crate::engine::cloud_module::{CloudCategory, CloudModule, CloudProvider};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Timeout for a `cnspec` scan.
-const CNSPEC_TIMEOUT: Duration = Duration::from_secs(600);
+const CNSPEC_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// Mondoo `cnspec` cloud security and compliance scanner.
 ///
@@ -58,7 +57,7 @@ impl CloudModule for CnspecCloudModule {
 
     async fn run(&self, ctx: &CloudContext) -> Result<Vec<Finding>> {
         let argv = vec!["scan", "--output", "json", "--score-threshold", "0"];
-        let output = subprocess::run_tool_lenient("cnspec", &argv, CNSPEC_TIMEOUT).await?;
+        let output = ctx.run_tool_lenient("cnspec", &argv, CNSPEC_TIMEOUT).await?;
         let target_label = ctx.target.display_raw();
         Ok(parse_cnspec_output(&output.stdout, &target_label))
     }

@@ -1,102 +1,104 @@
-# 01 — Your first scan
+# 01 — Your first authorized scan
 
-**Goal:** install ScorchKit, confirm your toolchain, scan one URL, read the report.
+**Goal:** build ScorchKit, create a target-bound engagement, scan a loopback web server, and inspect
+the report.
 
-**Time:** ~30 minutes (mostly waiting for cargo to compile the first time).
+**Time:** about 30 minutes for a first build.
 
-**You'll need:** Linux or macOS with Rust 1.70+. A target URL you have permission to scan — for this tutorial we'll use `https://httpbin.org` (a public test endpoint).
+**You will need:** Linux or macOS, a current stable Rust toolchain, Python 3 for the disposable local
+server, and two terminals.
 
----
+Only scan systems you own or have written permission to test. This tutorial stays on loopback.
 
 ## 1. Build
 
 ```bash
-git clone https://github.com/Ignibyte/scorchkit.git
+git clone https://github.com/chadpeppers/scorchkit.git
 cd scorchkit
 cargo build --release
 ```
 
-The first build pulls a lot of dependencies and takes 5–10 minutes. Subsequent builds are seconds. The compiled binary lands at `./target/release/scorchkit`.
-
-For shorter commands during the tutorial, alias it:
-
-```bash
-alias sk=./target/release/scorchkit
-```
-
-## 2. Health-check the environment
+The binary is `target/release/scorchkit`. Check the compiled command surface and installed optional
+tools:
 
 ```bash
-sk doctor
+target/release/scorchkit --help
+target/release/scorchkit doctor
+target/release/scorchkit modules --check-tools
 ```
 
-You'll see a table of every external pentest tool ScorchKit can wrap. Most show as **MISSING** on a fresh install — that's fine. ScorchKit's built-in modules (15 web scanners + 10 recon modules) work without any external tools.
+Missing external tools are reported as unavailable. The quick profile does not require them.
 
-For this tutorial you don't need to install anything else. Note any `MISSING` rows that interest you for later — `doctor` prints the install command for each.
+## 2. Start a disposable target
 
-## 3. Run a quick scan
+In the first terminal:
 
 ```bash
-sk run https://httpbin.org --profile quick
+mkdir -p /tmp/scorchkit-first-scan
+cd /tmp/scorchkit-first-scan
+python3 -m http.server 8080 --bind 127.0.0.1
 ```
 
-The `quick` profile runs four modules: HTTP security headers, technology fingerprinting, TLS analysis, and the misconfiguration scanner. It finishes in under 30 seconds against most targets.
+This server exposes only the temporary directory on loopback.
 
-You'll see a colored terminal report with findings grouped by severity. Each finding has:
-- A **title** (e.g. "Missing Strict-Transport-Security header")
-- A **severity** (Critical → High → Medium → Low → Info)
-- The **affected resource** (URL, header, parameter)
-- **Evidence** (what ScorchKit observed)
-- A **remediation hint** (what to do about it)
-- An **OWASP** / **CWE** mapping where applicable
+## 3. Create the engagement
 
-## 4. Save the report
-
-Re-run with JSON output:
+In the repository terminal, preserve the binary path and switch to the temporary directory:
 
 ```bash
-sk run https://httpbin.org --profile quick -o json
+SCORCHKIT_BIN="$PWD/target/release/scorchkit"
+cd /tmp/scorchkit-first-scan
+"$SCORCHKIT_BIN" init http://127.0.0.1:8080
 ```
 
-This writes `scorchkit-report.json` to the current directory. The JSON includes everything you saw in the terminal, plus per-finding metadata (timestamps, confidence scores, request/response evidence). It's the input format for `sk diff` and `sk analyze`.
+`init` parses the URL, resolves and pins the target address, and writes `scorchkit.toml`. It does not
+send an HTTP request. Review the generated `[engagement]` block before continuing. It grants only
+passive and active-safe effects for the exact loopback target.
 
-## 5. Try the standard profile
+## 4. Run the quick profile
 
 ```bash
-sk run https://httpbin.org
+"$SCORCHKIT_BIN" run http://127.0.0.1:8080 --profile quick
 ```
 
-The default `standard` profile runs all 15 built-in scanners — injection probes, CSRF detection, SSL analysis, sensitive-data exposure, etc. Takes 1–3 minutes against a typical target.
+The terminal report identifies the module, severity, affected target, evidence, remediation, and
+confidence for each finding. The default output also saves a JSON report under the configured
+`report.output_dir`.
 
-You'll see noticeably more findings, especially **Info** ones. Info findings aren't bugs — they're observations (e.g. "discovered admin path exists at `/admin`"). They become useful as input to follow-up scans.
-
-## 6. Filter the noise
+To request another format:
 
 ```bash
-# Hide low-confidence findings (likely false positives)
-sk run https://httpbin.org --min-confidence 0.7
-
-# Only specific modules
-sk run https://httpbin.org --modules ssl,headers,misconfig
-
-# Skip slow or noisy modules
-sk run https://httpbin.org --skip nuclei,sqlmap
+"$SCORCHKIT_BIN" --output html run http://127.0.0.1:8080 --profile quick
+"$SCORCHKIT_BIN" --output sarif run http://127.0.0.1:8080 --profile quick
 ```
 
-There is no built-in `--severity` filter on `run` — if you want a severity-gated view, emit JSON (`-o json`) and filter with `jq` (see [tutorial 08](08-ci-cd-integration.md) §2 for the pattern).
+## 5. Narrow the run
 
-## 7. Where to go next
+```bash
+"$SCORCHKIT_BIN" run http://127.0.0.1:8080 --profile quick --modules headers,tech
+"$SCORCHKIT_BIN" run http://127.0.0.1:8080 --profile quick --min-confidence 0.8
+```
 
-- **[02 — CVE correlation](02-cve-correlation.md)** — match service banners against NVD or OSV
-- **[04 — Claude Code workflow](04-claude-code-workflow.md)** — same scans but conversational
-- **[08 — CI/CD integration](08-ci-cd-integration.md)** — run ScorchKit on every PR
+Do not switch to `standard`, `thorough`, or `pentest` merely because the commands exist. Those
+profiles require broader effect grants and should fail closed against the generated quick
+engagement.
 
----
+## 6. Stop the target
 
-## Things that go wrong
+Press `Ctrl-C` in the server terminal. The generated engagement remains useful only while the same
+loopback target and pinned addresses remain valid.
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `cargo build` fails on `aws-lc-rs` | System-level cmake/clang missing | `sudo apt install cmake clang` (Debian/Ubuntu) or `brew install cmake llvm` (macOS) |
-| `connection refused` against your own target | Local dev server uses self-signed TLS | Add `--insecure` to skip cert verification (only use against your own dev targets) |
-| Scan stuck for >10 minutes | Network-bound module is hanging | Add `--profile quick` to limit to fast modules; or `--skip nuclei,sqlmap` to drop the slow ones |
+## Next
+
+- [Unified assessment](03-unified-assess.md)
+- [Agent workflow](04-agent-workflow.md)
+- [CI/CD integration](08-ci-cd-integration.md)
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `no engagement authorization is configured` | Run targeted `init` in the directory where the scan command will run, or pass `--config`. |
+| DNS or target policy denial | Compare the exact target and resolved addresses with the generated scope rules. |
+| Connection refused | Confirm the loopback server is still running on port 8080. |
+| Tool skipped | The quick profile remains usable; inspect optional tools with `doctor --deep`. |

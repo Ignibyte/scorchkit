@@ -411,12 +411,12 @@ fn extract_forms(body: &str, base_url: &Url) -> Vec<FormInfo> {
 mod tests {
     use super::*;
 
-    /// Unit tests for the XSS detection module's pure helper functions.
+    // Unit tests for the XSS detection module's pure helper functions.
 
     /// Verify that `is_payload_reflected` returns true when a payload appears verbatim in the body.
     #[test]
     fn test_payload_reflected_directly() {
-        let body = r#"<html><body>Welcome <scorch8x7k2> user</body></html>"#;
+        let body = r"<html><body>Welcome <scorch8x7k2> user</body></html>";
         let payload = "<scorch8x7k2>";
 
         assert!(is_payload_reflected(body, payload));

@@ -174,7 +174,7 @@ const LOGIN_PATHS: &[&str] = &[
 mod tests {
     use super::*;
 
-    /// Unit tests for the rate limit testing module's constant data integrity.
+    // Unit tests for the rate limit testing module's constant data integrity.
 
     /// Verify that `LOGIN_PATHS` is non-empty and contains well-known authentication
     /// endpoint paths.

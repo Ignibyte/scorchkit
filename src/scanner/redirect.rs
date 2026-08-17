@@ -31,16 +31,8 @@ impl ScanModule for RedirectModule {
         let url = ctx.target.url.as_str();
         let mut findings = Vec::new();
 
-        // Build a non-following client to see redirects
-        let no_redirect_client = reqwest::Client::builder()
-            .user_agent(&ctx.config.scan.user_agent)
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .map_err(|e| ScorchError::Config(format!("client build error: {e}")))?;
-
         // 1. Test the target URL's own parameters
-        test_url_params_redirect(&no_redirect_client, url, &mut findings).await?;
+        test_url_params_redirect(&ctx.no_redirect_http_client, url, &mut findings).await?;
 
         // 2. Spider for redirect-like parameters
         let response = ctx
@@ -53,7 +45,7 @@ impl ScanModule for RedirectModule {
         let links = extract_redirect_links(&body, &ctx.target.url);
 
         for link in &links {
-            test_url_params_redirect(&no_redirect_client, link, &mut findings).await?;
+            test_url_params_redirect(&ctx.no_redirect_http_client, link, &mut findings).await?;
         }
 
         Ok(findings)
@@ -163,9 +155,15 @@ const REDIRECT_PARAM_NAMES: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
 
-    /// Unit tests for the open redirect detection module's helpers and constant data.
+    use httpmock::Method::GET;
+
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::engine::target::Target;
+
+    // Unit tests for the open redirect detection module's helpers and constant data.
 
     /// Verify that `REDIRECT_PARAM_NAMES` is non-empty, contains well-known redirect
     /// parameter names, and all entries are lowercase without whitespace.
@@ -237,5 +235,41 @@ mod tests {
 
         // Assert
         assert!(links.is_empty(), "No redirect links expected from HTML without redirect params");
+    }
+
+    #[tokio::test]
+    async fn run_observes_an_open_redirect_on_the_target_url() {
+        let server = httpmock::MockServer::start_async().await;
+        let injected = server
+            .mock_async(|when, then| {
+                when.method(GET).path("/").query_param("next", "https://evil-attacker.com/pwned");
+                then.status(302).header("location", "https://evil-attacker.com/pwned");
+            })
+            .await;
+        let original = server
+            .mock_async(|when, then| {
+                when.method(GET).path("/").query_param("next", "/home");
+                then.status(200).body("<html><body>fixture</body></html>");
+            })
+            .await;
+        let target = Target::parse(&server.url("/?next=/home")).expect("loopback target");
+        let no_redirect_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("no-redirect client");
+        let context = ScanContext::new(
+            target,
+            Arc::new(AppConfig::default()),
+            no_redirect_client,
+            Vec::new(),
+        );
+
+        let findings = RedirectModule.run(&context).await.expect("run redirect module");
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].cwe_id, Some(601));
+        assert!(findings[0].title.contains("next"));
+        injected.assert_calls_async(1).await;
+        original.assert_calls_async(1).await;
     }
 }

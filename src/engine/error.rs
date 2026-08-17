@@ -16,6 +16,9 @@ pub enum ScorchError {
     #[error("tool '{tool}' exited with status {status}: {stderr}")]
     ToolFailed { tool: String, status: i32, stderr: String },
 
+    #[error("tool '{tool}' exceeded the {stream} output limit of {limit_bytes} bytes")]
+    ToolOutputLimit { tool: String, stream: &'static str, limit_bytes: usize },
+
     #[error("failed to parse output from '{tool}': {reason}")]
     ToolOutputParse { tool: String, reason: String },
 
@@ -27,6 +30,9 @@ pub enum ScorchError {
 
     #[error("AI analysis failed: {0}")]
     AiAnalysis(String),
+
+    #[error("lifecycle hook failed: {0}")]
+    Hook(String),
 
     #[error("report error: {0}")]
     Report(String),
@@ -42,6 +48,9 @@ pub enum ScorchError {
 
     #[error("scan cancelled: {reason}")]
     Cancelled { reason: String },
+
+    #[error(transparent)]
+    Policy(#[from] super::policy::PolicyViolation),
 }
 
 pub type Result<T> = std::result::Result<T, ScorchError>;

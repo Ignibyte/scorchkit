@@ -13,33 +13,72 @@ use crate::ai::analyst::AiAnalyst;
 use crate::ai::planner::ScanPlanner;
 use crate::ai::prompts::AnalysisFocus;
 use crate::config::AppConfig;
-use crate::engine::error::{Result, ScorchError};
+use crate::engine::error::Result;
+#[cfg(any(feature = "storage", test))]
+use crate::engine::error::ScorchError;
 use crate::engine::module_trait::ModuleCategory;
-use crate::engine::scan_context::ScanContext;
+use crate::engine::policy::{Capability, EffectClass, PolicyTarget};
 use crate::engine::scan_result::ScanResult;
 use crate::engine::target::Target;
+use crate::report::terminal::escape_terminal_text;
 use crate::runner::orchestrator::Orchestrator;
 
 /// Phase status for terminal display.
+#[derive(Debug, PartialEq, Eq)]
 enum PhaseResult {
     Pass(String),
     Warn(String),
     Skip(String),
 }
 
-/// Print a phase header.
-fn phase_header(num: u8, name: &str) {
-    println!();
-    println!("  {} {} {}", format!("[{num}/6]").dimmed(), ">>".cyan().bold(), name.bold());
+#[derive(Debug, PartialEq, Eq)]
+struct AiPlanningOutcome {
+    module_ids: Option<Vec<String>>,
+    phase: PhaseResult,
 }
 
-/// Print a phase result.
-fn phase_result(result: &PhaseResult) {
+#[derive(Debug, PartialEq, Eq)]
+struct AiAnalysisOutcome {
+    rendered_analysis: Option<String>,
+    phase: PhaseResult,
+}
+
+/// Render a phase header for a host-owned terminal sink.
+fn render_phase_header(num: u8, name: &str) -> String {
+    format!(
+        "\n  {} {} {}\n",
+        format!("[{num}/6]").dimmed(),
+        ">>".cyan().bold(),
+        escape_terminal_text(name).bold()
+    )
+}
+
+/// Render a phase result for a host-owned terminal sink.
+fn render_phase_result(result: &PhaseResult) -> String {
     match result {
-        PhaseResult::Pass(msg) => println!("     {} {}", "PASS".green().bold(), msg),
-        PhaseResult::Warn(msg) => println!("     {} {}", "WARN".yellow().bold(), msg),
-        PhaseResult::Skip(msg) => println!("     {} {}", "SKIP".dimmed(), msg.dimmed()),
+        PhaseResult::Pass(message) => {
+            format!("     {} {}\n", "PASS".green().bold(), escape_terminal_text(message))
+        }
+        PhaseResult::Warn(message) => {
+            format!("     {} {}\n", "WARN".yellow().bold(), escape_terminal_text(message))
+        }
+        PhaseResult::Skip(message) => {
+            format!("     {} {}\n", "SKIP".dimmed(), escape_terminal_text(message).dimmed())
+        }
     }
+}
+
+fn rate_limit_notice(rate_limit: u32) -> Option<String> {
+    (rate_limit > 0).then(|| format!("Rate limit: {} req/s", rate_limit.to_string().yellow()))
+}
+
+#[cfg(any(feature = "storage", test))]
+fn updated_finding_count(total: usize, new_count: usize) -> Result<usize> {
+    total.checked_sub(new_count).ok_or_else(|| {
+        ScorchError::Database(format!(
+            "finding persistence reported {new_count} new rows for only {total} findings"
+        ))
+    })
 }
 
 /// Run the autonomous scan agent loop.
@@ -64,21 +103,21 @@ pub async fn run_autonomous(
     println!("{}", "━".repeat(50).dimmed());
 
     // ── Phase 1: Setup ──────────────────────────────────────────────
-    phase_header(1, "Setup");
+    print!("{}", render_phase_header(1, "Setup"));
 
     let target = Target::parse(target_str)?;
-    println!("     Target: {}", target.url.as_str().cyan());
-    println!("     Depth:  {}", depth.cyan());
+    println!("     Target: {}", escape_terminal_text(target.url.as_str()).cyan());
+    println!("     Depth:  {}", escape_terminal_text(depth).cyan());
     if let Some(name) = project_name {
-        println!("     Project: {}", name.cyan());
+        println!("     Project: {}", escape_terminal_text(name).cyan());
     }
-    phase_result(&PhaseResult::Pass("Target validated".to_string()));
+    print!("{}", render_phase_result(&PhaseResult::Pass("Target validated".to_string())));
 
     // ── Phase 2: Reconnaissance ─────────────────────────────────────
-    phase_header(2, "Reconnaissance");
+    print!("{}", render_phase_header(2, "Reconnaissance"));
 
-    let http_client = build_agent_http_client()?;
-    let ctx = ScanContext::new(target.clone(), config.clone(), http_client.clone());
+    let engine = crate::facade::Engine::new(Arc::clone(config));
+    let ctx = engine.dast_context_for_target(target.clone(), "quick")?;
     let mut recon_orchestrator = Orchestrator::new(ctx);
     recon_orchestrator.register_default_modules();
     recon_orchestrator.filter_by_category(ModuleCategory::Recon);
@@ -86,16 +125,23 @@ pub async fn run_autonomous(
     let recon_result = recon_orchestrator.run(true).await?;
     let recon_findings = recon_result.findings.len();
     let recon_modules = recon_result.modules_run.len();
-    phase_result(&PhaseResult::Pass(format!("{recon_modules} modules, {recon_findings} findings")));
+    print!(
+        "{}",
+        render_phase_result(&PhaseResult::Pass(format!(
+            "{recon_modules} modules, {recon_findings} findings"
+        )))
+    );
 
     // ── Phase 3: AI Planning ────────────────────────────────────────
-    phase_header(3, "AI Planning");
-    let plan_module_ids = run_ai_planning(config, &target, depth).await;
+    print!("{}", render_phase_header(3, "AI Planning"));
+    let planning_outcome = run_ai_planning(config, &target, depth).await;
+    print!("{}", render_phase_result(&planning_outcome.phase));
+    let plan_module_ids = planning_outcome.module_ids;
 
     // ── Phase 4: Vulnerability Scan ─────────────────────────────────
-    phase_header(4, "Vulnerability Scan");
+    print!("{}", render_phase_header(4, "Vulnerability Scan"));
 
-    let scan_ctx = ScanContext::new(target.clone(), config.clone(), http_client);
+    let scan_ctx = engine.dast_context_for_target(target.clone(), depth)?;
     let mut scan_orchestrator = Orchestrator::new(scan_ctx);
     scan_orchestrator.register_default_modules();
 
@@ -107,8 +153,8 @@ pub async fn run_autonomous(
     }
 
     // Rate limiting delay if configured
-    if config.scan.rate_limit > 0 {
-        println!("     Rate limit: {} req/s", config.scan.rate_limit.to_string().yellow());
+    if let Some(notice) = rate_limit_notice(config.scan.rate_limit) {
+        println!("     {notice}");
     }
 
     let scan_result = scan_orchestrator.run(false).await?;
@@ -116,23 +162,32 @@ pub async fn run_autonomous(
     let modules_run = scan_result.modules_run.len();
     let modules_skipped = scan_result.modules_skipped.len();
 
-    phase_result(&PhaseResult::Pass(format!(
-        "{modules_run} modules run, {modules_skipped} skipped, {total_findings} findings"
-    )));
+    print!(
+        "{}",
+        render_phase_result(&PhaseResult::Pass(format!(
+            "{modules_run} modules run, {modules_skipped} skipped, {total_findings} findings"
+        )))
+    );
 
     // Print finding severity summary
-    print_finding_summary(&scan_result);
+    if let Some(summary) = render_finding_summary(&scan_result) {
+        print!("{summary}");
+    }
 
     // ── Phase 5: AI Analysis ────────────────────────────────────────
-    phase_header(5, "AI Analysis");
-    run_ai_analysis(config, &scan_result).await;
+    print!("{}", render_phase_header(5, "AI Analysis"));
+    let analysis_outcome = run_ai_analysis(config, &scan_result).await;
+    print!("{}", render_phase_result(&analysis_outcome.phase));
+    if let Some(rendered) = analysis_outcome.rendered_analysis {
+        print!("{rendered}");
+    }
 
     // ── Phase 6: Persist & Report ───────────────────────────────────
-    phase_header(6, "Persist & Report");
+    print!("{}", render_phase_header(6, "Persist & Report"));
 
     // Save report file
     let report_path = crate::report::json::save_report(&scan_result, &config.report)?;
-    println!("     Report: {}", report_path.display().to_string().cyan());
+    println!("     Report: {}", escape_terminal_text(&report_path.display().to_string()).cyan());
 
     // Database persistence
     #[cfg(feature = "storage")]
@@ -143,10 +198,15 @@ pub async fn run_autonomous(
     #[cfg(not(feature = "storage"))]
     if project_name.is_some() {
         let _ = database_url;
-        phase_result(&PhaseResult::Warn("--project requires storage feature".to_string()));
+        print!(
+            "{}",
+            render_phase_result(&PhaseResult::Warn(
+                "--project requires storage feature".to_string()
+            ))
+        );
     }
 
-    phase_result(&PhaseResult::Pass("Complete".to_string()));
+    print!("{}", render_phase_result(&PhaseResult::Pass("Complete".to_string())));
 
     // ── Summary ─────────────────────────────────────────────────────
     println!();
@@ -167,104 +227,134 @@ async fn run_ai_planning(
     config: &Arc<AppConfig>,
     target: &Target,
     depth: &str,
-) -> Option<Vec<String>> {
+) -> AiPlanningOutcome {
     if !config.ai.enabled {
-        phase_result(&PhaseResult::Skip("AI disabled in config".to_string()));
-        return None;
+        return AiPlanningOutcome {
+            module_ids: None,
+            phase: PhaseResult::Skip("AI disabled in config".to_string()),
+        };
     }
 
     let planner = ScanPlanner::from_config(&config.ai);
     if !planner.is_available() {
-        phase_result(&PhaseResult::Skip("Claude CLI not available — using profile".to_string()));
-        return None;
+        return AiPlanningOutcome {
+            module_ids: None,
+            phase: PhaseResult::Skip(format!(
+                "{} not available — using profile",
+                planner.provider_name()
+            )),
+        };
     }
 
-    match planner.plan(target, config).await {
+    let engine = crate::facade::Engine::new(Arc::clone(config));
+    if let Err(error) = engine.dast_context_for_target(target.clone(), "quick") {
+        return AiPlanningOutcome {
+            module_ids: None,
+            phase: PhaseResult::Warn(format!("Planning denied: {error}")),
+        };
+    }
+    if let Err(error) = engine.require_authorized(
+        PolicyTarget::Web(target.url.clone()),
+        Capability::ExternalTool,
+        EffectClass::ActiveSafe,
+    ) {
+        return AiPlanningOutcome {
+            module_ids: None,
+            phase: PhaseResult::Warn(format!("Planning denied: {error}")),
+        };
+    }
+
+    match planner.plan(target, &engine).await {
         Ok(plan) => {
             let count = plan.recommendations.len();
-            phase_result(&PhaseResult::Pass(format!(
-                "{count} modules recommended — {}",
-                plan.overall_strategy
-            )));
-            Some(plan.recommendations.iter().map(|r| r.module_id.clone()).collect())
+            AiPlanningOutcome {
+                module_ids: Some(
+                    plan.recommendations
+                        .iter()
+                        .map(|recommendation| recommendation.module_id.clone())
+                        .collect(),
+                ),
+                phase: PhaseResult::Pass(format!(
+                    "{count} modules recommended — {}",
+                    plan.overall_strategy
+                )),
+            }
         }
-        Err(e) => {
-            phase_result(&PhaseResult::Warn(format!(
-                "Planning failed: {e} — using {depth} profile"
-            )));
-            None
-        }
+        Err(error) => AiPlanningOutcome {
+            module_ids: None,
+            phase: PhaseResult::Warn(format!("Planning failed: {error} — using {depth} profile")),
+        },
     }
 }
 
 /// Run AI analysis phase on scan results.
-async fn run_ai_analysis(config: &Arc<AppConfig>, scan_result: &ScanResult) {
+async fn run_ai_analysis(config: &Arc<AppConfig>, scan_result: &ScanResult) -> AiAnalysisOutcome {
     if !config.ai.enabled {
-        phase_result(&PhaseResult::Skip("AI disabled".to_string()));
-        return;
+        return AiAnalysisOutcome {
+            rendered_analysis: None,
+            phase: PhaseResult::Skip("AI disabled".to_string()),
+        };
     }
 
     if scan_result.findings.is_empty() {
-        phase_result(&PhaseResult::Skip("No findings to analyze".to_string()));
-        return;
+        return AiAnalysisOutcome {
+            rendered_analysis: None,
+            phase: PhaseResult::Skip("No findings to analyze".to_string()),
+        };
     }
 
     let analyst = AiAnalyst::from_config(&config.ai);
+    if let Err(error) = crate::facade::Engine::new(Arc::clone(config)).require_authorized(
+        PolicyTarget::Web(scan_result.target.url.clone()),
+        Capability::ExternalTool,
+        EffectClass::Passive,
+    ) {
+        return AiAnalysisOutcome {
+            rendered_analysis: None,
+            phase: PhaseResult::Warn(format!("Analysis denied: {error}")),
+        };
+    }
     match analyst.analyze(scan_result, AnalysisFocus::Summary, None).await {
-        Ok(analysis) => {
-            phase_result(&PhaseResult::Pass("Analysis complete".to_string()));
-            crate::ai::analyst::print_analysis(&analysis);
-        }
-        Err(e) => {
-            phase_result(&PhaseResult::Warn(format!("Analysis failed: {e}")));
-        }
+        Ok(analysis) => AiAnalysisOutcome {
+            rendered_analysis: Some(crate::ai::analyst::render_analysis(&analysis)),
+            phase: PhaseResult::Pass("Analysis complete".to_string()),
+        },
+        Err(error) => AiAnalysisOutcome {
+            rendered_analysis: None,
+            phase: PhaseResult::Warn(format!("Analysis failed: {error}")),
+        },
     }
 }
 
-/// Build an HTTP client for agent operations.
-fn build_agent_http_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .cookie_store(true)
-        .danger_accept_invalid_certs(false)
-        .build()
-        .map_err(|e| ScorchError::Config(format!("failed to build HTTP client: {e}")))
-}
-
-/// Print a compact severity summary of findings.
-fn print_finding_summary(result: &ScanResult) {
-    use crate::engine::severity::Severity;
-
-    let (mut crit, mut high, mut med, mut low, mut info) = (0usize, 0, 0, 0, 0);
-    for finding in &result.findings {
-        match finding.severity {
-            Severity::Critical => crit += 1,
-            Severity::High => high += 1,
-            Severity::Medium => med += 1,
-            Severity::Low => low += 1,
-            Severity::Info => info += 1,
-        }
-    }
-
-    if crit + high + med + low + info > 0 {
-        println!(
-            "     Severity: {} {} {} {} {}",
-            if crit > 0 {
-                format!("{crit}C").red().bold().to_string()
+/// Render a compact severity summary of findings.
+fn render_finding_summary(result: &ScanResult) -> Option<String> {
+    let summary = &result.summary;
+    (summary.total_findings > 0).then(|| {
+        format!(
+            "     Severity: {} {} {} {} {}\n",
+            if summary.critical > 0 {
+                format!("{}C", summary.critical).red().bold().to_string()
             } else {
                 "0C".dimmed().to_string()
             },
-            if high > 0 { format!("{high}H").red().to_string() } else { "0H".dimmed().to_string() },
-            if med > 0 {
-                format!("{med}M").yellow().to_string()
+            if summary.high > 0 {
+                format!("{}H", summary.high).red().to_string()
+            } else {
+                "0H".dimmed().to_string()
+            },
+            if summary.medium > 0 {
+                format!("{}M", summary.medium).yellow().to_string()
             } else {
                 "0M".dimmed().to_string()
             },
-            if low > 0 { format!("{low}L").green().to_string() } else { "0L".dimmed().to_string() },
-            format!("{info}I").dimmed(),
-        );
-    }
+            if summary.low > 0 {
+                format!("{}L", summary.low).green().to_string()
+            } else {
+                "0L".dimmed().to_string()
+            },
+            format!("{}I", summary.info).dimmed(),
+        )
+    })
 }
 
 /// Persist agent scan results to the database.
@@ -304,14 +394,18 @@ async fn persist_agent_results(
     if let Err(e) =
         crate::storage::intelligence::update_intelligence(&pool, project.id, result).await
     {
-        println!("     {} Intelligence update failed: {e}", "WARN".yellow().bold());
+        println!(
+            "     {} Intelligence update failed: {}",
+            "WARN".yellow().bold(),
+            crate::report::terminal::escape_terminal_text(&e.to_string())
+        );
     }
 
-    let updated = result.findings.len() - new_count;
+    let updated = updated_finding_count(result.findings.len(), new_count)?;
     println!(
         "     {} Project '{}': {} new, {} updated",
         "DB".cyan().bold(),
-        project_name.cyan(),
+        escape_terminal_text(project_name).cyan(),
         new_count,
         updated,
     );
@@ -323,33 +417,259 @@ async fn persist_agent_results(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_build_agent_http_client() {
-        let client = build_agent_http_client();
-        assert!(client.is_ok(), "Should build HTTP client");
-    }
-
-    #[test]
-    fn test_print_finding_summary_empty() {
-        let result = ScanResult {
+    fn scan_result(findings: Vec<crate::engine::finding::Finding>) -> ScanResult {
+        ScanResult {
             scan_id: "test".to_string(),
-            target: Target::parse("https://example.com").expect("parse"),
+            target: Target::parse("https://example.com").expect("parse target"),
             started_at: chrono::Utc::now(),
             completed_at: chrono::Utc::now(),
-            findings: vec![],
-            modules_run: vec![],
+            summary: crate::engine::scan_result::ScanSummary::from_findings(&findings),
+            findings,
+            modules_run: vec!["fixture".to_string()],
             modules_skipped: vec![],
-            summary: crate::engine::scan_result::ScanSummary::from_findings(&[]),
-        };
-        // Should not panic on empty findings
-        print_finding_summary(&result);
+        }
     }
 
     #[test]
-    fn test_phase_result_variants() {
-        // Just verify no panics
-        phase_result(&PhaseResult::Pass("test".to_string()));
-        phase_result(&PhaseResult::Warn("test".to_string()));
-        phase_result(&PhaseResult::Skip("test".to_string()));
+    fn test_agent_http_client_uses_engine_authorization() {
+        let target = Target::parse("https://example.com").expect("parse target");
+        let policy = crate::engine::policy::EngagementPolicy::default()
+            .allow_scope(crate::engine::scope::ScopeRule::parse("example.com").expect("scope"))
+            .allow_capability(Capability::DastScan)
+            .allow_effect(EffectClass::ActiveSafe);
+        let engine = crate::facade::Engine::for_engagement(
+            Arc::new(AppConfig::default()),
+            Arc::new(crate::engine::policy::Engagement::new("test", policy)),
+        );
+        assert!(
+            engine.authorized_web_client(&target.url, EffectClass::ActiveSafe, false).is_ok(),
+            "authorized agent client should build"
+        );
+    }
+
+    fn finding(
+        severity: crate::engine::severity::Severity,
+        title: &str,
+    ) -> crate::engine::finding::Finding {
+        crate::engine::finding::Finding::new(
+            "fixture",
+            severity,
+            title,
+            "fixture",
+            "https://example.com",
+        )
+    }
+
+    #[test]
+    fn finding_summary_distinguishes_empty_and_asymmetric_counts() {
+        use crate::engine::severity::Severity;
+
+        let result = scan_result(vec![]);
+        assert_eq!(render_finding_summary(&result), None);
+
+        let result = scan_result(vec![
+            finding(Severity::Critical, "critical one"),
+            finding(Severity::Critical, "critical two"),
+            finding(Severity::High, "high"),
+            finding(Severity::Medium, "medium one"),
+            finding(Severity::Medium, "medium two"),
+            finding(Severity::Medium, "medium three"),
+            finding(Severity::Low, "low"),
+            finding(Severity::Info, "info one"),
+            finding(Severity::Info, "info two"),
+            finding(Severity::Info, "info three"),
+            finding(Severity::Info, "info four"),
+        ]);
+        let rendered = render_finding_summary(&result).expect("nonempty summary");
+        for expected in ["Severity:", "2C", "1H", "3M", "1L", "4I"] {
+            assert!(rendered.contains(expected), "summary omitted {expected:?}: {rendered:?}");
+        }
+        assert!(rendered.ends_with('\n'));
+    }
+
+    #[test]
+    fn phase_header_is_exact_and_terminal_safe() {
+        let rendered = render_phase_header(3, "AI\u{1b} Planning");
+        assert!(rendered.starts_with('\n'));
+        assert!(rendered.contains("[3/6]"));
+        assert!(rendered.contains(">>"));
+        assert!(rendered.contains("AI\\u{1b} Planning"));
+        assert!(rendered.ends_with('\n'));
+    }
+
+    #[test]
+    fn phase_result_rendering_is_exact_and_terminal_safe() {
+        let pass = render_phase_result(&PhaseResult::Pass("passed\u{1b}".to_string()));
+        assert!(pass.contains("PASS"));
+        assert!(pass.contains("passed\\u{1b}"));
+        assert!(pass.ends_with('\n'));
+
+        let warning = render_phase_result(&PhaseResult::Warn("warning".to_string()));
+        assert!(warning.contains("WARN"));
+        assert!(warning.contains("warning"));
+
+        let skipped = render_phase_result(&PhaseResult::Skip("skipped".to_string()));
+        assert!(skipped.contains("SKIP"));
+        assert!(skipped.contains("skipped"));
+    }
+
+    #[test]
+    fn rate_limit_notice_and_persistence_counts_pin_boundaries() {
+        assert_eq!(rate_limit_notice(0), None);
+        let notice = rate_limit_notice(1).expect("positive rate limit should be visible");
+        assert!(notice.contains("Rate limit:"));
+        assert!(notice.contains('1'));
+        assert!(notice.contains("req/s"));
+
+        assert_eq!(updated_finding_count(5, 2).expect("valid persistence counts"), 3);
+        assert_eq!(updated_finding_count(0, 0).expect("empty persistence counts"), 0);
+        let error = updated_finding_count(2, 3).expect_err("impossible count must fail");
+        assert_eq!(
+            error.to_string(),
+            "database error: finding persistence reported 3 new rows for only 2 findings"
+        );
+    }
+
+    #[tokio::test]
+    async fn planning_outcomes_distinguish_disabled_unavailable_and_denied() {
+        let target = Target::parse("https://example.com").expect("parse target");
+
+        let disabled_config = Arc::new(AppConfig {
+            ai: crate::config::AiConfig { enabled: false, ..Default::default() },
+            ..AppConfig::default()
+        });
+        assert_eq!(
+            run_ai_planning(&disabled_config, &target, "quick").await,
+            AiPlanningOutcome {
+                module_ids: None,
+                phase: PhaseResult::Skip("AI disabled in config".to_string()),
+            }
+        );
+
+        let unavailable_config = Arc::new(AppConfig {
+            ai: crate::config::AiConfig {
+                binary: Some("scorchkit-test-ai-provider-does-not-exist".to_string()),
+                ..Default::default()
+            },
+            ..AppConfig::default()
+        });
+        assert_eq!(
+            run_ai_planning(&unavailable_config, &target, "quick").await,
+            AiPlanningOutcome {
+                module_ids: None,
+                phase: PhaseResult::Skip("Codex CLI not available — using profile".to_string()),
+            }
+        );
+
+        let current_executable = std::env::current_exe()
+            .unwrap_or_else(|error| panic!("failed to resolve test executable: {error}"));
+        let denied_config = Arc::new(AppConfig {
+            ai: crate::config::AiConfig {
+                binary: Some(current_executable.display().to_string()),
+                ..Default::default()
+            },
+            ..AppConfig::default()
+        });
+        let denied = run_ai_planning(&denied_config, &target, "quick").await;
+        assert!(denied.module_ids.is_none());
+        assert!(matches!(
+            denied.phase,
+            PhaseResult::Warn(message) if message.contains("no engagement authorization")
+        ));
+    }
+
+    #[tokio::test]
+    async fn analysis_outcomes_distinguish_disabled_empty_and_denied() {
+        let disabled_config = Arc::new(AppConfig {
+            ai: crate::config::AiConfig { enabled: false, ..Default::default() },
+            ..AppConfig::default()
+        });
+        assert_eq!(
+            run_ai_analysis(&disabled_config, &scan_result(vec![])).await,
+            AiAnalysisOutcome {
+                rendered_analysis: None,
+                phase: PhaseResult::Skip("AI disabled".to_string()),
+            }
+        );
+
+        let default_config = Arc::new(AppConfig::default());
+        assert_eq!(
+            run_ai_analysis(&default_config, &scan_result(vec![])).await,
+            AiAnalysisOutcome {
+                rendered_analysis: None,
+                phase: PhaseResult::Skip("No findings to analyze".to_string()),
+            }
+        );
+
+        let finding = crate::engine::finding::Finding::new(
+            "fixture",
+            crate::engine::severity::Severity::High,
+            "Fixture finding",
+            "fixture",
+            "https://example.com",
+        );
+        let denied = run_ai_analysis(&default_config, &scan_result(vec![finding])).await;
+        assert!(denied.rendered_analysis.is_none());
+        assert!(matches!(
+            denied.phase,
+            PhaseResult::Warn(message) if message.contains("no engagement authorization")
+        ));
+    }
+
+    #[tokio::test]
+    async fn autonomous_agent_denies_before_effects_without_engagement() {
+        let result = run_autonomous(
+            &Arc::new(AppConfig::default()),
+            "http://127.0.0.1:9",
+            "quick",
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            result.is_err_and(|error| error.to_string().contains("no engagement authorization")),
+            "autonomous execution must fail before loopback I/O"
+        );
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn agent_persistence_writes_scan_and_findings() {
+        let Ok(database_url) = std::env::var("DATABASE_URL") else {
+            return;
+        };
+        let pool = crate::storage::connect(&database_url).await.expect("database connection");
+        crate::storage::migrate::run_migrations(&pool).await.expect("database migrations");
+        let project_name = format!("agent-persist-{}", uuid::Uuid::new_v4());
+        let project = crate::storage::projects::create_project(&pool, &project_name, "fixture")
+            .await
+            .expect("create project");
+        let finding = crate::engine::finding::Finding::new(
+            "fixture",
+            crate::engine::severity::Severity::High,
+            "Persisted finding",
+            "fixture",
+            "https://example.com",
+        );
+        let result = scan_result(vec![finding]);
+
+        let persisted = persist_agent_results(
+            &Arc::new(AppConfig::default()),
+            &project_name,
+            Some(&database_url),
+            &result,
+        )
+        .await;
+        let scan_count =
+            crate::storage::scans::list_scans(&pool, project.id).await.expect("list scans").len();
+        let finding_count = crate::storage::findings::list_findings(&pool, project.id)
+            .await
+            .expect("list findings")
+            .len();
+        crate::storage::projects::delete_project(&pool, project.id).await.expect("delete project");
+
+        assert!(persisted.is_ok(), "agent persistence failed: {persisted:?}");
+        assert_eq!(scan_count, 1);
+        assert_eq!(finding_count, 1);
     }
 }

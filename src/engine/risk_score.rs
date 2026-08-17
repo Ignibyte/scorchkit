@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn test_risk_score_compliance_impact() {
         let base = finding_with(Severity::Medium, "https://example.com", 0.8);
-        let with_compliance = base.clone().with_compliance(vec![
+        let with_compliance = base.with_compliance(vec![
             "NIST AC-3".into(),
             "PCI-DSS 7.2".into(),
             "HIPAA 312(a)".into(),

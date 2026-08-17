@@ -523,10 +523,10 @@ fn has_field_suggestions(body: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// Test suite for GraphQL deep security module.
-    ///
-    /// Tests query building, response analysis, and endpoint detection
-    /// without requiring a live GraphQL server.
+    // Test suite for GraphQL deep security module.
+    //
+    // Tests query building, response analysis, and endpoint detection
+    // without requiring a live GraphQL server.
 
     /// Verify depth query generation at various nesting levels.
     ///

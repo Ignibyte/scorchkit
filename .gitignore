@@ -7,3 +7,5 @@
 .mcp.json
 reports/
 .claude/worktrees/
+mutants.out/
+mutants.diff

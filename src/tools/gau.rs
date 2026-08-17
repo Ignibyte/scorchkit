@@ -13,7 +13,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Passive URL discovery via Gau (Wayback Machine, Common Crawl).
 #[derive(Debug)]
@@ -48,8 +47,7 @@ impl ScanModule for GauModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let domain = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
 
-        let output =
-            subprocess::run_tool("gau", &["--subs", domain], Duration::from_secs(120)).await?;
+        let output = ctx.run_tool("gau", &["--subs", domain], Duration::from_mins(2)).await?;
 
         Ok(parse_gau_output(&output.stdout, ctx.target.url.as_str()))
     }

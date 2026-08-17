@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Fast subdomain discovery via Subfinder.
 #[derive(Debug)]
@@ -40,12 +39,9 @@ impl ScanModule for SubfinderModule {
             reason: "no domain for subdomain discovery".to_string(),
         })?;
 
-        let output = subprocess::run_tool(
-            "subfinder",
-            &["-d", domain, "-silent", "-json"],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool("subfinder", &["-d", domain, "-silent", "-json"], Duration::from_mins(2))
+            .await?;
 
         Ok(parse_subfinder_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -96,7 +92,7 @@ fn parse_subfinder_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for Subfinder output parser (JSON and plain text).
+    // Tests for Subfinder output parser (JSON and plain text).
 
     /// Verify that `parse_subfinder_output` correctly aggregates subdomains
     /// from Subfinder JSON-lines output into a consolidated finding.

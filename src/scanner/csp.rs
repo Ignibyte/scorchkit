@@ -306,7 +306,7 @@ fn check_report_uri_leak(
 mod tests {
     use super::*;
 
-    /// Test suite for CSP bypass detection.
+    // Test suite for CSP bypass detection.
 
     /// Verify CSP directive parsing from realistic header strings.
     ///

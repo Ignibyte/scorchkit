@@ -20,7 +20,8 @@
 //! ## Empty registry in WORK-150
 //!
 //! The load-bearing type surface ships in WORK-150 without any concrete
-//! modules. [`crate::cloud::register_modules`] returns an empty vec.
+//! modules. [`crate::cloud::register_modules`] returns the policy-supported
+//! external-tool adapters; provider SDK modules remain quarantined.
 //! Concrete modules land in WORK-151 (Prowler-as-CloudModule),
 //! WORK-152 (Scoutsuite), WORK-153 (Kubescape), and WORK-154
 //! (finding-shape normalization).

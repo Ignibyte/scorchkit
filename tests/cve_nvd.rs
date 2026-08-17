@@ -16,6 +16,7 @@
 #![cfg(feature = "infra")]
 
 use std::env;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use httpmock::Method::GET;
@@ -26,10 +27,11 @@ use scorchkit::config::AppConfig;
 use scorchkit::engine::cve::CveLookup;
 use scorchkit::engine::infra_context::InfraContext;
 use scorchkit::engine::infra_module::InfraModule;
-use scorchkit::engine::infra_target::InfraTarget;
+use scorchkit::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
 use scorchkit::engine::service_fingerprint::{publish_fingerprints, ServiceFingerprint};
 use scorchkit::infra::cve_match::CveMatchModule;
-use scorchkit::infra::cve_nvd::NvdCveLookup;
+use scorchkit::infra::cve_nvd::{NvdCveLookup, DEFAULT_BASE_URL};
+use scorchkit::{Engine, ScopeRule, ScorchError};
 
 const NGINX_CPE: &str = "cpe:2.3:a:nginx:nginx:1.25.3:*:*:*:*:*:*:*";
 const UNKNOWN_CPE: &str = "cpe:2.3:a:unknownvendor:unknownproduct:0.0.0:*:*:*:*:*:*:*";
@@ -37,11 +39,57 @@ const NGINX_FIXTURE: &str = include_str!("fixtures/nvd/nginx_cve_response.json")
 const EMPTY_FIXTURE: &str = include_str!("fixtures/nvd/empty_response.json");
 
 /// Build a fresh `InfraContext` rooted at 127.0.0.1.
-fn ctx() -> InfraContext {
-    let target = InfraTarget::Ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+fn ctx() -> scorchkit::Result<InfraContext> {
     let config = Arc::new(AppConfig::default());
-    let client = reqwest::Client::builder().build().expect("client");
-    InfraContext::new(target, config, client)
+    let policy = EngagementPolicy::default()
+        .allow_scope(ScopeRule::Exact("127.0.0.1".to_string()))
+        .allow_capability(Capability::InfraScan)
+        .allow_capability(Capability::ExternalTool)
+        .allow_effect(EffectClass::ActiveSafe);
+    Engine::for_engagement(config, Arc::new(Engagement::new("cve fixture", policy)))
+        .infra_context("127.0.0.1")
+}
+
+fn lookup_engagement(cfg: &NvdConfig) -> scorchkit::Result<Arc<Engagement>> {
+    let base_url = cfg.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL);
+    let endpoint = url::Url::parse(base_url)
+        .map_err(|error| ScorchError::Config(format!("fixture backend URL: {error}")))?;
+    let host = endpoint
+        .host_str()
+        .ok_or_else(|| ScorchError::Config("fixture backend has no host".to_string()))?
+        .to_string();
+    let cache_dir = cfg
+        .cache_dir
+        .as_deref()
+        .ok_or_else(|| ScorchError::Config("fixture cache directory missing".to_string()))?;
+    let policy = EngagementPolicy::default()
+        .allow_scope(
+            ScopeRule::parse(&host)
+                .ok_or_else(|| ScorchError::Config("invalid backend host scope".to_string()))?,
+        )
+        .allow_scope(ScopeRule::path_prefix(cache_dir)?)
+        .allow_capability(Capability::InfraScan)
+        .allow_effect(EffectClass::Passive);
+    Ok(Arc::new(Engagement::new("authorized CVE fixture", policy)))
+}
+
+async fn live_lookup_engagement(cfg: &NvdConfig) -> scorchkit::Result<Arc<Engagement>> {
+    let base_url = cfg.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL);
+    let endpoint = url::Url::parse(base_url)
+        .map_err(|error| ScorchError::Config(format!("live backend URL: {error}")))?;
+    let host = endpoint
+        .host_str()
+        .ok_or_else(|| ScorchError::Config("live backend has no host".to_string()))?;
+    let port = endpoint
+        .port_or_known_default()
+        .ok_or_else(|| ScorchError::Config("live backend has no port".to_string()))?;
+    let mut engagement = (*lookup_engagement(cfg)?).clone();
+    for address in tokio::net::lookup_host((host, port)).await? {
+        let rule = ScopeRule::parse(&address.ip().to_string())
+            .ok_or_else(|| ScorchError::Config("invalid resolved address scope".to_string()))?;
+        engagement.policy.allowed_scope.push(rule);
+    }
+    Ok(Arc::new(engagement))
 }
 
 /// Build a `ServiceFingerprint` carrying a CPE — the field
@@ -75,10 +123,14 @@ async fn nvd_lookup_against_mock_server_emits_findings() {
         cache_ttl_secs: 3600,
         delta_sync: false,
     };
-    let lookup = NvdCveLookup::from_config(&cfg).expect("build lookup");
+    let lookup = NvdCveLookup::from_config(
+        &cfg,
+        lookup_engagement(&cfg).expect("authorized lookup fixture"),
+    )
+    .expect("build lookup");
     let module = CveMatchModule::new(Box::new(lookup));
 
-    let ctx = ctx();
+    let ctx = ctx().expect("authorized infra fixture");
     publish_fingerprints(&ctx.shared_data, &[nginx_fingerprint()]);
     let findings = module.run(&ctx).await.expect("run");
 
@@ -107,7 +159,11 @@ async fn nvd_lookup_caches_after_first_query() {
         cache_ttl_secs: 3600,
         delta_sync: false,
     };
-    let lookup = NvdCveLookup::from_config(&cfg).expect("build lookup");
+    let lookup = NvdCveLookup::from_config(
+        &cfg,
+        lookup_engagement(&cfg).expect("authorized lookup fixture"),
+    )
+    .expect("build lookup");
 
     // Two direct trait calls — bypasses module overhead so the cache
     // assertion is precise.
@@ -137,7 +193,11 @@ async fn nvd_lookup_empty_response_is_negative_cached() {
         cache_ttl_secs: 3600,
         delta_sync: false,
     };
-    let lookup = NvdCveLookup::from_config(&cfg).expect("build lookup");
+    let lookup = NvdCveLookup::from_config(
+        &cfg,
+        lookup_engagement(&cfg).expect("authorized lookup fixture"),
+    )
+    .expect("build lookup");
 
     let first = lookup.query(UNKNOWN_CPE).await.expect("first");
     let second = lookup.query(UNKNOWN_CPE).await.expect("second");
@@ -171,7 +231,8 @@ async fn nvd_lookup_live_smoke() {
         cache_ttl_secs: 3600,
         delta_sync: false,
     };
-    let lookup = NvdCveLookup::from_config(&cfg).expect("build lookup");
+    let engagement = live_lookup_engagement(&cfg).await.expect("authorize live lookup");
+    let lookup = NvdCveLookup::from_config(&cfg, engagement).expect("build lookup");
     // A historically vulnerable nginx version — should return at least one CVE.
     let cpe = "cpe:2.3:a:nginx:nginx:1.18.0:*:*:*:*:*:*:*";
     let records = lookup.query(cpe).await.expect("live query");
@@ -191,9 +252,11 @@ fn build_page_body(total_results: usize, page_cves: &[(&str, &str)]) -> String {
         if i > 0 {
             vulns.push(',');
         }
-        vulns.push_str(&format!(
+        write!(
+            vulns,
             r#"{{"cve":{{"id":"{id}","descriptions":[{{"lang":"en","value":"{desc}"}}]}}}}"#
-        ));
+        )
+        .unwrap_or_else(|_| unreachable!("writing to a String cannot fail"));
     }
     format!(
         r#"{{"resultsPerPage":10,"startIndex":0,"totalResults":{total_results},"vulnerabilities":[{vulns}]}}"#
@@ -221,7 +284,11 @@ async fn nvd_pagination_single_page_no_extra_calls() {
         cache_ttl_secs: 3600,
         delta_sync: false,
     };
-    let lookup = NvdCveLookup::from_config(&cfg).expect("build lookup");
+    let lookup = NvdCveLookup::from_config(
+        &cfg,
+        lookup_engagement(&cfg).expect("authorized lookup fixture"),
+    )
+    .expect("build lookup");
     let records = lookup.query(cpe_small).await.expect("query");
     assert_eq!(records.len(), 1);
     mock.assert_calls(1);
@@ -284,7 +351,11 @@ async fn nvd_pagination_multi_page_aggregates() {
         cache_ttl_secs: 3600,
         delta_sync: false,
     };
-    let lookup = NvdCveLookup::from_config(&cfg).expect("build lookup");
+    let lookup = NvdCveLookup::from_config(
+        &cfg,
+        lookup_engagement(&cfg).expect("authorized lookup fixture"),
+    )
+    .expect("build lookup");
     let records = lookup.query(cpe_big).await.expect("query");
     assert_eq!(records.len(), 15, "pagination must aggregate all pages");
     page0_mock.assert_calls(1);
@@ -312,7 +383,11 @@ async fn nvd_pagination_zero_records_breaks_loop() {
         cache_ttl_secs: 3600,
         delta_sync: false,
     };
-    let lookup = NvdCveLookup::from_config(&cfg).expect("build lookup");
+    let lookup = NvdCveLookup::from_config(
+        &cfg,
+        lookup_engagement(&cfg).expect("authorized lookup fixture"),
+    )
+    .expect("build lookup");
     let records = lookup.query(cpe_z).await.expect("query");
     assert!(records.is_empty());
     mock.assert_calls(1);
@@ -339,7 +414,11 @@ async fn nvd_delta_sync_disabled_skips_delta_query() {
         cache_ttl_secs: 3600,
         delta_sync: false,
     };
-    let lookup = NvdCveLookup::from_config(&cfg).expect("build lookup");
+    let lookup = NvdCveLookup::from_config(
+        &cfg,
+        lookup_engagement(&cfg).expect("authorized lookup fixture"),
+    )
+    .expect("build lookup");
 
     // First query populates the cache.
     let _ = lookup.query(cpe_cached).await.expect("first query");
@@ -383,7 +462,11 @@ async fn nvd_delta_sync_enabled_cache_hit_issues_delta_query() {
         cache_ttl_secs: 3600,
         delta_sync: true,
     };
-    let lookup = NvdCveLookup::from_config(&cfg).expect("build lookup");
+    let lookup = NvdCveLookup::from_config(
+        &cfg,
+        lookup_engagement(&cfg).expect("authorized lookup fixture"),
+    )
+    .expect("build lookup");
 
     let _initial_records = lookup.query(cpe_delta).await.expect("first query populates cache");
     let merged = lookup.query(cpe_delta).await.expect("second query delta-syncs");
@@ -418,7 +501,11 @@ async fn nvd_delta_sync_enabled_cache_miss_full_query() {
         cache_ttl_secs: 3600,
         delta_sync: true,
     };
-    let lookup = NvdCveLookup::from_config(&cfg).expect("build lookup");
+    let lookup = NvdCveLookup::from_config(
+        &cfg,
+        lookup_engagement(&cfg).expect("authorized lookup fixture"),
+    )
+    .expect("build lookup");
     let records = lookup.query(cpe_fresh).await.expect("query");
     assert_eq!(records.len(), 1);
     mock.assert_calls(1);

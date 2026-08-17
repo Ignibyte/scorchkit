@@ -14,7 +14,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// `IaC` security via KICS.
 #[derive(Debug)]
@@ -52,12 +51,21 @@ impl CodeModule for KicsModule {
             return Ok(Vec::new());
         };
         let out_dir = tmp.path().to_string_lossy().to_string();
-        let _output = subprocess::run_tool_lenient(
-            "kics",
-            &["scan", "--path", &path_str, "--output-path", &out_dir, "--report-formats", "json"],
-            Duration::from_secs(180),
-        )
-        .await?;
+        let _output = ctx
+            .run_tool_lenient(
+                "kics",
+                &[
+                    "scan",
+                    "--path",
+                    &path_str,
+                    "--output-path",
+                    &out_dir,
+                    "--report-formats",
+                    "json",
+                ],
+                Duration::from_mins(3),
+            )
+            .await?;
         let json_path = format!("{out_dir}/results.json");
         let json = std::fs::read_to_string(&json_path).unwrap_or_default();
         Ok(parse_kics_output(&json))

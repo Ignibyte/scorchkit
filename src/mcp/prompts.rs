@@ -1,6 +1,6 @@
 //! MCP prompt templates for pentest workflows.
 //!
-//! Provides structured prompt templates that give Claude starting points
+//! Provides structured prompt templates that give MCP-capable agent hosts starting points
 //! for common security assessment workflows. Exposed via the MCP prompts
 //! capability (`list_prompts`, `get_prompt`).
 
@@ -444,16 +444,16 @@ fn correlation_rules() -> Vec<CorrelationRule> {
                         vulnerability is real, not a scanner false positive.",
             priority: "immediate",
             trigger: |fs| {
-                let has_dast_sqli = fs.iter().any(|f| {
+                let has_runtime_sqli = fs.iter().any(|f| {
                     f.module_id == "injection" || f.module_id == "sqlmap" || f.module_id == "nosql"
                 });
-                let has_sast_sqli = fs.iter().any(|f| {
+                let has_static_sqli = fs.iter().any(|f| {
                     is_sast_module(&f.module_id)
                         && (title_has(f, "sql")
                             || title_has(f, "injection")
                             || title_has(f, "G201"))
                 });
-                has_dast_sqli && has_sast_sqli
+                has_runtime_sqli && has_static_sqli
             },
             member_filter: |f| {
                 title_has(f, "sql")
@@ -564,7 +564,7 @@ fn correlation_rules() -> Vec<CorrelationRule> {
                         runtime vulnerability is not a false positive.",
             priority: "immediate",
             trigger: |fs| {
-                let has_sast_auth = fs.iter().any(|f| {
+                let has_static_auth = fs.iter().any(|f| {
                     is_sast_module(&f.module_id)
                         && (title_has(f, "auth")
                             || title_has(f, "password")
@@ -572,13 +572,13 @@ fn correlation_rules() -> Vec<CorrelationRule> {
                             || title_has(f, "jwt")
                             || title_has(f, "token"))
                 });
-                let has_dast_auth = fs.iter().any(|f| {
+                let has_runtime_auth = fs.iter().any(|f| {
                     f.module_id == "auth"
                         || f.module_id == "jwt"
                         || f.module_id == "idor"
                         || (!is_sast_module(&f.module_id) && title_has(f, "auth"))
                 });
-                has_sast_auth && has_dast_auth
+                has_static_auth && has_runtime_auth
             },
             member_filter: |f| {
                 title_has(f, "auth")
@@ -959,7 +959,7 @@ mod tests {
         assert!(chains.iter().any(|c| c.name.contains("Vulnerable Dependency")));
     }
 
-    /// Verify IaC + runtime misconfig triggers the cross-domain chain.
+    /// Verify `IaC` + runtime misconfig triggers the cross-domain chain.
     #[test]
     fn test_correlate_cross_iac_misconfig() {
         let findings = vec![

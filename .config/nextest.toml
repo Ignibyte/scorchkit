@@ -1,0 +1,5 @@
+[profile.default]
+# Report tests after 30 seconds and terminate them after two minutes. Network and
+# subprocess code must have its own shorter timeout; this is the final backstop.
+slow-timeout = { period = "30s", terminate-after = 4 }
+retries = 0

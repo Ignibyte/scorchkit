@@ -124,8 +124,7 @@ mod tests {
     fn ctx() -> InfraContext {
         let target = InfraTarget::Ip(IpAddr::V4(Ipv4Addr::LOCALHOST));
         let config = Arc::new(AppConfig::default());
-        let client = reqwest::Client::builder().build().expect("client");
-        InfraContext::new(target, config, client)
+        InfraContext::new(target, config, Vec::new())
     }
 
     fn fixture_record(id: &str, cpe: &str, score: f64) -> CveRecord {

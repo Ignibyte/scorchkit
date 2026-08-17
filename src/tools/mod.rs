@@ -51,7 +51,7 @@ use crate::engine::module_trait::ScanModule;
 #[must_use]
 pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
     vec![
-        Box::new(interactsh::InteractshModule),
+        Box::new(interactsh::InteractshModule::default()),
         Box::new(nmap::NmapModule),
         Box::new(nuclei::NucleiModule),
         Box::new(nikto::NiktoModule),

@@ -3,7 +3,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 use async_trait::async_trait;
 use std::time::Duration;
 
@@ -37,22 +36,23 @@ impl ScanModule for HttpxModule {
             reason: "no domain".to_string(),
         })?;
 
-        let output = subprocess::run_tool(
-            "httpx",
-            &[
-                "-target",
-                domain,
-                "-json",
-                "-silent",
-                "-tech-detect",
-                "-status-code",
-                "-title",
-                "-web-server",
-                "-cdn",
-            ],
-            Duration::from_secs(60),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "httpx",
+                &[
+                    "-target",
+                    domain,
+                    "-json",
+                    "-silent",
+                    "-tech-detect",
+                    "-status-code",
+                    "-title",
+                    "-web-server",
+                    "-cdn",
+                ],
+                Duration::from_mins(1),
+            )
+            .await?;
 
         Ok(parse_httpx_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -107,7 +107,7 @@ fn parse_httpx_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for httpx JSON-lines output parser.
+    // Tests for httpx JSON-lines output parser.
 
     /// Verify that `parse_httpx_output` correctly extracts probe results
     /// including title, server, technology, and CDN detection.

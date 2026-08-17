@@ -5,12 +5,14 @@
 //! checks minimum version requirements, and runs tool-specific
 //! health checks like nuclei template freshness.
 
-use std::process::Command;
-use std::time::Duration;
+use std::{fmt::Write, time::Duration};
 
 use colored::Colorize;
 
 use crate::engine::error::Result;
+use crate::runner::subprocess::{
+    resolve_tool_path, SystemToolExecutor, ToolExecutor, ToolInvocation,
+};
 
 /// Declarative specification for an external tool.
 struct ToolSpec {
@@ -23,6 +25,7 @@ struct ToolSpec {
 }
 
 /// Result of checking a single tool.
+#[derive(Debug)]
 struct ToolCheckResult {
     name: &'static str,
     category: &'static str,
@@ -36,9 +39,49 @@ struct ToolCheckResult {
 }
 
 /// A note from a deep check — warn or info level.
+#[derive(Debug, PartialEq, Eq)]
 enum DeepNote {
     Warn(String),
     Info(String),
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DeepCheckPlan {
+    version_flag: Option<&'static str>,
+    check_nuclei_templates: bool,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DoctorSummary {
+    installed: usize,
+    missing: usize,
+    version_pass: usize,
+    version_fail: usize,
+    warnings: usize,
+}
+
+impl DoctorSummary {
+    fn from_results(results: &[ToolCheckResult]) -> Self {
+        Self {
+            installed: results.iter().filter(|result| result.installed).count(),
+            missing: results.iter().filter(|result| !result.installed).count(),
+            version_pass: results.iter().filter(|result| result.version_ok == Some(true)).count(),
+            version_fail: results.iter().filter(|result| result.version_ok == Some(false)).count(),
+            warnings: results
+                .iter()
+                .flat_map(|result| &result.deep_notes)
+                .filter(|note| matches!(note, DeepNote::Warn(_)))
+                .count(),
+        }
+    }
+
+    const fn total(&self) -> usize {
+        self.installed + self.missing
+    }
+
+    const fn version_checked(&self) -> usize {
+        self.version_pass + self.version_fail
+    }
 }
 
 /// Parsed version for numeric comparison.
@@ -116,36 +159,23 @@ fn extract_version(text: &str) -> Option<String> {
 /// Check if a tool binary is available in PATH.
 #[must_use]
 pub fn is_tool_available(tool: &str) -> bool {
-    Command::new("which").arg(tool).output().map(|o| o.status.success()).unwrap_or(false)
+    crate::runner::subprocess::is_tool_available(tool)
 }
 
 /// Get the full path of a tool binary.
 fn which_path(tool: &str) -> Option<String> {
-    Command::new("which").arg(tool).output().ok().and_then(|o| {
-        if o.status.success() {
-            Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-        } else {
-            None
-        }
-    })
+    resolve_tool_path(tool).ok().map(|path| path.display().to_string())
 }
 
 /// Run a tool with a version flag and extract the version string.
-fn get_tool_version(binary: &str, version_flag: &str) -> Option<String> {
-    let output = Command::new(binary)
-        .arg(version_flag)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .ok()
-        .and_then(|child| child.wait_with_output().ok())?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+async fn get_tool_version(binary: &str, version_flag: &str) -> Option<String> {
+    let output = SystemToolExecutor
+        .execute(ToolInvocation::lenient(binary, &[version_flag], Duration::from_secs(10)))
+        .await
+        .ok()?;
 
     // Try stdout first, then stderr (some tools print version to stderr)
-    extract_version(&stdout).or_else(|| extract_version(&stderr))
+    extract_version(&output.stdout).or_else(|| extract_version(&output.stderr))
 }
 
 /// Check nuclei template freshness by examining the templates directory.
@@ -163,13 +193,7 @@ fn check_nuclei_templates() -> DeepNote {
             if let Ok(metadata) = std::fs::metadata(dir) {
                 if let Ok(modified) = metadata.modified() {
                     let age = modified.elapsed().unwrap_or(Duration::from_secs(0));
-                    let days = age.as_secs() / 86400;
-                    if days > 30 {
-                        return DeepNote::Warn(format!(
-                            "Templates last updated {days} days ago. Run: nuclei -ut"
-                        ));
-                    }
-                    return DeepNote::Info(format!("Templates updated {days} days ago"));
+                    return template_age_note(age);
                 }
             }
         }
@@ -178,8 +202,28 @@ fn check_nuclei_templates() -> DeepNote {
     DeepNote::Warn("Templates directory not found. Run: nuclei -ut".to_string())
 }
 
+fn template_age_note(age: Duration) -> DeepNote {
+    let days = age.as_secs() / 86_400;
+    if days > 30 {
+        DeepNote::Warn(format!("Templates last updated {days} days ago. Run: nuclei -ut"))
+    } else {
+        DeepNote::Info(format!("Templates updated {days} days ago"))
+    }
+}
+
+fn deep_check_plan(spec: &ToolSpec, deep: bool, installed: bool) -> DeepCheckPlan {
+    if deep && installed {
+        DeepCheckPlan {
+            version_flag: spec.version_flag,
+            check_nuclei_templates: spec.binary == "nuclei",
+        }
+    } else {
+        DeepCheckPlan::default()
+    }
+}
+
 /// All external tools that `ScorchKit` can use.
-#[allow(clippy::too_many_lines)] // Declarative data table — splitting would reduce readability.
+#[allow(clippy::too_many_lines)] // JUSTIFICATION: declarative table; splitting reduces readability.
 fn tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
@@ -351,9 +395,17 @@ fn tool_specs() -> Vec<ToolSpec> {
             remediation: "Install: see https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html",
         },
         ToolSpec {
+            binary: "codex",
+            name: "Codex CLI",
+            category: "AI Analysis (preferred)",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: npm install -g @openai/codex",
+        },
+        ToolSpec {
             binary: "claude",
-            name: "Claude Code",
-            category: "AI Analysis",
+            name: "Claude CLI",
+            category: "AI Analysis (compatibility)",
             version_flag: Some("--version"),
             min_version: None,
             remediation: "Install: npm install -g @anthropic-ai/claude-code",
@@ -673,31 +725,27 @@ fn tool_specs() -> Vec<ToolSpec> {
 }
 
 /// Check a single tool and return the result.
-fn check_tool(spec: &ToolSpec, deep: bool) -> ToolCheckResult {
+async fn check_tool(spec: &ToolSpec, deep: bool) -> ToolCheckResult {
     let installed = is_tool_available(spec.binary);
     let path = if installed { which_path(spec.binary) } else { None };
+    let plan = deep_check_plan(spec, deep, installed);
 
     let mut version = None;
     let mut version_ok = None;
     let mut deep_notes = Vec::new();
 
-    if deep && installed {
-        // Extract version
-        if let Some(flag) = spec.version_flag {
-            version = get_tool_version(spec.binary, flag);
+    if let Some(flag) = plan.version_flag {
+        version = get_tool_version(spec.binary, flag).await;
 
-            // Compare against minimum
-            if let (Some(ref ver_str), Some(min_str)) = (&version, spec.min_version) {
-                if let (Some(ver), Some(min)) = (Version::parse(ver_str), Version::parse(min_str)) {
-                    version_ok = Some(ver.is_at_least(&min));
-                }
+        if let (Some(ref ver_str), Some(min_str)) = (&version, spec.min_version) {
+            if let (Some(ver), Some(min)) = (Version::parse(ver_str), Version::parse(min_str)) {
+                version_ok = Some(ver.is_at_least(&min));
             }
         }
+    }
 
-        // Nuclei-specific: template freshness
-        if spec.binary == "nuclei" {
-            deep_notes.push(check_nuclei_templates());
-        }
+    if plan.check_nuclei_templates {
+        deep_notes.push(check_nuclei_templates());
     }
 
     ToolCheckResult {
@@ -721,7 +769,7 @@ fn check_tool(spec: &ToolSpec, deep: bool) -> ToolCheckResult {
 /// # Errors
 ///
 /// Returns an error if terminal output fails.
-pub fn run_doctor(deep: bool) -> Result<()> {
+pub async fn run_doctor(deep: bool) -> Result<()> {
     println!();
     if deep {
         println!("{}", "ScorchKit Doctor (deep)".bold().underline());
@@ -731,128 +779,311 @@ pub fn run_doctor(deep: bool) -> Result<()> {
     println!();
 
     let specs = tool_specs();
-    let results: Vec<ToolCheckResult> = specs.iter().map(|spec| check_tool(spec, deep)).collect();
-
-    let mut installed_count = 0u32;
-    let mut missing_count = 0u32;
-    let mut version_pass = 0u32;
-    let mut version_fail = 0u32;
-    let mut warn_count = 0u32;
+    let mut results = Vec::with_capacity(specs.len());
+    for spec in &specs {
+        results.push(check_tool(spec, deep).await);
+    }
 
     for result in &results {
-        if result.installed {
-            installed_count += 1;
-            print_installed_tool(result, deep);
+        print!("{}", render_tool_result(result, deep));
+    }
+
+    print!("{}", render_doctor_summary(&DoctorSummary::from_results(&results), deep));
+    Ok(())
+}
+
+fn render_tool_result(result: &ToolCheckResult, deep: bool) -> String {
+    let mut output = String::new();
+    let path = crate::report::terminal::escape_terminal_text(result.path.as_deref().unwrap_or(""));
+
+    if result.installed {
+        if deep {
+            let version = crate::report::terminal::escape_terminal_text(
+                result.version.as_deref().unwrap_or("-"),
+            );
+            let version_note = match (result.version_ok, result.min_version) {
+                (Some(true), Some(min)) => format!("(>= {min})").green().to_string(),
+                (Some(false), Some(min)) => format!("(need >= {min})").red().to_string(),
+                _ => String::new(),
+            };
+            let status = match result.version_ok {
+                Some(false) => "FAIL".red().bold().to_string(),
+                _ => "OK".green().bold().to_string(),
+            };
+            let _ = writeln!(
+                output,
+                "  {status:<4} {:<20} {:<18} {version:<8} {version_note:<16} {}",
+                result.name,
+                result.category.dimmed(),
+                path.dimmed()
+            );
         } else {
-            missing_count += 1;
-            print_missing_tool(result, deep);
+            let _ = writeln!(
+                output,
+                "  {} {:<20} {:<16} {}",
+                "OK".green().bold(),
+                result.name,
+                result.category.dimmed(),
+                path.dimmed()
+            );
         }
+    } else if deep {
+        let _ = writeln!(
+            output,
+            "  {:<4} {:<20} {}",
+            "--".red(),
+            result.name,
+            result.category.dimmed()
+        );
+        let _ = writeln!(output, "     {} {}", "hint".dimmed(), result.remediation.dimmed());
+    } else {
+        let _ =
+            writeln!(output, "  {} {:<20} {}", "--".red(), result.name, result.category.dimmed());
+    }
 
-        // Count version results
-        match result.version_ok {
-            Some(true) => version_pass += 1,
-            Some(false) => version_fail += 1,
-            None => {}
-        }
-
-        // Count and print deep notes
-        for note in &result.deep_notes {
-            match note {
-                DeepNote::Warn(msg) => {
-                    warn_count += 1;
-                    println!("     {} {}", "WARN".yellow().bold(), msg);
-                }
-                DeepNote::Info(msg) => {
-                    println!("     {} {}", "info".dimmed(), msg.dimmed());
-                }
+    for note in &result.deep_notes {
+        match note {
+            DeepNote::Warn(message) => {
+                let message = crate::report::terminal::escape_terminal_text(message);
+                let _ = writeln!(output, "     {} {message}", "WARN".yellow().bold());
+            }
+            DeepNote::Info(message) => {
+                let message = crate::report::terminal::escape_terminal_text(message);
+                let _ = writeln!(output, "     {} {}", "info".dimmed(), message.dimmed());
             }
         }
     }
 
-    // Summary
-    println!();
-    let total = installed_count + missing_count;
-    println!("  {}/{} tools installed", installed_count.to_string().green().bold(), total);
+    output
+}
+
+fn render_doctor_summary(summary: &DoctorSummary, deep: bool) -> String {
+    let mut output = String::from("\n");
+    let _ = writeln!(
+        output,
+        "  {}/{} tools installed",
+        summary.installed.to_string().green().bold(),
+        summary.total()
+    );
 
     if deep {
-        let checked = version_pass + version_fail;
+        let checked = summary.version_checked();
         if checked > 0 {
-            println!(
+            let _ = writeln!(
+                output,
                 "  {}/{} version checks passed",
-                version_pass.to_string().green().bold(),
+                summary.version_pass.to_string().green().bold(),
                 checked
             );
         }
-        if version_fail > 0 {
-            println!(
+        if summary.version_fail > 0 {
+            let _ = writeln!(
+                output,
                 "  {} {}",
-                version_fail.to_string().red().bold(),
+                summary.version_fail.to_string().red().bold(),
                 "version(s) below minimum".red()
             );
         }
-        if warn_count > 0 {
-            println!("  {} warning(s)", warn_count.to_string().yellow().bold());
+        if summary.warnings > 0 {
+            let _ =
+                writeln!(output, "  {} warning(s)", summary.warnings.to_string().yellow().bold());
         }
     }
 
-    if missing_count > 0 {
-        println!("  See {} for install instructions", "docs/tools-checklist.md".cyan());
+    if summary.missing > 0 {
+        let _ =
+            writeln!(output, "  See {} for install instructions", "docs/tools-checklist.md".cyan());
     }
-
-    println!();
-    Ok(())
-}
-
-/// Print a line for an installed tool.
-fn print_installed_tool(result: &ToolCheckResult, deep: bool) {
-    let path_str = result.path.as_deref().unwrap_or("");
-
-    if deep {
-        let version_str = result.version.as_deref().unwrap_or("-");
-        let version_note = match (result.version_ok, result.min_version) {
-            (Some(true), Some(min)) => format!("(>= {min})").green().to_string(),
-            (Some(false), Some(min)) => format!("(need >= {min})").red().to_string(),
-            _ => String::new(),
-        };
-
-        let status = match result.version_ok {
-            Some(false) => "FAIL".red().bold().to_string(),
-            _ => "OK".green().bold().to_string(),
-        };
-
-        println!(
-            "  {:<4} {:<20} {:<18} {:<8} {:<16} {}",
-            status,
-            result.name,
-            result.category.dimmed(),
-            version_str,
-            version_note,
-            path_str.dimmed()
-        );
-    } else {
-        println!(
-            "  {} {:<20} {:<16} {}",
-            "OK".green().bold(),
-            result.name,
-            result.category.dimmed(),
-            path_str.dimmed()
-        );
-    }
-}
-
-/// Print a line for a missing tool.
-fn print_missing_tool(result: &ToolCheckResult, deep: bool) {
-    if deep {
-        println!("  {:<4} {:<20} {}", "--".red(), result.name, result.category.dimmed());
-        println!("     {} {}", "hint".dimmed(), result.remediation.dimmed());
-    } else {
-        println!("  {} {:<20} {}", "--".red(), result.name, result.category.dimmed());
-    }
+    output.push('\n');
+    output
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tool_spec(binary: &'static str) -> ToolSpec {
+        ToolSpec {
+            binary,
+            name: "Fixture Tool",
+            category: "Fixture",
+            version_flag: Some("--version"),
+            min_version: Some("3.0.0"),
+            remediation: "Install the fixture tool",
+        }
+    }
+
+    fn tool_result(
+        installed: bool,
+        version: Option<&str>,
+        version_ok: Option<bool>,
+        notes: Vec<DeepNote>,
+    ) -> ToolCheckResult {
+        ToolCheckResult {
+            name: "Fixture Tool",
+            category: "Fixture",
+            installed,
+            path: installed.then(|| "/opt/fixture\u{1b}".to_string()),
+            version: version.map(str::to_string),
+            version_ok,
+            min_version: Some("3.0.0"),
+            remediation: "Install the fixture tool",
+            deep_notes: notes,
+        }
+    }
+
+    #[test]
+    fn template_age_note_pins_the_thirty_day_boundary() {
+        assert_eq!(
+            template_age_note(Duration::from_hours(720)),
+            DeepNote::Info("Templates updated 30 days ago".to_string())
+        );
+        assert_eq!(
+            template_age_note(Duration::from_hours(744)),
+            DeepNote::Warn("Templates last updated 31 days ago. Run: nuclei -ut".to_string())
+        );
+    }
+
+    #[test]
+    fn deep_check_plan_requires_deep_mode_and_an_installed_tool() {
+        let ordinary = tool_spec("nmap");
+        assert_eq!(deep_check_plan(&ordinary, false, true), DeepCheckPlan::default());
+        assert_eq!(deep_check_plan(&ordinary, true, false), DeepCheckPlan::default());
+        assert_eq!(
+            deep_check_plan(&ordinary, true, true),
+            DeepCheckPlan { version_flag: Some("--version"), check_nuclei_templates: false }
+        );
+
+        let nuclei = tool_spec("nuclei");
+        assert_eq!(
+            deep_check_plan(&nuclei, true, true),
+            DeepCheckPlan { version_flag: Some("--version"), check_nuclei_templates: true }
+        );
+
+        let mut no_version = tool_spec("fixture");
+        no_version.version_flag = None;
+        assert_eq!(
+            deep_check_plan(&no_version, true, true),
+            DeepCheckPlan { version_flag: None, check_nuclei_templates: false }
+        );
+    }
+
+    #[test]
+    fn doctor_summary_counts_asymmetric_result_states() {
+        let results = vec![
+            tool_result(true, Some("3.2.0"), Some(true), vec![DeepNote::Info("fresh".into())]),
+            tool_result(true, Some("2.9.0"), Some(false), vec![DeepNote::Warn("old".into())]),
+            tool_result(true, None, None, Vec::new()),
+            tool_result(false, None, None, Vec::new()),
+        ];
+        let summary = DoctorSummary::from_results(&results);
+        assert_eq!(
+            summary,
+            DoctorSummary {
+                installed: 3,
+                missing: 1,
+                version_pass: 1,
+                version_fail: 1,
+                warnings: 1,
+            }
+        );
+        assert_eq!(summary.total(), 4);
+        assert_eq!(summary.version_checked(), 2);
+        assert_eq!(DoctorSummary::from_results(&[]), DoctorSummary::default());
+    }
+
+    #[test]
+    fn tool_result_rendering_covers_installed_missing_and_deep_states() {
+        let passed = render_tool_result(
+            &tool_result(
+                true,
+                Some("3.2.0\u{1b}"),
+                Some(true),
+                vec![DeepNote::Info("fresh\u{1b}".into())],
+            ),
+            true,
+        );
+        for expected in ["OK", "Fixture Tool", "3.2.0\\u{1b}", ">= 3.0.0", "fresh\\u{1b}"] {
+            assert!(passed.contains(expected), "deep pass omitted {expected:?}: {passed:?}");
+        }
+        assert!(passed.contains("/opt/fixture\\u{1b}"));
+
+        let failed =
+            render_tool_result(&tool_result(true, Some("2.9.0"), Some(false), Vec::new()), true);
+        assert!(failed.contains("FAIL"));
+        assert!(failed.contains("need >= 3.0.0"));
+
+        let unknown = render_tool_result(&tool_result(true, None, None, Vec::new()), true);
+        assert!(unknown.contains("OK"));
+        assert!(unknown.contains('-'));
+
+        let missing_basic = render_tool_result(&tool_result(false, None, None, Vec::new()), false);
+        assert!(missing_basic.contains("--"));
+        assert!(!missing_basic.contains("hint"));
+
+        let missing_deep = render_tool_result(
+            &tool_result(false, None, None, vec![DeepNote::Warn("missing detail".into())]),
+            true,
+        );
+        assert!(missing_deep.contains("hint"));
+        assert!(missing_deep.contains("Install the fixture tool"));
+        assert!(missing_deep.contains("WARN"));
+    }
+
+    #[test]
+    fn doctor_summary_rendering_pins_all_optional_sections() {
+        let summary = DoctorSummary {
+            installed: 3,
+            missing: 1,
+            version_pass: 1,
+            version_fail: 1,
+            warnings: 2,
+        };
+        let basic = render_doctor_summary(&summary, false);
+        assert!(basic.contains("3/4 tools installed"));
+        assert!(basic.contains("install instructions"));
+        assert!(!basic.contains("version checks"));
+
+        let deep = render_doctor_summary(&summary, true);
+        for expected in [
+            "3/4 tools installed",
+            "1/2 version checks passed",
+            "1 version(s) below minimum",
+            "2 warning(s)",
+            "install instructions",
+        ] {
+            assert!(deep.contains(expected), "doctor summary omitted {expected:?}: {deep:?}");
+        }
+
+        let zero = render_doctor_summary(&DoctorSummary::default(), true);
+        assert!(zero.contains("0/0 tools installed"));
+        assert!(!zero.contains("version checks"));
+        assert!(!zero.contains("below minimum"));
+        assert!(!zero.contains("warning(s)"));
+        assert!(!zero.contains("install instructions"));
+    }
+
+    #[test]
+    fn test_tool_availability_checks_real_path_state() {
+        assert!(is_tool_available("sh"));
+        assert!(!is_tool_available("scorchkit-tool-that-does-not-exist-6f298d8d"));
+    }
+
+    #[test]
+    fn tool_path_resolution_returns_the_real_executable_and_rejects_missing_tools() {
+        let shell = which_path("sh").expect("the supported host must provide sh");
+        assert!(shell.ends_with("/sh"), "unexpected sh path: {shell}");
+        assert_eq!(which_path("scorchkit-tool-that-does-not-exist-6f298d8d"), None);
+    }
+
+    #[tokio::test]
+    async fn version_probe_observes_tool_output_and_execution_failure() {
+        assert_eq!(get_tool_version("printf", "7.8.9").await.as_deref(), Some("7.8.9"));
+        assert_eq!(
+            get_tool_version("scorchkit-tool-that-does-not-exist-6f298d8d", "--version").await,
+            None
+        );
+    }
 
     #[test]
     fn test_version_parse() {

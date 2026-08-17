@@ -13,7 +13,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Directory and vhost brute-forcing via Gobuster.
 #[derive(Debug)]
@@ -53,12 +52,13 @@ impl ScanModule for GobusterModule {
             |p| p.to_string_lossy().into_owned(),
         );
 
-        let output = subprocess::run_tool(
-            "gobuster",
-            &["dir", "-u", url, "-w", &wordlist, "-q", "--no-error", "--no-color"],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "gobuster",
+                &["dir", "-u", url, "-w", &wordlist, "-q", "--no-error", "--no-color"],
+                Duration::from_mins(5),
+            )
+            .await?;
 
         Ok(parse_gobuster_output(&output.stdout, ctx.target.url.as_str()))
     }

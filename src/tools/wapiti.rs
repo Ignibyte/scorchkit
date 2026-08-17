@@ -13,7 +13,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Web vulnerability scanner via Wapiti.
 #[derive(Debug)]
@@ -46,12 +45,13 @@ impl ScanModule for WapitiModule {
             return Ok(Vec::new());
         };
         let report_path = tmp.path().to_string_lossy().to_string();
-        let _output = subprocess::run_tool_lenient(
-            "wapiti",
-            &["-u", url, "-f", "json", "-o", &report_path],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let _output = ctx
+            .run_tool_lenient(
+                "wapiti",
+                &["-u", url, "-f", "json", "-o", &report_path],
+                Duration::from_mins(5),
+            )
+            .await?;
         let json = std::fs::read_to_string(&report_path).unwrap_or_default();
         Ok(parse_wapiti_output(&json, url))
     }

@@ -3,7 +3,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 use async_trait::async_trait;
 use std::time::Duration;
 
@@ -33,12 +32,13 @@ impl ScanModule for DroopescanModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.url.as_str();
-        let output = subprocess::run_tool(
-            "droopescan",
-            &["scan", "-u", target, "--output", "json"],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "droopescan",
+                &["scan", "-u", target, "--output", "json"],
+                Duration::from_mins(5),
+            )
+            .await?;
 
         Ok(parse_droopescan_output(&output.stdout, target))
     }
@@ -111,7 +111,7 @@ fn parse_droopescan_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for Droopescan JSON output parser.
+    // Tests for Droopescan JSON output parser.
 
     /// Verify that `parse_droopescan_output` correctly extracts CMS version,
     /// plugins, and interesting URLs from Droopescan JSON output.

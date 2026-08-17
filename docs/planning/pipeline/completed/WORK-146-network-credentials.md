@@ -303,7 +303,7 @@ Three layers:
 Followed the design exactly. **Zero fix iterations.** All tests passed on the first `cargo test` run after implementation completed.
 
 Two minor deviations from the design regression plan:
-1. Added a bonus `kerbrute_argv_unparseable_principal_falls_back` test covering the case where a configured `kerberos_principal` has no `@` (bad shape from operator input).
+1. Added a bonus `kerbrute_argv_unparsable_principal_falls_back` test covering the case where a configured `kerberos_principal` has no `@` (bad shape from operator input).
 2. Added a bonus `format_redacted_argv_redacts_consecutive_secrets` test (two secret-flag/value pairs back-to-back).
 
 Pre-existing wrapper tests all still pass unchanged. The `app_config_default_has_empty_credentials` test planned in Phase 2 was consolidated into the existing `test_infra_context_defaults` + `infra_context_credentials_default_none` pair — the same contract is pinned without a third near-duplicate test in the config module.
@@ -409,13 +409,13 @@ All 21 planned tests present with minor renames/consolidations. 2 bonus tests ad
 | kerbrute_argv_with_principal_extracts_domain | ✓ | — |
 | kerbrute_argv_without_principal_uses_host | ✓ | — |
 
-**Bonus tests:** `format_redacted_argv_redacts_long_password_flag`, `format_redacted_argv_redacts_consecutive_secrets`, `kerbrute_argv_unparseable_principal_falls_back`.
+**Bonus tests:** `format_redacted_argv_redacts_long_password_flag`, `format_redacted_argv_redacts_consecutive_secrets`, `kerbrute_argv_unparsable_principal_falls_back`.
 
 ### Test Quality Review
 - **Secret-redaction tests assert the negative** — `format!("{c:?}")` contains `"***"` AND does not contain the literal password string. Both directions are important: missing the `***` check would allow a future Debug impl that silently drops the secret (no output) to pass; missing the negative check would allow a Debug impl that just concatenates `password=secret***` to pass.
 - **Env-merge tests serialize on a named mutex** (`env_mutex()` via `OnceLock<Mutex<()>>`) — prevents test-run races where parallel threads trample each other's `std::env::set_var` calls. Standard Rust-test idiom used by clap, tokio, and others.
 - **Argv tests assert exact `Vec<&str>` equality** — any future refactor that changes argv order or drops a flag fails a pinned test.
-- **Kerbrute's unparseable-principal branch is tested.** Operator input that lacks an `@` is a realistic failure mode; the bonus test verifies the fall-back path doesn't panic.
+- **Kerbrute's unparsable-principal branch is tested.** Operator input that lacks an `@` is a realistic failure mode; the bonus test verifies the fall-back path doesn't panic.
 
 ### Coverage
 `cargo-tarpaulin` installed but not run this phase. Every new function and every branch of the hand-written `Debug` is exercised by at least one named test; the remaining gap would be `env_override`'s `Err(VarError::NotUnicode)` arm, which is effectively unreachable in sane environments.
@@ -526,4 +526,3 @@ Added top entry under `## [Unreleased] ### Added` in `CHANGELOG.md` following th
 - [x] Architecture decision documented locally (`docs/architecture/auth-config.md` — new operator-facing doc)
 - [x] `cargo doc --no-deps --all-features` builds (2 pre-existing warnings, none from this pipeline)
 - [x] `docs/architecture/infra.md` Future Work updated to reflect foundation delivery
-

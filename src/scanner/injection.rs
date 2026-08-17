@@ -502,7 +502,7 @@ const SQL_ERROR_PATTERNS: &[(&str, &str)] = &[
 mod tests {
     use super::*;
 
-    /// Unit tests for the SQL injection detection module's pure helper functions.
+    // Unit tests for the SQL injection detection module's pure helper functions.
 
     /// WORK-108: `build_probe_url` appends the parameters with sentinel
     /// values, using `?` for the first separator and `&` thereafter.
@@ -530,7 +530,7 @@ mod tests {
         assert_eq!(url, "https://example.com/api/users");
     }
 
-    /// Verify that `detect_sql_error` identifies MySQL error strings in response bodies.
+    /// Verify that `detect_sql_error` identifies `MySQL` error strings in response bodies.
     #[test]
     fn test_detect_sql_error_mysql() {
         let body = "Error: You have an error in your SQL syntax near 'foo'";
@@ -539,7 +539,7 @@ mod tests {
         assert_eq!(result, Some("MySQL"));
     }
 
-    /// Verify that `detect_sql_error` identifies PostgreSQL error strings.
+    /// Verify that `detect_sql_error` identifies `PostgreSQL` error strings.
     #[test]
     fn test_detect_sql_error_postgresql() {
         let body = "ERROR: syntax error at or near \"SELECT\"";

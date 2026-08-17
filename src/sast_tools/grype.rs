@@ -14,7 +14,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Container and dependency vulnerability scanning via Grype.
 #[derive(Debug)]
@@ -44,12 +43,13 @@ impl CodeModule for GrypeModule {
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_arg = format!("dir:{}", ctx.path.display());
         // grype exits 1 when vulnerabilities are found — that's normal, not an error.
-        let output = subprocess::run_tool_lenient(
-            "grype",
-            &[&path_arg, "-o", "json", "--quiet"],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "grype",
+                &[&path_arg, "-o", "json", "--quiet"],
+                Duration::from_mins(2),
+            )
+            .await?;
 
         Ok(parse_grype_output(&output.stdout))
     }

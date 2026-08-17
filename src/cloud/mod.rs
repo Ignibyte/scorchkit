@@ -12,11 +12,10 @@
 //! - [`prowler::ProwlerCloudModule`] — Prowler AWS posture audit
 //! - [`scoutsuite::ScoutsuiteCloudModule`] — Scout Suite multi-cloud audit
 //!
-//! **Native AWS checks** (requires `feature = "aws-native"`):
-//! - [`aws::iam::IamCloudModule`] — IAM root keys, MFA, password policy
-//! - [`aws::s3::S3CloudModule`] — S3 public access, encryption, versioning
-//! - [`aws::sg::SecurityGroupCloudModule`] — open security groups
-//! - [`aws::cloudtrail::CloudTrailCloudModule`] — `CloudTrail` health
+//! Native AWS, GCP, and Azure checks still compile behind their provider
+//! features, but they are private and absent from the production registry.
+//! Their SDK transports do not yet use `ScorchKit`'s engagement-bound resolver,
+//! so exposing them would bypass per-address authorization.
 //!
 //! ## Finding normalization (WORK-154)
 //!
@@ -25,14 +24,14 @@
 //! for per-service OWASP / CWE / compliance mapping instead of blanket
 //! `A05:2021 / CWE-1188`.
 
-#[cfg(feature = "aws-native")]
-pub mod aws;
-#[cfg(feature = "azure-native")]
-pub mod azure;
+#[cfg(all(feature = "aws-native", test))]
+pub(crate) mod aws;
+#[cfg(all(feature = "azure-native", test))]
+pub(crate) mod azure;
 pub mod cloudsplaining;
 pub mod cnspec;
-#[cfg(feature = "gcp-native")]
-pub mod gcp;
+#[cfg(all(feature = "gcp-native", test))]
+pub(crate) mod gcp;
 pub mod kubescape;
 pub mod pacu;
 pub mod prowler;
@@ -43,67 +42,48 @@ use crate::engine::cloud_module::CloudModule;
 /// Returns every built-in cloud module.
 ///
 /// Order is lexicographic by module id so default scans have a stable
-/// module sequence across builds. With `feature = "aws-native"`,
-/// the 4 AWS modules are prepended (their ids sort before `kubescape-cloud`).
-// JUSTIFICATION: conditional #[cfg] feature gates between the extend()
-// calls and the push() calls make a single vec![] macro impossible.
-#[allow(clippy::vec_init_then_push)]
+/// module sequence across builds. Provider-native feature flags compile their
+/// implementation and pure checks, but do not add modules until their HTTP
+/// transports enforce the same resolver policy as native `ScorchKit` clients.
 #[must_use]
 pub fn register_modules() -> Vec<Box<dyn CloudModule>> {
-    let mut modules: Vec<Box<dyn CloudModule>> = Vec::new();
-
-    #[cfg(feature = "aws-native")]
-    modules.extend(aws::register_aws_modules());
-
-    #[cfg(feature = "azure-native")]
-    modules.extend(azure::register_azure_modules());
-
-    #[cfg(feature = "gcp-native")]
-    modules.extend(gcp::register_gcp_modules());
-
-    // Tool wrappers — lex order: cloudsplaining, cnspec, kubescape, pacu, prowler, scoutsuite
-    modules.push(Box::new(cloudsplaining::CloudsplainingCloudModule));
-    modules.push(Box::new(cnspec::CnspecCloudModule));
-    modules.push(Box::new(kubescape::KubescapeCloudModule));
-    modules.push(Box::new(pacu::PacuCloudModule));
-    modules.push(Box::new(prowler::ProwlerCloudModule));
-    modules.push(Box::new(scoutsuite::ScoutsuiteCloudModule));
-
-    modules
+    // Safe posture wrappers. Pacu remains available as a module type but is
+    // excluded until an explicit exploit-authorized cloud profile exists.
+    vec![
+        Box::new(cloudsplaining::CloudsplainingCloudModule),
+        Box::new(cnspec::CnspecCloudModule),
+        Box::new(kubescape::KubescapeCloudModule),
+        Box::new(prowler::ProwlerCloudModule),
+        Box::new(scoutsuite::ScoutsuiteCloudModule),
+    ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::cloud_module::{CloudCategory, CloudProvider};
 
-    /// Verifies the registry contains expected modules based on active features.
-    /// Base: 3 tool wrappers. Each native feature adds 4 modules.
+    /// Provider SDK modules stay quarantined until they use a policy-owned transport.
     #[test]
     fn test_cloud_register_modules() {
         let modules = register_modules();
 
-        // Count expected modules: 6 base tool wrappers + 4 per native feature
-        let mut expected = 6;
-        if cfg!(feature = "aws-native") {
-            expected += 4;
-        }
-        if cfg!(feature = "azure-native") {
-            expected += 4;
-        }
-        if cfg!(feature = "gcp-native") {
-            expected += 4;
-        }
-        assert_eq!(modules.len(), expected, "expected {expected} modules with current features");
+        assert_eq!(modules.len(), 5);
+        assert!(modules.iter().all(|module| module.requires_external_tool()));
+        assert!(!modules.iter().any(|module| {
+            module.id().starts_with("aws-")
+                || module.id().starts_with("gcp-")
+                || module.id().starts_with("azure-")
+        }));
 
         // Tool wrappers are always last and always require external tools
-        let last = modules.last().expect("at least 3 modules");
+        let last = modules.last().expect("at least one module");
         assert_eq!(last.id(), "scoutsuite-cloud");
         assert!(last.requires_external_tool());
+        assert!(!modules.iter().any(|module| module.id() == "pacu-cloud"));
 
         // Verify all module IDs are unique
         let mut ids: Vec<&str> = modules.iter().map(|m| m.id()).collect();
-        ids.sort();
+        ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), modules.len(), "module IDs must be unique");
     }

@@ -13,7 +13,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Dependency vulnerability scanning via Snyk.
 #[derive(Debug)]
@@ -43,12 +42,13 @@ impl CodeModule for SnykTestModule {
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
         // snyk test exits 1 when vulnerabilities are found — that's normal.
-        let output = subprocess::run_tool_lenient(
-            "snyk",
-            &["test", "--json", "--file", &path_str],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "snyk",
+                &["test", "--json", "--file", &path_str],
+                Duration::from_mins(5),
+            )
+            .await?;
 
         Ok(parse_snyk_test_output(&output.stdout))
     }

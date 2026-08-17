@@ -13,7 +13,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Dependency vulnerability scanning via OSV-Scanner.
 #[derive(Debug)]
@@ -44,12 +43,13 @@ impl CodeModule for OsvScannerModule {
         let path_str = ctx.path.display().to_string();
         // osv-scanner exits 1 when vulnerabilities are found — that's normal,
         // not an error. Use run_tool_lenient to capture stdout regardless.
-        let output = subprocess::run_tool_lenient(
-            "osv-scanner",
-            &["--json", "--recursive", &path_str],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "osv-scanner",
+                &["--json", "--recursive", &path_str],
+                Duration::from_mins(2),
+            )
+            .await?;
 
         Ok(parse_osv_output(&output.stdout))
     }

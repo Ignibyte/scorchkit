@@ -15,7 +15,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Rust SCA via cargo-audit.
 #[derive(Debug)]
@@ -47,12 +46,13 @@ impl CodeModule for CargoAuditModule {
 
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
-        let output = subprocess::run_tool_lenient(
-            "cargo-audit",
-            &["audit", "--json", "--file", &format!("{path_str}/Cargo.lock")],
-            Duration::from_secs(60),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "cargo-audit",
+                &["audit", "--json", "--file", &format!("{path_str}/Cargo.lock")],
+                Duration::from_mins(1),
+            )
+            .await?;
         Ok(parse_cargo_audit_output(&output.stdout))
     }
 }

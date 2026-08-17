@@ -299,8 +299,8 @@ fn compute_entropy_score(value: &str) -> f64 {
         return 0.0;
     }
 
+    // JUSTIFICATION: session IDs are short strings; display precision is sufficient.
     #[allow(clippy::cast_precision_loss)]
-    // Session IDs are short strings; precision loss is negligible
     let len = value.len() as f64;
     let mut freq = [0u32; 256];
 
@@ -331,7 +331,7 @@ fn check_expiry(cookie: &SessionCookie, url: &str, findings: &mut Vec<Finding>) 
     // Max-Age takes precedence over Expires
     if let Some(max_age) = cookie.max_age {
         if max_age > 86400 {
-            #[allow(clippy::cast_precision_loss)] // Days display — precision irrelevant
+            #[allow(clippy::cast_precision_loss)] // JUSTIFICATION: display-only day conversion.
             let days = max_age as f64 / 86400.0;
             findings.push(
                 Finding::new(
@@ -598,10 +598,10 @@ const fn has_credentials(auth: &crate::config::AuthConfig) -> bool {
 mod tests {
     use super::*;
 
-    /// Test suite for authentication and session management analysis.
-    ///
-    /// Tests pure analysis functions (entropy, expiry, fixation, cookie parsing)
-    /// without requiring a live HTTP target.
+    // Test suite for authentication and session management analysis.
+    //
+    // Tests pure analysis functions (entropy, expiry, fixation, cookie parsing)
+    // without requiring a live HTTP target.
 
     /// Verify session cookie parsing from `Set-Cookie` header strings.
     ///
@@ -675,6 +675,16 @@ mod tests {
         };
         check_expiry(&session_cookie, "https://example.com", &mut findings);
         assert!(findings.is_empty(), "Session cookie should not produce expiry finding");
+
+        // Exactly 24 hours is allowed; only longer lifetimes are excessive.
+        let boundary_cookie = SessionCookie {
+            name: "sid".to_string(),
+            value: "abc123".to_string(),
+            max_age: Some(86_400),
+            expires: None,
+        };
+        check_expiry(&boundary_cookie, "https://example.com", &mut findings);
+        assert!(findings.is_empty(), "24-hour cookie should remain within the limit");
 
         // Excessive Max-Age (> 24h)
         let long_lived = SessionCookie {
@@ -778,7 +788,7 @@ mod tests {
     #[test]
     fn test_entropy_edge_cases() {
         // Empty string
-        assert_eq!(compute_entropy_score(""), 0.0);
+        assert!(compute_entropy_score("").abs() < f64::EPSILON);
 
         // Single character repeated
         assert!(compute_entropy_score("aaaa") < 0.01);

@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Fast web fuzzer via ffuf.
 #[derive(Debug)]
@@ -42,30 +41,31 @@ impl ScanModule for FfufModule {
             |p| p.to_string_lossy().into_owned(),
         );
 
-        let output = subprocess::run_tool(
-            "ffuf",
-            &[
-                "-u",
-                &target,
-                "-w",
-                &wordlist,
-                "-mc",
-                "200,301,302,403",
-                "-fc",
-                "404",
-                "-t",
-                "20",
-                "-maxtime",
-                "120",
-                "-o",
-                "/dev/stdout",
-                "-of",
-                "json",
-                "-s",
-            ],
-            Duration::from_secs(180),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "ffuf",
+                &[
+                    "-u",
+                    &target,
+                    "-w",
+                    &wordlist,
+                    "-mc",
+                    "200,301,302,403",
+                    "-fc",
+                    "404",
+                    "-t",
+                    "20",
+                    "-maxtime",
+                    "120",
+                    "-o",
+                    "/dev/stdout",
+                    "-of",
+                    "json",
+                    "-s",
+                ],
+                Duration::from_mins(3),
+            )
+            .await?;
 
         Ok(parse_ffuf_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -109,7 +109,7 @@ fn parse_ffuf_output(output: &str, _target_url: &str) -> Vec<Finding> {
         }
     }
 
-    findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+    findings.sort_by_key(|finding| std::cmp::Reverse(finding.severity));
     findings.truncate(50);
     findings
 }
@@ -118,7 +118,7 @@ fn parse_ffuf_output(output: &str, _target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for ffuf JSON output parser.
+    // Tests for ffuf JSON output parser.
 
     /// Verify that `parse_ffuf_output` correctly extracts discovered paths
     /// from ffuf JSON output with status codes and sizes.

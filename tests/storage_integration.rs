@@ -1,6 +1,6 @@
 //! Integration tests for the project model storage layer.
 //!
-//! These tests require a running PostgreSQL instance and `DATABASE_URL`
+//! These tests require a running `PostgreSQL` instance and `DATABASE_URL`
 //! environment variable. If `DATABASE_URL` is not set, tests skip
 //! gracefully with a message (not a failure).
 
@@ -16,14 +16,18 @@ use scorchkit::storage::models::VulnStatus;
 ///
 /// Uses the `let-else` early-return pattern: if `DATABASE_URL` is not
 /// set, prints a message and returns `Ok(())` (counted as passed, not
-/// skipped/ignored). This follows the established ScorchKit convention.
+/// skipped/ignored). This follows the established `ScorchKit` convention.
 async fn get_pool_or_skip() -> Option<sqlx::PgPool> {
     let Ok(url) = std::env::var("DATABASE_URL") else {
         eprintln!("DATABASE_URL not set — skipping integration test");
         return None;
     };
-    let pool = storage::connect(&url).await.expect("failed to connect to test database");
-    storage::migrate::run_migrations(&pool).await.expect("migrations failed");
+    let pool = storage::connect(&url)
+        .await
+        .unwrap_or_else(|error| panic!("failed to connect to test database: {error}"));
+    storage::migrate::run_migrations(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("test database migration failed: {error}"));
     Some(pool)
 }
 
@@ -116,7 +120,7 @@ async fn test_target_crud_lifecycle() {
     assert_eq!(targets.unwrap().len(), 1);
 
     // Remove target
-    let removed = storage::projects::remove_target(&pool, target.id).await;
+    let removed = storage::projects::remove_target(&pool, project.id, target.id).await;
     assert!(removed.is_ok());
     assert!(removed.unwrap());
 

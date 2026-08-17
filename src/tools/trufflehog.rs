@@ -12,7 +12,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Secret scanning via Trufflehog (API keys, credentials, tokens).
 #[derive(Debug)]
@@ -47,12 +46,13 @@ impl ScanModule for TrufflehogModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
 
-        let output = subprocess::run_tool(
-            "trufflehog",
-            &["filesystem", "--json", "--no-update", target],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "trufflehog",
+                &["filesystem", "--json", "--no-update", target],
+                Duration::from_mins(5),
+            )
+            .await?;
 
         Ok(parse_trufflehog_output(&output.stdout, ctx.target.url.as_str()))
     }

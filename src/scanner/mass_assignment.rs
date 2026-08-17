@@ -159,7 +159,7 @@ async fn test_mass_assignment(
 mod tests {
     use super::*;
 
-    /// Tests for the mass assignment scanner module.
+    // Tests for the mass assignment scanner module.
 
     /// Verify module metadata.
     #[test]

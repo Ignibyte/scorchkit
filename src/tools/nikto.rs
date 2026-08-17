@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Web server vulnerability scanning via nikto.
 #[derive(Debug)]
@@ -42,12 +41,13 @@ impl ScanModule for NiktoModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.url.as_str();
 
-        let output = subprocess::run_tool(
-            "nikto",
-            &["-h", target, "-Format", "json", "-output", "-"],
-            Duration::from_secs(600),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "nikto",
+                &["-h", target, "-Format", "json", "-output", "-"],
+                Duration::from_mins(10),
+            )
+            .await?;
 
         Ok(parse_nikto_output(&output.stdout, target))
     }
@@ -136,7 +136,7 @@ fn classify_nikto_severity(msg: &str) -> Severity {
 mod tests {
     use super::*;
 
-    /// Tests for nikto JSON output parser.
+    // Tests for nikto JSON output parser.
 
     /// Verify that `parse_nikto_output` correctly extracts findings from
     /// nikto JSON output with vulnerabilities array.

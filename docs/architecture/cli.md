@@ -1,111 +1,87 @@
 # CLI
 
-The CLI module (`src/cli/`) defines the command-line interface using clap 4 with derive macros, and the dispatch logic that maps commands to actions.
+The Clap-based CLI is a host adapter around the same `Engine`, orchestrators, storage, reports, and
+AI providers used by MCP and library consumers. It does not have a scope bypass.
 
-## Files
+## Startup flow
 
-```
-cli/
-  mod.rs       Module declarations
-  args.rs      Clap derive structs (Cli, Commands, OutputFormat)
-  runner.rs    Command dispatch and execution logic
-```
+1. Parse global options and the selected command.
+2. Load explicit config or discover `scorchkit.toml` then `config.toml`.
+3. Apply narrow CLI overrides such as output, proxy, and timeout.
+4. Construct `Engine::new(config)` for any effectful operation.
+5. Normalize the target and profile and require the engagement decision.
+6. Create the sealed family context and run the selected orchestrator.
+7. preserve structured evidence, save requested artifacts, and escape untrusted terminal text.
 
-## Command Structure
+Missing engagement or insufficient scope/capability/effect returns an error before the scan resource
+is created.
 
-```
-scorchkit [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS]
-```
+## Command families
 
-### Global Options
+| Area | Commands |
+|---|---|
+| DAST | `run`, `recon`, `scan`, `modules`, `doctor` |
+| SAST | `code` |
+| Combined | `assess` |
+| Infrastructure/cloud | `infra`, `cloud` when compiled |
+| Analysis/reporting | `analyze`, `diff` |
+| Agent host | `agent`, `serve` when compiled |
+| Persistence | `db`, `project`, `finding`, `schedule` when compiled |
+| Setup | `init`, `completions` |
 
-| Flag | Type | Description |
-|------|------|-------------|
-| `-c, --config <PATH>` | `Option<PathBuf>` | Path to config.toml |
-| `-v, --verbose` | Count (0-3) | Verbosity: warn → info → debug → trace |
-| `-q, --quiet` | bool | Suppress all output except findings |
-| `-o, --output <FORMAT>` | `Option<OutputFormat>` | `terminal` or `json` |
+Run `scorchkit --help` and `scorchkit <command> --help` for the exact surface of the compiled feature
+set.
 
-### Commands
+## Safe start
 
-**`run <target>`** - Run all default scans
-```
-scorchkit run https://example.com
-scorchkit run example.com --modules headers,ssl
-scorchkit run example.com --skip injection --analyze
-```
-- `target` (required) - URL, domain, or IP
-- `--modules, -m` - Comma-separated list of module IDs to include
-- `--skip` - Comma-separated list of module IDs to exclude
-- `--analyze` - Run AI analysis after scan completes
-
-**`recon <target>`** - Run reconnaissance modules only
-```
-scorchkit recon example.com
-scorchkit recon example.com -m headers
+```bash
+scorchkit init https://owned.example
+scorchkit run https://owned.example --profile quick
 ```
 
-**`scan <target>`** - Run vulnerability scanner modules only
+`init <target>` resolves and pins addresses but sends no HTTP request. It writes `scorchkit.toml`,
+which the next command discovers automatically.
+
+## Profiles
+
+| Profile | Modules | Required effect |
+|---|---|---|
+| `quick` | headers, tech, SSL, misconfiguration | active-safe |
+| `standard` | all built-ins | intrusive |
+| `thorough` | built-ins and non-restricted tools | intrusive and external-tool capability |
+| `pentest` | all modules | explicit credential and exploit grants in addition to intrusive |
+
+Unknown profiles are errors. `commix`, `hydra`, `nxc`, and `smbmap` are restricted to `pentest`.
+
+## Output
+
+The CLI supports terminal, JSON, HTML, SARIF, and PDF output. Structured formats retain raw evidence.
+Terminal and human-log sinks neutralize control characters and bidirectional overrides. Secrets in
+configuration diagnostics are redacted.
+
+## Storage and schedules
+
+Project and schedule commands require PostgreSQL. Project registration does not authorize a target.
+A schedule can be created only for a registered target under the current engagement, and its exact
+engagement snapshot is stored. Due execution claims rows in a short transaction, advances the
+occurrence, releases the database connection, and then runs effects.
+
+## AI
+
+`--analyze`, `analyze`, planning, and `agent` use the configured provider. Codex is the default; Claude
+is a compatibility adapter. Provider failure is non-fatal to deterministic scans and never changes
+scanner evidence.
+
+## Source layout
+
+```text
+src/cli/
+  args.rs       Clap commands and value enums
+  runner.rs     dispatch and family composition
+  init.rs       fail-closed engagement bootstrap
+  doctor.rs     external tool inventory and health checks
+  project.rs    project and target operations
+  finding.rs    finding lifecycle
+  schedule.rs   schedule creation and due execution
+  serve.rs      local stdio MCP startup
 ```
-scorchkit scan example.com
-scorchkit scan example.com -m ssl,misconfig
-```
-
-**`analyze <report.json>`** - AI analysis of a previous scan
-```
-scorchkit analyze ./reports/scorchkit-uuid.json --focus remediate
-```
-- `--focus, -f` - Analysis type: `summary`, `prioritize`, `remediate`, `filter`
-
-**`modules`** - List available modules
-```
-scorchkit modules
-scorchkit modules --check-tools
-```
-- `--check-tools` - Also verify which external tools are installed
-
-**`init`** - Generate a default config.toml in the current directory
-
-## Execution Flow (`runner.rs`)
-
-### `execute(cli: Cli) -> Result<()>`
-
-The main dispatcher. Matches on `cli.command` and delegates:
-
-1. **Run/Recon/Scan** → `run_scan()`:
-   - Loads `AppConfig` from TOML file (or defaults)
-   - Parses `Target` from the target string
-   - Prints banner (target, domain, port, TLS) unless `--quiet`
-   - Builds `reqwest::Client` with config (User-Agent, redirects, TLS)
-   - Creates `ScanContext` (Target + Config + HTTP client)
-   - Creates `Orchestrator`, registers modules, applies filters
-   - For `recon` command: filters to `ModuleCategory::Recon` only
-   - For `scan` command: filters to `ModuleCategory::Scanner` only
-   - Runs orchestrator → `ScanResult`
-   - Saves JSON report to `config.report.output_dir`
-   - Prints terminal report
-
-2. **Analyze** → Checks file exists, currently prints "not yet implemented"
-
-3. **Modules** → `list_modules()`: Iterates all modules, prints category/id/description/tool status
-
-4. **Init** → `init_config()`: Writes `AppConfig::default_toml()` to `config.toml`
-
-### HTTP Client Configuration
-
-Built in `build_http_client()`:
-- User-Agent from `config.scan.user_agent`
-- Timeout from `config.scan.timeout_seconds`
-- Redirect policy from `config.scan.follow_redirects` + `max_redirects`
-- TLS: `danger_accept_invalid_certs(false)` (always validates certs)
-
-## OutputFormat
-
-```rust
-pub enum OutputFormat {
-    Terminal,  // Colored terminal output (default)
-    Json,      // JSON to stdout + saved to file
-}
-```
-
-When `--output json` is specified, both the file is saved AND JSON is printed to stdout for piping.

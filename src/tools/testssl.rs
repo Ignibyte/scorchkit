@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// TLS/SSL analysis via testssl.sh.
 #[derive(Debug)]
@@ -37,12 +36,13 @@ impl ScanModule for TestsslModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = format!("{}:{}", ctx.target.domain.as_deref().unwrap_or(""), ctx.target.port);
 
-        let output = subprocess::run_tool(
-            "testssl.sh",
-            &["--jsonfile", "/dev/stdout", "--quiet", &target],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "testssl.sh",
+                &["--jsonfile", "/dev/stdout", "--quiet", &target],
+                Duration::from_mins(5),
+            )
+            .await?;
 
         Ok(parse_testssl_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -89,7 +89,7 @@ fn parse_testssl_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for testssl.sh JSON-lines output parser.
+    // Tests for testssl.sh JSON-lines output parser.
 
     /// Verify that `parse_testssl_output` correctly extracts findings from
     /// testssl.sh JSON-lines output with severity classification.

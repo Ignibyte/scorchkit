@@ -5,6 +5,7 @@ pub mod code_orchestrator;
 pub mod hooks;
 #[cfg(feature = "infra")]
 pub mod infra_orchestrator;
+pub mod job_executor;
 pub mod orchestrator;
 pub mod plugin;
 pub mod progress;

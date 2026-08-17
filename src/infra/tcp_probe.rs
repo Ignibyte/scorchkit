@@ -90,6 +90,7 @@ impl InfraModule for TcpProbeModule {
         let ips = collect_probe_ips(&ctx.target);
         let mut findings = Vec::new();
         for ip in ips {
+            ctx.authorize_network_target(&ip.to_string())?;
             for &port in &self.config.ports {
                 if is_open(ip, port, self.config.timeout).await {
                     findings.push(build_open_port_finding(ip, port));
@@ -153,8 +154,7 @@ mod tests {
         use std::sync::Arc;
         let target = InfraTarget::Endpoint { host: ip.to_string(), port };
         let config = Arc::new(AppConfig::default());
-        let client = reqwest::Client::builder().build().expect("client");
-        InfraContext::new(target, config, client)
+        InfraContext::new(target, config, Vec::new())
     }
 
     /// Default config has the expected port list and a positive timeout.

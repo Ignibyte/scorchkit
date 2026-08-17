@@ -115,8 +115,9 @@ pub async fn add_target(
 /// # Errors
 ///
 /// Returns an error if the database query fails.
-pub async fn remove_target(pool: &PgPool, target_id: Uuid) -> Result<bool> {
-    let result = sqlx::query("DELETE FROM project_targets WHERE id = $1")
+pub async fn remove_target(pool: &PgPool, project_id: Uuid, target_id: Uuid) -> Result<bool> {
+    let result = sqlx::query("DELETE FROM project_targets WHERE project_id = $1 AND id = $2")
+        .bind(project_id)
         .bind(target_id)
         .execute(pool)
         .await

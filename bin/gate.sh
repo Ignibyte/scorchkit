@@ -1,0 +1,457 @@
+#!/usr/bin/env bash
+# ScorchKit's canonical quality gate. Cargo commands run sequentially.
+
+set -uo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR" || exit 2
+
+# shellcheck source=bin/gate-state.sh
+. "$ROOT_DIR/bin/gate-state.sh" || exit 2
+
+MODE="full"
+case "${1:-}" in
+    "") MODE="full" ;;
+    --fast | fast) MODE="fast" ;;
+    --diff | diff) MODE="diff" ;;
+    --full | full) MODE="full" ;;
+    --focused-repair | focused-repair) MODE="focused-repair" ;;
+    *) echo "usage: bin/gate.sh [--fast|--diff|--full|--focused-repair]" >&2; exit 2 ;;
+esac
+[ "${GATE_FAST:-0}" = "1" ] && MODE="fast"
+
+FOCUSED_EVIDENCE_NAME="scorchkit-mutants-focused-ticket-002"
+FOCUSED_EVIDENCE_DIR="$SCORCHKIT_GIT_DIR/$FOCUSED_EVIDENCE_NAME"
+FOCUSED_EVIDENCE_DIGEST=""
+
+# The workspace lives on a noexec volume on the development Mac. Respect an
+# explicit operator choice and otherwise move only Cargo's generated output.
+case "$ROOT_DIR" in
+    /Volumes/*)
+        export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/scorchkit-target-${UID}}"
+        ;;
+esac
+
+CPU_TOTAL="$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+[[ "$CPU_TOTAL" =~ ^[1-9][0-9]*$ ]] || CPU_TOTAL=2
+DEFAULT_CPU_BUDGET=$((CPU_TOTAL / 2))
+[ "$DEFAULT_CPU_BUDGET" -lt 1 ] && DEFAULT_CPU_BUDGET=1
+GATE_CPU_BUDGET="${GATE_CPU_BUDGET:-$DEFAULT_CPU_BUDGET}"
+[[ "$GATE_CPU_BUDGET" =~ ^[1-9][0-9]*$ ]] || GATE_CPU_BUDGET="$DEFAULT_CPU_BUDGET"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$GATE_CPU_BUDGET}"
+export RUST_TEST_THREADS="${RUST_TEST_THREADS:-$GATE_CPU_BUDGET}"
+export NEXTEST_TEST_THREADS="${NEXTEST_TEST_THREADS:-$GATE_CPU_BUDGET}"
+
+COVERAGE_FLOOR=62
+COVERAGE_MIN="${SCORCHKIT_COVERAGE_MIN:-$COVERAGE_FLOOR}"
+if ! [[ "$COVERAGE_MIN" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "SCORCHKIT_COVERAGE_MIN must be numeric" >&2
+    exit 2
+fi
+if awk -v current="$COVERAGE_MIN" -v floor="$COVERAGE_FLOOR" \
+    'BEGIN { exit !(current + 0 < floor + 0) }'; then
+    echo "coverage override below $COVERAGE_FLOOR%; clamped to the baked floor" >&2
+    COVERAGE_MIN="$COVERAGE_FLOOR"
+fi
+
+echo "cpu budget: $GATE_CPU_BUDGET/$CPU_TOTAL cores"
+
+PASS=0
+FAIL=0
+SKIP=0
+RESULTS=()
+
+run_gate() {
+    local label="$1"
+    shift
+    echo
+    echo "==> $label"
+    if "$@"; then
+        RESULTS+=("PASS  $label")
+        PASS=$((PASS + 1))
+    else
+        RESULTS+=("FAIL  $label")
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+skip_gate() {
+    local label="$1"
+    local reason="$2"
+    RESULTS+=("SKIP  $label ($reason)")
+    SKIP=$((SKIP + 1))
+}
+
+need() {
+    local command_name="$1"
+    local install_hint="$2"
+    if command -v "$command_name" >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "missing $command_name; install with: $install_hint" >&2
+    return 1
+}
+
+clippy_matrix() {
+    local line states count=0
+    local -a flags
+    states="$(bash bin/feature-states.sh "$ROOT_DIR")" || {
+        echo "feature-state derivation failed" >&2
+        return 1
+    }
+    grep -qx -- '--all-features' <<< "$states" || {
+        echo "feature-bearing manifest produced no all-features Clippy state" >&2
+        return 1
+    }
+    while IFS= read -r line; do
+        if [ "$line" = '<default>' ]; then
+            echo "clippy feature state: $line"
+            cargo clippy --all-targets -- -D warnings </dev/null || return 1
+        else
+            read -r -a flags <<< "$line"
+            echo "clippy feature state: $line"
+            cargo clippy --all-targets "${flags[@]}" -- -D warnings </dev/null || return 1
+        fi
+        count=$((count + 1))
+    done <<< "$states"
+    [ "$count" -gt 1 ] || { echo "feature-state matrix is unexpectedly empty" >&2; return 1; }
+}
+
+doc_gate() {
+    local output
+    output="$(RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps 2>&1)"
+    local status=$?
+    printf '%s\n' "$output"
+    [ "$status" -eq 0 ] || return "$status"
+    if grep -q '^warning:' <<< "$output"; then
+        echo "cargo doc emitted a warning that did not affect its exit code" >&2
+        return 1
+    fi
+}
+
+audit_gate() {
+    need cargo-audit "cargo install cargo-audit --locked" || return 1
+    # JUSTIFICATION: rsa is recorded through sqlx's optional MySQL dependency,
+    # but ScorchKit compiles only the Postgres graph; cargo-deny verifies the
+    # active graph independently and fails if this ever becomes reachable.
+    # Review by 2026-11-14; remove or replace sqlx before expiry 2027-02-14.
+    cargo audit --ignore RUSTSEC-2023-0071
+}
+
+deny_gate() {
+    need cargo-deny "cargo install cargo-deny --locked" || return 1
+    cargo deny check
+}
+
+machete_gate() {
+    need cargo-machete "cargo install cargo-machete --locked" || return 1
+    cargo machete
+}
+
+gitleaks_gate() {
+    need gitleaks "brew install gitleaks" || return 1
+    gitleaks dir . --no-banner --redact=100
+}
+
+shellcheck_gate() {
+    need shellcheck "brew install shellcheck" || return 1
+    shellcheck -x bin/*.sh .githooks/* || return 1
+    bash bin/feature-states.sh --selftest || return 1
+    bash bin/focused-mutation-evidence.sh --selftest || return 1
+    bash bin/pipeline.sh selftest || return 1
+    bash .githooks/pre-commit --selftest || return 1
+    GATE_SELFTEST=1 bash bin/gate.sh
+}
+
+no_suppressions_gate() {
+    local hits ignored blanket
+    # The awk program is literal; awk expands its own fields.
+    # shellcheck disable=SC2016
+    hits="$(find src -type f -name '*.rs' -print0 | xargs -0 awk '
+        FNR == 1 { justified = 0 }
+        /^[[:space:]]*\/\// {
+            if ($0 ~ /JUSTIFICATION:/) justified = 1
+            next
+        }
+        /#!?\[(allow|expect)\(/ {
+            if ($0 !~ /JUSTIFICATION:/ && !justified) {
+                printf "%s:%d: %s\n", FILENAME, FNR, $0
+            }
+            justified = 0
+            next
+        }
+        /^[[:space:]]*#\[/ { next }
+        { justified = 0 }
+    ')"
+    if [ -n "$hits" ]; then
+        echo "lint suppressions without an adjacent JUSTIFICATION comment:" >&2
+        printf '%s\n' "$hits" >&2
+        return 1
+    fi
+    # Attribute checks are anchored so prose that merely documents `#[ignore]`
+    # does not become a false positive.
+    # shellcheck disable=SC2016
+    ignored="$(find src tests examples -type f -name '*.rs' -print0 | xargs -0 awk '
+        /^[[:space:]]*#\[ignore([[:space:]]|\])/ &&
+        $0 !~ /^[[:space:]]*#\[ignore[[:space:]]*=[[:space:]]*"[^"[:space:]][^"]*"\][[:space:]]*$/ {
+            printf "%s:%d: %s\n", FILENAME, FNR, $0
+        }
+    ')"
+    if [ -n "$ignored" ]; then
+        echo "ignored tests require a nonempty inline reason:" >&2
+        printf '%s\n' "$ignored" >&2
+        return 1
+    fi
+    # shellcheck disable=SC2016
+    blanket="$(find src tests examples -type f -name '*.rs' -print0 | xargs -0 awk '
+        /^[[:space:]]*#!?\[(allow|expect)\([^]]*(clippy::(all|cargo|nursery|pedantic)|warnings|unused|dead_code)([[:space:],)]|$)/ {
+            printf "%s:%d: %s\n", FILENAME, FNR, $0
+        }
+    ')"
+    if [ -n "$blanket" ]; then
+        echo "blanket lint-group suppressions are banned:" >&2
+        printf '%s\n' "$blanket" >&2
+        return 1
+    fi
+}
+
+source_bans_gate() {
+    local unsafe_hits exit_hits transmute_hits
+    unsafe_hits="$(find src -type f -name '*.rs' -print0 | xargs -0 grep -nE '(^|[^[:alnum:]_])unsafe[[:space:]]*\{' 2>/dev/null || true)"
+    exit_hits="$(find src -type f -name '*.rs' ! -name 'main.rs' -print0 | xargs -0 grep -nE '(std::)?process::exit[[:space:]]*\(' 2>/dev/null || true)"
+    transmute_hits="$(find src -type f -name '*.rs' -print0 | xargs -0 grep -nE '(^|[^[:alnum:]_])(std::)?(mem::)?transmute([_:]|[[:space:]]*\()' 2>/dev/null || true)"
+    if [ -n "$unsafe_hits$exit_hits$transmute_hits" ]; then
+        [ -z "$unsafe_hits" ] || { echo "unsafe blocks are banned:" >&2; printf '%s\n' "$unsafe_hits" >&2; }
+        [ -z "$exit_hits" ] || { echo "library process exits are banned:" >&2; printf '%s\n' "$exit_hits" >&2; }
+        [ -z "$transmute_hits" ] || { echo "transmute is banned:" >&2; printf '%s\n' "$transmute_hits" >&2; }
+        return 1
+    fi
+}
+
+todo_gate() {
+    local hits
+    hits="$(
+        find src docs -type f \( -name '*.rs' -o -name '*.md' \) \
+            ! -path 'docs/planning/*' -print0 \
+            | xargs -0 grep -nE '(^|[[:space:]])(TODO|FIXME|XXX)([[:space:]]|:|\()' 2>/dev/null \
+            || true
+    )"
+    if [ -n "$hits" ]; then
+        echo "actionable TODO/FIXME/XXX markers outside planning documents:" >&2
+        printf '%s\n' "$hits" >&2
+        return 1
+    fi
+}
+
+metadata_format_gate() {
+    local toml_file
+    need cargo-sort "cargo install cargo-sort --locked" || return 1
+    need taplo "cargo install taplo-cli --locked" || return 1
+    need typos "cargo install typos-cli --locked" || return 1
+    cargo sort --check --no-format || return 1
+    while IFS= read -r toml_file; do
+        [ -f "$toml_file" ] || continue
+        taplo fmt --check "$toml_file" || return 1
+    done < <(git ls-files --cached --others --exclude-standard -- '*.toml')
+    typos
+}
+
+semgrep_gate() {
+    need semgrep "pipx install semgrep" || return 1
+    semgrep --config .semgrep.yml --error --quiet src tests
+}
+
+coverage_gate() {
+    need cargo-llvm-cov "cargo install cargo-llvm-cov --locked" || return 1
+    cargo llvm-cov --all-features \
+        --ignore-filename-regex '(^|/)main\.rs$' \
+        --fail-under-lines "$COVERAGE_MIN"
+}
+
+focused_repair_scope_gate() {
+    local -a active_specs
+    shopt -s nullglob
+    active_specs=(docs/planning/pipeline/active/*.spec.md)
+    shopt -u nullglob
+    if [ "${#active_specs[@]}" -eq 1 ]; then
+        grep -Fqx 'ticket: TICKET-002' "${active_specs[0]}" || {
+            echo "focused-repair mode is not approved for the active ticket" >&2
+            return 1
+        }
+    elif [ "${#active_specs[@]}" -eq 0 ]; then
+        [ -f docs/planning/tickets/closed/TICKET-002-shared-job-executor.md ] || {
+            echo "focused-repair delivery requires active or archived TICKET-002" >&2
+            return 1
+        }
+    else
+        echo "focused-repair delivery requires exactly zero or one active pipeline" >&2
+        return 1
+    fi
+    jq -e '.ticket == "TICKET-002" and .roadmap_item == "SK-028"' \
+        "$FOCUSED_EVIDENCE_DIR/summary.json" >/dev/null || {
+        echo "focused-repair evidence does not belong to TICKET-002 / SK-028" >&2
+        return 1
+    }
+}
+
+mutation_gate() {
+    case "$MODE" in
+        diff) bash bin/mutants.sh --diff ;;
+        full) bash bin/mutants.sh --full ;;
+        focused-repair)
+            scorchkit_verify_focused_evidence "$FOCUSED_EVIDENCE_DIR" || return 1
+            FOCUSED_EVIDENCE_DIGEST="$(scorchkit_focused_evidence_digest \
+                "$FOCUSED_EVIDENCE_DIR")" || return 1
+            ;;
+        *)
+            echo "mutation gate received unsupported mode: $MODE" >&2
+            return 1
+            ;;
+    esac
+}
+
+database_gate() {
+    if [ -z "${DATABASE_URL:-}" ]; then
+        echo "DATABASE_URL is required for the delivery-tier database tests" >&2
+        return 1
+    fi
+    cargo test --all-features --test storage --test storage_integration --test mcp_tools
+}
+
+contract_gate() {
+    cargo test --all-features --test cli --test code_scan --test scan_plan --test mcp_tools
+}
+
+nextest_gate() {
+    need cargo-nextest "cargo install cargo-nextest --locked" || return 1
+    need jq "brew install jq (macOS) or apt-get install jq (Linux)" || return 1
+    local listing empty
+    listing="$(cargo nextest list --all-features --message-format json 2>/dev/null)" || {
+        echo "nextest could not list test suites" >&2
+        return 1
+    }
+    [ -n "$listing" ] || { echo "nextest produced an empty suite listing" >&2; return 1; }
+    printf '%s' "$listing" | jq -e '."rust-suites" | length > 0' >/dev/null || {
+        echo "nextest reported zero Rust suites" >&2
+        return 1
+    }
+    empty="$(printf '%s' "$listing" \
+        | jq -r '."rust-suites" | to_entries[]
+            | select((.value.testcases | length) == 0) | .key' \
+        | grep -v '::bin/' || true)"
+    if [ -n "$empty" ]; then
+        echo "non-binary test suites with zero tests:" >&2
+        printf '%s\n' "$empty" >&2
+        return 1
+    fi
+    cargo nextest run --all-features
+}
+
+gate_selftest() {
+    local actual expected
+    actual="$(grep -oE '(run_gate|skip_gate) "gate:[0-9]+' bin/gate.sh \
+        | sed -E 's/.*gate:([0-9]+)/\1/' | sort -n -u | tr '\n' ' ')"
+    expected="$(seq 1 22 | tr '\n' ' ')"
+    [ "$actual" = "$expected" ] || {
+        echo "gate selftest failed: expected gates 1-22, saw: $actual" >&2
+        return 1
+    }
+    grep -q 'scorchkit_write_gate_receipt' bin/gate.sh || {
+        echo "gate selftest failed: delivery receipt writer is not wired" >&2
+        return 1
+    }
+    if ! grep -q -- '--focused-repair' bin/gate.sh \
+        || ! grep -q 'scorchkit_verify_focused_evidence' bin/gate.sh \
+        || ! grep -q 'focused_repair_scope_gate' bin/gate.sh \
+        || ! grep -q 'bash bin/mutants.sh --diff' bin/gate.sh \
+        || ! grep -q 'bash bin/mutants.sh --full' bin/gate.sh; then
+        echo "gate selftest failed: mutation modes are not wired independently" >&2
+        return 1
+    fi
+    echo "gate selftest OK (stable gates 1-22, explicit mutation modes, and receipt writer)"
+}
+
+if [ "${GATE_SELFTEST:-0}" = "1" ]; then
+    gate_selftest
+    exit $?
+fi
+
+if [ "$MODE" = "focused-repair" ]; then
+    focused_repair_scope_gate || exit 2
+fi
+
+run_gate "gate:1 rustfmt" cargo fmt --all -- --check
+run_gate "gate:2 clippy feature matrix" clippy_matrix
+run_gate "gate:3 all-feature tests" cargo test --all-features
+run_gate "gate:4 rustdoc" doc_gate
+run_gate "gate:5 cargo-audit" audit_gate
+run_gate "gate:6 cargo-deny" deny_gate
+run_gate "gate:7 cargo-machete" machete_gate
+run_gate "gate:8 gitleaks" gitleaks_gate
+run_gate "gate:9 shellcheck" shellcheck_gate
+run_gate "gate:10 justified suppressions" no_suppressions_gate
+run_gate "gate:11 source bans" source_bans_gate
+run_gate "gate:12 doc TODOs" todo_gate
+run_gate "gate:13 TOML and spelling" metadata_format_gate
+run_gate "gate:14 semgrep" semgrep_gate
+STATIC_FAILURES="$FAIL"
+
+if [ "$MODE" = "fast" ]; then
+    skip_gate "gate:15 coverage" "fast mode"
+    skip_gate "gate:16 mutation" "fast mode"
+    skip_gate "gate:17 browser e2e" "not applicable until ScorchKit ships a web UI"
+    skip_gate "gate:18 website dogfood render" "not applicable to the terminal security engine"
+    skip_gate "gate:19 built CSS sheets" "no web asset pipeline"
+    skip_gate "gate:20 nextest strictness" "fast mode"
+    skip_gate "gate:21 PostgreSQL integration" "fast mode"
+    skip_gate "gate:22 CLI and MCP contracts" "fast mode"
+elif [ "$STATIC_FAILURES" -gt 0 ]; then
+    skip_gate "gate:15 coverage" "static prerequisite failed"
+    skip_gate "gate:16 mutation (MSI >= 95%)" "static prerequisite failed"
+    skip_gate "gate:17 browser e2e" "not applicable until ScorchKit ships a web UI"
+    skip_gate "gate:18 website dogfood render" "not applicable to the terminal security engine"
+    skip_gate "gate:19 built CSS sheets" "no web asset pipeline"
+    skip_gate "gate:20 nextest strictness" "static prerequisite failed"
+    skip_gate "gate:21 PostgreSQL integration" "static prerequisite failed"
+    skip_gate "gate:22 CLI and MCP contracts" "static prerequisite failed"
+else
+    run_gate "gate:15 coverage" coverage_gate
+    if [ "$FAIL" -gt 0 ]; then
+        skip_gate "gate:16 mutation (MSI >= 95%)" "coverage prerequisite failed"
+    else
+        run_gate "gate:16 mutation (MSI >= 95%)" mutation_gate
+    fi
+    skip_gate "gate:17 browser e2e" "not applicable until ScorchKit ships a web UI"
+    skip_gate "gate:18 website dogfood render" "not applicable to the terminal security engine"
+    skip_gate "gate:19 built CSS sheets" "no web asset pipeline"
+    run_gate "gate:20 nextest strictness" nextest_gate
+    run_gate "gate:21 PostgreSQL integration" database_gate
+    run_gate "gate:22 CLI and MCP contracts" contract_gate
+fi
+
+echo
+echo "== gate summary ($MODE) =="
+for result in "${RESULTS[@]}"; do
+    echo "  $result"
+done
+echo "  $PASS passed, $FAIL failed, $SKIP skipped"
+
+if [ "$FAIL" -gt 0 ]; then
+    echo "GATE RED — fix at source"
+    exit 1
+fi
+
+echo "GATE GREEN [$MODE]"
+if [ "$MODE" != "fast" ]; then
+    RECEIPT_EVIDENCE_NAME=""
+    RECEIPT_EVIDENCE_DIGEST=""
+    if [ "$MODE" = "focused-repair" ]; then
+        RECEIPT_EVIDENCE_NAME="$FOCUSED_EVIDENCE_NAME"
+        RECEIPT_EVIDENCE_DIGEST="$FOCUSED_EVIDENCE_DIGEST"
+    fi
+    SCORCHKIT_GATE_MODE="$MODE" \
+        SCORCHKIT_GATE_EVIDENCE_NAME="$RECEIPT_EVIDENCE_NAME" \
+        SCORCHKIT_GATE_EVIDENCE_DIGEST="$RECEIPT_EVIDENCE_DIGEST" \
+        scorchkit_write_gate_receipt || exit 1
+    echo "delivery receipt: $SCORCHKIT_GATE_RECEIPT"
+fi

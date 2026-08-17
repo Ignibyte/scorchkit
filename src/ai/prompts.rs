@@ -47,7 +47,7 @@ impl AnalysisFocus {
     }
 }
 
-/// Build the full prompt for Claude based on findings, focus mode, and
+/// Build the full prompt for an AI provider based on findings, focus mode, and
 /// optional project history context.
 #[must_use]
 pub fn build_prompt(
@@ -360,17 +360,153 @@ fn serialize_findings_compact(findings: &[Finding]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::types::{FindingTrends, StatusBreakdown};
+    use crate::engine::scan_result::ScanSummary;
+    use crate::engine::severity::Severity;
+    use crate::engine::target::Target;
+
+    fn finding(severity: Severity, title: &str) -> Finding {
+        Finding::new(
+            "fixture-module",
+            severity,
+            title,
+            "fixture description",
+            "https://owned.example/path",
+        )
+    }
+
+    fn enriched_finding() -> Finding {
+        finding(Severity::Critical, "Enriched finding")
+            .with_evidence("request reached the vulnerable branch")
+            .with_owasp("A03:2021")
+            .with_cwe(79)
+            .with_remediation("encode untrusted output")
+    }
+
+    fn scan_result() -> ScanResult {
+        let findings = vec![
+            enriched_finding(),
+            finding(Severity::Critical, "Critical two"),
+            finding(Severity::High, "High one"),
+            finding(Severity::Medium, "Medium one"),
+            finding(Severity::Medium, "Medium two"),
+            finding(Severity::Medium, "Medium three"),
+            finding(Severity::Low, "Low one"),
+            finding(Severity::Info, "Info one"),
+            finding(Severity::Info, "Info two"),
+            finding(Severity::Info, "Info three"),
+            finding(Severity::Info, "Info four"),
+        ];
+        ScanResult {
+            scan_id: "prompt-fixture".to_string(),
+            target: Target::parse("https://owned.example").expect("fixture target"),
+            started_at: chrono::Utc::now(),
+            completed_at: chrono::Utc::now(),
+            summary: ScanSummary::from_findings(&findings),
+            findings,
+            modules_run: vec!["one".to_string(), "two".to_string(), "three".to_string()],
+            modules_skipped: Vec::new(),
+        }
+    }
+
+    fn project_context() -> ProjectContext {
+        ProjectContext {
+            project_name: "owned-project".to_string(),
+            total_scans: 7,
+            latest_scan_date: Some("2026-08-16".to_string()),
+            finding_trends: FindingTrends {
+                total_tracked: 11,
+                by_status: StatusBreakdown {
+                    new: 1,
+                    acknowledged: 2,
+                    false_positive: 3,
+                    remediated: 4,
+                    verified: 1,
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn analysis_prompt_preserves_scan_and_optional_project_context() {
+        let result = scan_result();
+        let without_project = build_prompt(&result, AnalysisFocus::Summary, None);
+        for expected in [
+            "https://owned.example",
+            "11 findings (2 critical, 1 high, 3 medium, 1 low, 4 info)",
+            "from 3 modules",
+            "Enriched finding",
+            "request reached the vulnerable branch",
+            "\"risk_score\"",
+        ] {
+            assert!(
+                without_project.contains(expected),
+                "analysis prompt omitted {expected:?}: {without_project}"
+            );
+        }
+        assert!(!without_project.contains("PROJECT HISTORY"));
+
+        let with_project = build_prompt(&result, AnalysisFocus::Summary, Some(&project_context()));
+        for expected in [
+            "PROJECT HISTORY",
+            "Project: owned-project",
+            "Total scans: 7",
+            "Latest scan: 2026-08-16",
+            "Tracked findings: 11",
+            "1 new, 2 acknowledged, 3 false positive, 4 remediated, 1 verified",
+        ] {
+            assert!(with_project.contains(expected), "project context omitted {expected:?}");
+        }
+    }
+
+    #[test]
+    fn focus_tasks_have_distinct_structured_contracts() {
+        let cases = [
+            (AnalysisFocus::Summary, "\"risk_score\""),
+            (AnalysisFocus::Prioritize, "\"prioritized_findings\""),
+            (AnalysisFocus::Remediate, "\"remediations\""),
+            (AnalysisFocus::Filter, "\"false_positive_count\""),
+        ];
+
+        for (focus, schema_marker) in cases {
+            let instructions = build_task_instructions(focus);
+            assert!(instructions.contains("single JSON object"));
+            assert!(instructions.contains(schema_marker));
+        }
+    }
+
+    #[test]
+    fn compact_findings_json_preserves_optional_evidence_fields() {
+        let serialized = serialize_findings_compact(&[enriched_finding()]);
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&serialized).expect("compact findings JSON");
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row["#"], 1);
+        assert_eq!(row["severity"], Severity::Critical.to_string());
+        assert_eq!(row["title"], "Enriched finding");
+        assert_eq!(row["target"], "https://owned.example/path");
+        assert_eq!(row["evidence"], "request reached the vulnerable branch");
+        assert_eq!(row["owasp"], "A03:2021");
+        assert_eq!(row["cwe"], 79);
+        assert_eq!(row["remediation"], "encode untrusted output");
+    }
 
     #[test]
     fn test_planning_prompt_with_intelligence() {
+        let recon = enriched_finding();
         let prompt = build_planning_prompt(
             "https://example.com",
-            &[],
-            "[]",
+            &[recon],
+            r#"[{"id":"xss"}]"#,
             Some("ssl: 3 runs, 5 findings"),
         );
         assert!(prompt.contains("HISTORICAL MODULE EFFECTIVENESS"));
         assert!(prompt.contains("ssl: 3 runs, 5 findings"));
+        assert!(prompt.contains("Enriched finding"));
+        assert!(prompt.contains("request reached the vulnerable branch"));
+        assert!(prompt.contains(r#"{"id":"xss"}"#));
+        assert!(prompt.contains("\"recommendations\""));
     }
 
     #[test]

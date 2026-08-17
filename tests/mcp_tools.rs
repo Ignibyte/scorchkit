@@ -8,8 +8,13 @@
 
 use std::sync::Arc;
 
+use httpmock::MockServer;
+use rmcp::handler::server::ServerHandler;
+use rmcp::model::ResourceContents;
 use scorchkit::config::AppConfig;
 use scorchkit::engine::finding::Finding;
+use scorchkit::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
+use scorchkit::engine::scope::ScopeRule;
 use scorchkit::engine::severity::Severity;
 use scorchkit::mcp::server::ScorchKitServer;
 use scorchkit::mcp::types::*;
@@ -21,8 +26,12 @@ async fn get_pool_or_skip() -> Option<sqlx::PgPool> {
         eprintln!("DATABASE_URL not set — skipping MCP integration test");
         return None;
     };
-    let pool = storage::connect(&url).await.expect("failed to connect to test database");
-    storage::migrate::run_migrations(&pool).await.expect("migrations failed");
+    let pool = storage::connect(&url)
+        .await
+        .unwrap_or_else(|error| panic!("failed to connect to test database: {error}"));
+    storage::migrate::run_migrations(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("test database migration failed: {error}"));
     Some(pool)
 }
 
@@ -31,9 +40,97 @@ fn unique_name(prefix: &str) -> String {
     format!("{prefix}-{}", uuid::Uuid::new_v4())
 }
 
+fn test_engagement() -> Engagement {
+    let code_root = match std::env::current_dir() {
+        Ok(path) => path,
+        Err(error) => panic!("failed to resolve test working directory: {error}"),
+    };
+    let code_scope = match ScopeRule::path_prefix(&code_root) {
+        Ok(scope) => scope,
+        Err(error) => panic!("failed to build code scope: {error}"),
+    };
+    let policy = EngagementPolicy::default()
+        .allow_scope(ScopeRule::Cidr {
+            network: u32::from(std::net::Ipv4Addr::new(127, 0, 0, 0)),
+            mask: u32::MAX << 24,
+        })
+        .allow_scope(ScopeRule::CidrV6 { network: 1, mask: u128::MAX })
+        .allow_scope(ScopeRule::Exact("localhost".to_string()))
+        .allow_scope(ScopeRule::Exact("example.com".to_string()))
+        .allow_scope(code_scope)
+        .allow_capability(Capability::DastScan)
+        .allow_capability(Capability::CodeScan)
+        .allow_capability(Capability::ExternalTool)
+        .allow_effect(EffectClass::Passive)
+        .allow_effect(EffectClass::ActiveSafe)
+        .allow_effect(EffectClass::Intrusive);
+    let mut engagement = Engagement::new("mcp-loopback-tests", policy);
+    engagement.id = uuid::Uuid::from_u128(0x5343_4f52_4348_4b49_5454_4553_5453);
+    engagement
+}
+
 /// Create a test server.
 fn test_server(pool: sqlx::PgPool) -> ScorchKitServer {
+    let mut config = AppConfig::default();
+    config.scan.timeout_seconds = 5;
+    config.engagement = Some(test_engagement());
+    ScorchKitServer::new(Arc::new(config), pool)
+}
+
+/// Build a server for methods that do not touch storage.
+fn test_server_without_database() -> ScorchKitServer {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgresql://localhost/scorchkit_unconnected_test")
+        .unwrap_or_else(|error| panic!("lazy test database URL should parse: {error}"));
+    test_server(pool)
+}
+
+/// Build a server with no engagement to prove effectful tools fail closed.
+fn unconfigured_test_server() -> ScorchKitServer {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgresql://localhost/scorchkit_unconnected_test")
+        .unwrap_or_else(|error| panic!("lazy test database URL should parse: {error}"));
     ScorchKitServer::new(Arc::new(AppConfig::default()), pool)
+}
+
+/// Start a loopback server that accepts every bounded scan request.
+async fn local_scan_target() -> MockServer {
+    let server = MockServer::start_async().await;
+    {
+        let _mock = server
+            .mock_async(|when, then| {
+                when.any_request();
+                then.status(200)
+                    .header("content-type", "text/html; charset=utf-8")
+                    .body("<html><head><title>ScorchKit test</title></head><body>ok</body></html>");
+            })
+            .await;
+    }
+    server
+}
+
+/// Serialize tests whose contract is defined over the database-wide due set.
+async fn due_scan_test_guard(
+    pool: &sqlx::PgPool,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
+    const TEST_LOCK: i64 = 0x5343_4F52_5445_5354;
+    let mut guard = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(TEST_LOCK).execute(&mut *guard).await?;
+    sqlx::query("DELETE FROM projects WHERE name LIKE 'mcp-due-%'").execute(pool).await?;
+    Ok(guard)
+}
+
+/// Return text from a resource result or fail with its actual content kind.
+fn resource_text(result: &rmcp::model::ReadResourceResult) -> &str {
+    let Some(content) = result.contents.first() else {
+        panic!("resource result was empty");
+    };
+    match content {
+        ResourceContents::TextResourceContents { text, .. } => text,
+        ResourceContents::BlobResourceContents { .. } => {
+            panic!("expected text resource content, received a blob")
+        }
+    }
 }
 
 /// Verify `scorchkit serve --help` shows the command.
@@ -55,7 +152,6 @@ fn test_serve_help() {
 async fn test_server_creation() {
     let Some(pool) = get_pool_or_skip().await else { return };
     let server = test_server(pool);
-    use rmcp::handler::server::ServerHandler;
     let info = server.get_info();
     assert_eq!(info.server_info.name, "scorchkit");
 }
@@ -74,27 +170,89 @@ async fn test_tool_list_modules() {
 /// Verify `check_tools` returns a JSON array of tool status.
 #[tokio::test]
 async fn test_tool_check_tools() {
-    let Some(pool) = get_pool_or_skip().await else { return };
-    let server = test_server(pool);
+    let server = test_server_without_database();
     let result = server.do_check_tools();
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
-    assert!(!parsed.is_empty(), "should return at least one tool");
-    assert!(parsed[0].get("installed").is_some(), "each tool should have installed status");
+    assert_eq!(parsed.len(), 21, "tool inventory is an MCP contract");
+    assert!(parsed.iter().all(|tool| tool["tool"].is_string()));
+    assert!(parsed.iter().all(|tool| tool["installed"].is_boolean()));
+    assert_eq!(parsed.first().and_then(|tool| tool["tool"].as_str()), Some("nmap"));
+    assert_eq!(parsed.last().and_then(|tool| tool["tool"].as_str()), Some("msfconsole"));
 }
 
-/// Verify `scan` runs against a URL (non-routable — validates execution path).
+/// Verify `scan` completes against a deterministic loopback target.
 #[tokio::test]
 async fn test_tool_scan() {
     let Some(pool) = get_pool_or_skip().await else { return };
+    let target = local_scan_target().await;
     let server = test_server(pool);
     let params = ScanParams {
-        target: "http://192.0.2.1".to_string(),
+        target: target.url("/"),
         profile: "quick".to_string(),
         modules: Some("headers".to_string()),
         skip: None,
     };
-    // May succeed with empty findings or fail with timeout — both are valid
-    let _result = server.do_scan(params).await;
+    let result = server.do_scan(params).await;
+    assert!(result.is_ok(), "loopback scan should succeed: {result:?}");
+}
+
+#[tokio::test]
+async fn test_tool_scan_denies_without_engagement() {
+    let server = unconfigured_test_server();
+    let result = server
+        .do_scan(ScanParams {
+            target: "http://127.0.0.1:9".to_string(),
+            profile: "quick".to_string(),
+            modules: Some("headers".to_string()),
+            skip: None,
+        })
+        .await;
+    assert!(
+        result.is_err_and(|error| error.contains("no engagement authorization")),
+        "MCP scan must fail closed before attempting loopback I/O"
+    );
+}
+
+#[tokio::test]
+async fn composite_effect_tools_deny_without_engagement() {
+    let server = unconfigured_test_server();
+
+    let auto_scan = server
+        .do_auto_scan(AutoScanParams {
+            target: "http://127.0.0.1:9".to_string(),
+            profile: "quick".to_string(),
+            project: None,
+        })
+        .await;
+    assert!(
+        auto_scan.is_err_and(|error| error.contains("no engagement authorization")),
+        "MCP auto-scan must fail closed before attempting loopback I/O"
+    );
+
+    let intelligence = server
+        .do_target_intelligence(TargetIntelligenceParams {
+            target: "http://127.0.0.1:9".to_string(),
+        })
+        .await;
+    assert!(
+        intelligence.is_err_and(|error| error.contains("no engagement authorization")),
+        "MCP target intelligence must fail closed before attempting loopback I/O"
+    );
+
+    let code_path = std::env::current_dir()
+        .unwrap_or_else(|error| panic!("failed to resolve test working directory: {error}"));
+    let code_scan = server
+        .do_scan_code(CodeScanParams {
+            path: code_path.display().to_string(),
+            language: Some("rust".to_string()),
+            modules: None,
+            skip: None,
+        })
+        .await;
+    assert!(
+        code_scan.is_err_and(|error| error.contains("no engagement authorization")),
+        "MCP code scan must fail closed before traversing the source tree"
+    );
 }
 
 /// Verify `project_create` creates a project and returns JSON.
@@ -187,21 +345,46 @@ async fn test_tool_project_delete() {
 #[tokio::test]
 async fn test_tool_project_scan() {
     let Some(pool) = get_pool_or_skip().await else { return };
+    let target = local_scan_target().await;
     let server = test_server(pool.clone());
     let name = unique_name("mcp-pscan");
 
-    storage::projects::create_project(&pool, &name, "").await.unwrap();
+    let project = storage::projects::create_project(&pool, &name, "").await.unwrap();
+    storage::projects::add_target(&pool, project.id, &target.url("/"), "loopback").await.unwrap();
 
     let params = ProjectScanParams {
         project: name.clone(),
-        target: "http://192.0.2.1".to_string(),
+        target: target.url("/"),
         profile: "quick".to_string(),
     };
-    // May timeout or succeed — both valid, tests persistence path
-    let _result = server.do_project_scan(params).await;
+    let result = server.do_project_scan(params).await;
+    assert!(result.is_ok(), "loopback project scan should succeed: {result:?}");
+    let persisted = storage::scans::list_scans(&pool, project.id).await.unwrap();
+    assert_eq!(persisted.len(), 1, "project scan should persist exactly one scan record");
 
     // Cleanup
-    let project = storage::projects::get_project_by_name(&pool, &name).await.unwrap().unwrap();
+    storage::projects::delete_project(&pool, project.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_tool_project_scan_rejects_unregistered_target() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-pscan-unregistered");
+    let project = storage::projects::create_project(&pool, &name, "").await.unwrap();
+
+    let result = server
+        .do_project_scan(ProjectScanParams {
+            project: name,
+            target: "http://127.0.0.1:9".to_string(),
+            profile: "quick".to_string(),
+        })
+        .await;
+    assert!(
+        result.is_err_and(|error| error.contains("not registered")),
+        "project membership must be checked before scan authorization or I/O"
+    );
+
     storage::projects::delete_project(&pool, project.id).await.unwrap();
 }
 
@@ -398,6 +581,27 @@ async fn test_tool_target_remove() {
     storage::projects::delete_project(&pool, project.id).await.unwrap();
 }
 
+#[tokio::test]
+async fn test_tool_target_remove_cannot_cross_project_boundary() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let server = test_server(pool.clone());
+    let first_name = unique_name("mcp-tremove-owner");
+    let second_name = unique_name("mcp-tremove-other");
+    let first = storage::projects::create_project(&pool, &first_name, "").await.unwrap();
+    let second = storage::projects::create_project(&pool, &second_name, "").await.unwrap();
+    let target =
+        storage::projects::add_target(&pool, first.id, "https://example.com", "").await.unwrap();
+
+    let result = server
+        .do_target_remove(TargetRemoveParams { project: second_name, id: target.id.to_string() })
+        .await;
+    assert!(result.is_err(), "a target ID must be constrained by its owning project");
+    assert_eq!(storage::projects::list_targets(&pool, first.id).await.unwrap().len(), 1);
+
+    storage::projects::delete_project(&pool, first.id).await.unwrap();
+    storage::projects::delete_project(&pool, second.id).await.unwrap();
+}
+
 /// Verify `db_migrate` runs migrations successfully.
 #[tokio::test]
 async fn test_tool_db_migrate() {
@@ -457,7 +661,7 @@ async fn test_resource_read_projects() {
 }
 
 /// Verify reading `scorchkit://projects/{id}` returns project details
-/// with targets, scan_count, and finding_count fields.
+/// with targets, `scan_count`, and `finding_count` fields.
 #[tokio::test]
 async fn test_resource_read_project() {
     let Some(pool) = get_pool_or_skip().await else { return };
@@ -470,10 +674,7 @@ async fn test_resource_read_project() {
     let result = server.do_read_resource(&uri).await;
     assert!(result.is_ok(), "reading single project should succeed");
     let read = result.unwrap();
-    let text = match &read.contents[0] {
-        rmcp::model::ResourceContents::TextResourceContents { text, .. } => text,
-        _ => panic!("expected text resource content"),
-    };
+    let text = resource_text(&read);
     let json: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(json["project"]["name"], name);
     assert!(json.get("scan_count").is_some());
@@ -510,10 +711,7 @@ async fn test_resource_read_scans() {
     let result = server.do_read_resource(&uri).await;
     assert!(result.is_ok(), "reading project scans should succeed");
     let read = result.unwrap();
-    let text = match &read.contents[0] {
-        rmcp::model::ResourceContents::TextResourceContents { text, .. } => text,
-        _ => panic!("expected text resource content"),
-    };
+    let text = resource_text(&read);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
     assert_eq!(parsed.len(), 1, "should return one scan");
 
@@ -549,10 +747,7 @@ async fn test_resource_read_scan() {
     let result = server.do_read_resource(&uri).await;
     assert!(result.is_ok(), "reading single scan should succeed");
     let read = result.unwrap();
-    let text = match &read.contents[0] {
-        rmcp::model::ResourceContents::TextResourceContents { text, .. } => text,
-        _ => panic!("expected text resource content"),
-    };
+    let text = resource_text(&read);
     let json: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(json["profile"], "standard");
 
@@ -591,10 +786,7 @@ async fn test_resource_read_findings() {
     let result = server.do_read_resource(&uri).await;
     assert!(result.is_ok(), "reading project findings should succeed");
     let read = result.unwrap();
-    let text = match &read.contents[0] {
-        rmcp::model::ResourceContents::TextResourceContents { text, .. } => text,
-        _ => panic!("expected text resource content"),
-    };
+    let text = resource_text(&read);
     let parsed: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
     assert_eq!(parsed.len(), 1, "should return one finding");
 
@@ -635,10 +827,7 @@ async fn test_resource_read_finding() {
     let result = server.do_read_resource(&uri).await;
     assert!(result.is_ok(), "reading single finding should succeed");
     let read = result.unwrap();
-    let text = match &read.contents[0] {
-        rmcp::model::ResourceContents::TextResourceContents { text, .. } => text,
-        _ => panic!("expected text resource content"),
-    };
+    let text = resource_text(&read);
     let json: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(json["title"], "Weak TLS");
 
@@ -671,7 +860,6 @@ async fn test_resource_read_not_found() {
 async fn test_server_capabilities_include_resources() {
     let Some(pool) = get_pool_or_skip().await else { return };
     let server = test_server(pool);
-    use rmcp::handler::server::ServerHandler;
     let info = server.get_info();
     assert!(info.capabilities.resources.is_some(), "server capabilities should include resources");
 }
@@ -682,7 +870,6 @@ async fn test_server_capabilities_include_resources() {
 async fn test_server_uses_rich_instructions() {
     let Some(pool) = get_pool_or_skip().await else { return };
     let server = test_server(pool);
-    use rmcp::handler::server::ServerHandler;
     let info = server.get_info();
     let instructions = info.instructions.as_deref().unwrap_or("");
     assert!(
@@ -774,7 +961,8 @@ async fn test_tool_schedule_scan() -> Result<(), Box<dyn std::error::Error>> {
     let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
     let server = test_server(pool.clone());
     let name = unique_name("mcp-sched");
-    storage::projects::create_project(&pool, &name, "schedule test").await?;
+    let project = storage::projects::create_project(&pool, &name, "schedule test").await?;
+    storage::projects::add_target(&pool, project.id, "https://example.com", "fixture").await?;
 
     // Act
     let result = server
@@ -790,14 +978,46 @@ async fn test_tool_schedule_scan() -> Result<(), Box<dyn std::error::Error>> {
     assert!(result.is_ok(), "schedule_scan should succeed: {result:?}");
     let body = result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
     let json: serde_json::Value = serde_json::from_str(&body)?;
-    assert_eq!(json["target_url"], "https://example.com");
+    assert_eq!(json["target_url"], "https://example.com/");
     assert_eq!(json["cron_expression"], "0 0 * * *");
     assert_eq!(json["enabled"], true);
+    assert_eq!(
+        json["engagement_snapshot"]["id"],
+        test_engagement().id.to_string(),
+        "the schedule must retain the engagement that authorized it"
+    );
 
     // Cleanup
     let project = storage::projects::get_project_by_name(&pool, &name)
         .await?
         .ok_or("project should exist for cleanup")?;
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_tool_schedule_scan_denies_without_engagement(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let name = unique_name("mcp-sched-denied");
+    let project = storage::projects::create_project(&pool, &name, "").await?;
+    storage::projects::add_target(&pool, project.id, "https://example.com", "fixture").await?;
+    let server = ScorchKitServer::new(Arc::new(AppConfig::default()), pool.clone());
+
+    let result = server
+        .do_schedule_scan(ScheduleScanParams {
+            project: name,
+            target: "https://example.com".to_string(),
+            cron: "0 0 * * *".to_string(),
+            profile: "quick".to_string(),
+        })
+        .await;
+
+    assert!(
+        result.is_err_and(|error| error.contains("no engagement authorization")),
+        "schedule creation must fail before persistence without an engagement"
+    );
+    assert!(storage::schedules::list_schedules(&pool, project.id).await?.is_empty());
     storage::projects::delete_project(&pool, project.id).await?;
     Ok(())
 }
@@ -832,7 +1052,8 @@ async fn test_tool_schedule_scan_invalid_cron() -> Result<(), Box<dyn std::error
     let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
     let server = test_server(pool.clone());
     let name = unique_name("mcp-sched-badcron");
-    storage::projects::create_project(&pool, &name, "").await?;
+    let project = storage::projects::create_project(&pool, &name, "").await?;
+    storage::projects::add_target(&pool, project.id, "https://example.com", "fixture").await?;
 
     // Act
     let result = server
@@ -863,7 +1084,8 @@ async fn test_tool_schedule_scan_default_profile() -> Result<(), Box<dyn std::er
     let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
     let server = test_server(pool.clone());
     let name = unique_name("mcp-sched-defprof");
-    storage::projects::create_project(&pool, &name, "").await?;
+    let project = storage::projects::create_project(&pool, &name, "").await?;
+    storage::projects::add_target(&pool, project.id, "https://example.com", "fixture").await?;
 
     // Act — deserialize without explicit profile to trigger the serde default
     let params: ScheduleScanParams = serde_json::from_value(serde_json::json!({
@@ -896,6 +1118,7 @@ async fn test_tool_schedule_scan_default_profile() -> Result<(), Box<dyn std::er
 async fn test_tool_run_due_scans_none_due() -> Result<(), Box<dyn std::error::Error>> {
     // Arrange — no schedules created
     let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let _due_scan_guard = due_scan_test_guard(&pool).await?;
     let server = test_server(pool);
 
     // Act
@@ -915,38 +1138,69 @@ async fn test_tool_run_due_scans_none_due() -> Result<(), Box<dyn std::error::Er
 async fn test_tool_run_due_scans_with_schedule() -> Result<(), Box<dyn std::error::Error>> {
     // Arrange
     let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
-    let server = test_server(pool.clone());
+    let _due_scan_guard = due_scan_test_guard(&pool).await?;
+    let target = local_scan_target().await;
+    let database_url = std::env::var("DATABASE_URL")?;
+    let single_connection_pool = storage::connect_with_max(&database_url, 1).await?;
+    let first_server = test_server(single_connection_pool.clone());
+    let second_server = test_server(single_connection_pool);
     let name = unique_name("mcp-due-run");
     let project = storage::projects::create_project(&pool, &name, "").await?;
 
-    // Create a schedule, then backdate next_run so it appears due
-    let schedule = storage::schedules::create_schedule(
+    storage::projects::add_target(&pool, project.id, &target.url("/first"), "first").await?;
+    storage::projects::add_target(&pool, project.id, &target.url("/second"), "second").await?;
+
+    // Two due schedules prove that the MCP endpoint executes the batch once,
+    // rather than invoking an all-due loop once per schedule.
+    let first = storage::schedules::create_schedule(
         &pool,
         project.id,
-        "http://192.0.2.1",
+        &target.url("/first"),
         "quick",
         "0 0 * * *",
+        &test_engagement(),
+    )
+    .await?;
+    let second = storage::schedules::create_schedule(
+        &pool,
+        project.id,
+        &target.url("/second"),
+        "quick",
+        "0 0 * * *",
+        &test_engagement(),
     )
     .await?;
     let past = chrono::Utc::now() - chrono::Duration::hours(1);
-    sqlx::query("UPDATE scan_schedules SET next_run = $1 WHERE id = $2")
+    sqlx::query("UPDATE scan_schedules SET next_run = $1 WHERE id IN ($2, $3)")
         .bind(past)
-        .bind(schedule.id)
+        .bind(first.id)
+        .bind(second.id)
         .execute(&pool)
         .await?;
 
-    // Act
-    let result = server.do_run_due_scans().await;
+    // Act: two callers contend for claims through a one-connection pool.
+    let (first_result, second_result) =
+        tokio::join!(first_server.do_run_due_scans(), second_server.do_run_due_scans());
 
     // Assert
-    assert!(result.is_ok(), "run_due_scans should succeed: {result:?}");
-    let body = result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-    let json: serde_json::Value = serde_json::from_str(&body)?;
-    let executed = json["executed"].as_u64().ok_or("executed field should be a number")?;
-    assert!(executed > 0, "should have executed at least one schedule");
+    let first_body = first_result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let second_body = second_result.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let first_json: serde_json::Value = serde_json::from_str(&first_body)?;
+    let second_json: serde_json::Value = serde_json::from_str(&second_body)?;
+    let executed = first_json["executed"].as_u64().unwrap_or_default()
+        + second_json["executed"].as_u64().unwrap_or_default();
+    assert_eq!(executed, 2, "concurrent callers must execute each due schedule exactly once");
+    for output in [&first_json, &second_json] {
+        if let Some(results) = output["results"].as_array() {
+            assert!(results.iter().all(|outcome| outcome["status"] == "success"));
+        }
+    }
+    let persisted = storage::scans::list_scans(&pool, project.id).await?;
+    assert_eq!(persisted.len(), 2, "N due schedules must create N scan records, not N²");
 
     // Cleanup
-    storage::schedules::delete_schedule(&pool, schedule.id).await?;
+    storage::schedules::delete_schedule(&pool, first.id).await?;
+    storage::schedules::delete_schedule(&pool, second.id).await?;
     storage::projects::delete_project(&pool, project.id).await?;
     Ok(())
 }
@@ -957,6 +1211,7 @@ async fn test_tool_run_due_scans_with_schedule() -> Result<(), Box<dyn std::erro
 async fn test_tool_run_due_scans_disabled_skipped() -> Result<(), Box<dyn std::error::Error>> {
     // Arrange
     let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let _due_scan_guard = due_scan_test_guard(&pool).await?;
     let server = test_server(pool.clone());
     let name = unique_name("mcp-due-disabled");
     let project = storage::projects::create_project(&pool, &name, "").await?;
@@ -964,9 +1219,10 @@ async fn test_tool_run_due_scans_disabled_skipped() -> Result<(), Box<dyn std::e
     let schedule = storage::schedules::create_schedule(
         &pool,
         project.id,
-        "http://192.0.2.1",
+        "http://127.0.0.1:9",
         "quick",
         "0 0 * * *",
+        &test_engagement(),
     )
     .await?;
 
@@ -1000,16 +1256,21 @@ async fn test_tool_run_due_scans_disabled_skipped() -> Result<(), Box<dyn std::e
 async fn test_tool_run_due_scans_next_run_updated() -> Result<(), Box<dyn std::error::Error>> {
     // Arrange
     let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let _due_scan_guard = due_scan_test_guard(&pool).await?;
+    let target = local_scan_target().await;
     let server = test_server(pool.clone());
     let name = unique_name("mcp-due-nextrun");
     let project = storage::projects::create_project(&pool, &name, "").await?;
+    storage::projects::add_target(&pool, project.id, &target.url("/scheduled"), "scheduled")
+        .await?;
 
     let schedule = storage::schedules::create_schedule(
         &pool,
         project.id,
-        "http://192.0.2.1",
+        &target.url("/scheduled"),
         "quick",
         "0 0 * * *",
+        &test_engagement(),
     )
     .await?;
 
@@ -1036,6 +1297,111 @@ async fn test_tool_run_due_scans_next_run_updated() -> Result<(), Box<dyn std::e
     );
 
     // Cleanup
+    storage::schedules::delete_schedule(&pool, schedule.id).await?;
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_tool_failed_due_scan_is_claimed_at_most_once(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let _due_scan_guard = due_scan_test_guard(&pool).await?;
+    let name = unique_name("mcp-due-denied");
+    let project = storage::projects::create_project(&pool, &name, "").await?;
+    let target = "http://127.0.0.1:9";
+    storage::projects::add_target(&pool, project.id, target, "denied fixture").await?;
+    let schedule = storage::schedules::create_schedule(
+        &pool,
+        project.id,
+        target,
+        "quick",
+        "0 0 * * *",
+        &test_engagement(),
+    )
+    .await?;
+    sqlx::query("UPDATE scan_schedules SET next_run = $1 WHERE id = $2")
+        .bind(chrono::Utc::now() - chrono::Duration::hours(1))
+        .bind(schedule.id)
+        .execute(&pool)
+        .await?;
+    let server = ScorchKitServer::new(Arc::new(AppConfig::default()), pool.clone());
+
+    let first: serde_json::Value = serde_json::from_str(
+        &server
+            .do_run_due_scans()
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+    let second: serde_json::Value = serde_json::from_str(
+        &server
+            .do_run_due_scans()
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+
+    assert_eq!(first["executed"], 1);
+    assert_eq!(first["results"][0]["status"], "error");
+    assert!(first["results"][0]["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("no engagement authorization")));
+    assert_eq!(second["executed"], 0, "a claimed failed occurrence must not be retried");
+    let updated = storage::schedules::get_schedule(&pool, schedule.id)
+        .await?
+        .ok_or("claimed schedule should remain")?;
+    assert!(updated.last_run.is_some());
+    assert!(updated.next_run > chrono::Utc::now());
+
+    storage::schedules::delete_schedule(&pool, schedule.id).await?;
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_due_scan_rejects_changed_engagement_snapshot(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let _due_scan_guard = due_scan_test_guard(&pool).await?;
+    let target = local_scan_target().await;
+    let name = unique_name("mcp-due-policy-change");
+    let project = storage::projects::create_project(&pool, &name, "").await?;
+    let target_url = target.url("/policy-change");
+    storage::projects::add_target(&pool, project.id, &target_url, "fixture").await?;
+    let schedule = storage::schedules::create_schedule(
+        &pool,
+        project.id,
+        &target_url,
+        "quick",
+        "0 0 * * *",
+        &test_engagement(),
+    )
+    .await?;
+    sqlx::query("UPDATE scan_schedules SET next_run = $1 WHERE id = $2")
+        .bind(chrono::Utc::now() - chrono::Duration::hours(1))
+        .bind(schedule.id)
+        .execute(&pool)
+        .await?;
+
+    let mut changed = test_engagement();
+    changed.policy.allowed_scope.push(ScopeRule::Exact("newly-broadened.test".to_string()));
+    let mut config = AppConfig::default();
+    config.scan.timeout_seconds = 5;
+    config.engagement = Some(changed);
+    let server = ScorchKitServer::new(Arc::new(config), pool.clone());
+    let body: serde_json::Value = serde_json::from_str(
+        &server
+            .do_run_due_scans()
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+
+    assert_eq!(body["executed"], 1);
+    assert_eq!(body["results"][0]["status"], "error");
+    assert!(body["results"][0]["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("does not match its authorization snapshot")));
+    assert!(storage::scans::list_scans(&pool, project.id).await?.is_empty());
+
     storage::schedules::delete_schedule(&pool, schedule.id).await?;
     storage::projects::delete_project(&pool, project.id).await?;
     Ok(())
@@ -1153,14 +1519,30 @@ async fn test_tool_plan_scan_no_ai() -> Result<(), Box<dyn std::error::Error>> {
     let result =
         server.do_plan_scan(PlanScanParams { target: "https://example.com".to_string() }).await;
 
-    // Assert — should fail gracefully, not panic
-    assert!(result.is_err(), "plan_scan with AI disabled should return an error");
-    let err_msg = result.unwrap_err();
-    assert!(
-        err_msg.contains("AI is disabled") || err_msg.contains("claude"),
-        "error should mention AI is disabled: {err_msg}"
+    // Assert — the disabled state must not be confused with host availability.
+    assert_eq!(
+        result.as_ref().err().map(String::as_str),
+        Some("AI is disabled in config — scan planning requires AI")
     );
     Ok(())
+}
+
+#[tokio::test]
+async fn test_tool_plan_scan_reports_unavailable_provider() {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgresql://localhost/scorchkit_unconnected_test")
+        .unwrap_or_else(|error| panic!("lazy test database URL should parse: {error}"));
+    let mut config = AppConfig::default();
+    config.ai.binary = Some("scorchkit-test-ai-provider-does-not-exist".to_string());
+    let server = ScorchKitServer::new(Arc::new(config), pool);
+
+    let result =
+        server.do_plan_scan(PlanScanParams { target: "https://example.com".to_string() }).await;
+
+    assert_eq!(
+        result.as_ref().err().map(String::as_str),
+        Some("Codex CLI not found. Install or configure the selected AI provider.")
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1217,5 +1599,65 @@ async fn test_tool_analyze_findings_no_findings() -> Result<(), Box<dyn std::err
 
     // Cleanup
     storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_tool_analyze_findings_distinguishes_disabled_and_unavailable(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pool) = get_pool_or_skip().await else { return Ok(()) };
+    let name = unique_name("mcp-analyze-provider-state");
+    let project = storage::projects::create_project(&pool, &name, "AI provider state").await?;
+    let now = chrono::Utc::now();
+    let scan = storage::scans::save_scan(
+        &pool,
+        project.id,
+        "https://example.com",
+        "standard",
+        now,
+        Some(now),
+        &[],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await?;
+    let seeded = vec![Finding::new(
+        "fixture",
+        Severity::High,
+        "Seeded finding",
+        "fixture",
+        "https://example.com",
+    )];
+    storage::findings::save_findings(&pool, project.id, scan.id, &seeded).await?;
+    let params = || AnalyzeFindingsParams {
+        project: name.clone(),
+        focus: "summary".to_string(),
+        scan_id: None,
+    };
+
+    let mut disabled_config = AppConfig::default();
+    disabled_config.ai.enabled = false;
+    disabled_config.engagement = Some(test_engagement());
+    let disabled = ScorchKitServer::new(Arc::new(disabled_config), pool.clone())
+        .do_analyze_findings(params())
+        .await;
+
+    let mut unavailable_config = AppConfig::default();
+    unavailable_config.ai.binary = Some("scorchkit-test-ai-provider-does-not-exist".to_string());
+    unavailable_config.engagement = Some(test_engagement());
+    let unavailable = ScorchKitServer::new(Arc::new(unavailable_config), pool.clone())
+        .do_analyze_findings(params())
+        .await;
+
+    storage::projects::delete_project(&pool, project.id).await?;
+
+    assert_eq!(
+        disabled.as_ref().err().map(String::as_str),
+        Some("AI analysis is disabled in config")
+    );
+    assert_eq!(
+        unavailable.as_ref().err().map(String::as_str),
+        Some("Codex CLI not found. Install or configure the selected AI provider.")
+    );
     Ok(())
 }

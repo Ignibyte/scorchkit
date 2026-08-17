@@ -1,18 +1,18 @@
-//! Claude-driven attack-chain correlation (WORK-137).
+//! AI-assisted attack-chain correlation (WORK-137).
 //!
-//! Layers Claude reasoning on top of the rule-based
-//! [`engine::correlation`] engine. When AI is available, feeds
-//! findings to Claude with structured prompts for attack-chain
+//! Layers provider-neutral model reasoning on top of the rule-based
+//! [`crate::engine::correlation`] engine. When AI is available, feeds
+//! findings to an AI provider with structured prompts for attack-chain
 //! analysis. Falls back gracefully to rule-based output when AI
 //! is disabled or unavailable.
 
 use crate::engine::correlation::{correlate, AttackChain};
 use crate::engine::finding::Finding;
 
-/// Build the prompt for Claude to analyze findings and identify attack chains.
+/// Build the prompt for an AI provider to analyze findings and identify attack chains.
 ///
 /// Returns a system prompt + user prompt pair suitable for the
-/// Claude CLI or API.
+/// an AI provider adapter.
 #[must_use]
 pub fn build_correlation_prompt(findings: &[Finding]) -> (String, String) {
     let system = "You are a senior penetration tester analyzing security scan results. \
@@ -43,13 +43,13 @@ pub fn build_correlation_prompt(findings: &[Finding]) -> (String, String) {
     (system, user)
 }
 
-/// Parse Claude's response into attack chains.
+/// Parse a provider response into attack chains.
 ///
 /// Falls back to empty vec on parse failure — the caller should
 /// merge with rule-based results.
 #[must_use]
 pub fn parse_correlation_response(response: &str) -> Vec<AttackChain> {
-    // Try to extract JSON from the response (Claude may wrap in markdown)
+    // Try to extract JSON from the response (a provider may wrap it in markdown).
     let json_str = extract_json_array(response);
     serde_json::from_str(json_str).unwrap_or_default()
 }
@@ -133,6 +133,14 @@ mod tests {
         let chains = parse_correlation_response(response);
         assert_eq!(chains.len(), 1);
         assert_eq!(chains[0].name, "Fenced");
+    }
+
+    #[test]
+    fn test_parse_correlation_response_bare_markdown_fence() {
+        let response = "Analysis:\n```\n[{\"name\": \"Bare Fence\", \"severity\": \"medium\", \"description\": \"test\", \"steps\": [], \"remediation_priority\": \"medium\"}]\n```\nDone.";
+        let chains = parse_correlation_response(response);
+        assert_eq!(chains.len(), 1);
+        assert_eq!(chains[0].name, "Bare Fence");
     }
 
     /// Invalid response → empty vec (graceful fallback).

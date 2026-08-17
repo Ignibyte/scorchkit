@@ -13,7 +13,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// XSS scanner via `XSStrike`.
 #[derive(Debug)]
@@ -42,12 +41,9 @@ impl ScanModule for XsstrikeModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let url = ctx.target.url.as_str();
-        let output = subprocess::run_tool_lenient(
-            "xsstrike",
-            &["-u", url, "--skip"],
-            Duration::from_secs(180),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient("xsstrike", &["-u", url, "--skip"], Duration::from_mins(3))
+            .await?;
         Ok(parse_xsstrike_output(&output.stdout, url))
     }
 }

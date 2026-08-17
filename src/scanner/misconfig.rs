@@ -477,7 +477,7 @@ fn extract_error_snippet(body: &str, pattern: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Unit tests for the security misconfiguration module's pure helper functions.
+    // Unit tests for the security misconfiguration module's pure helper functions.
 
     /// Verify that `is_session_cookie` correctly identifies session-related cookies
     /// and rejects unrelated cookie names.

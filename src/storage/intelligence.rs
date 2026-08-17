@@ -322,9 +322,11 @@ mod tests {
 
     #[test]
     fn test_intelligence_serde_roundtrip() {
-        let mut intel = ProjectIntelligence::default();
-        intel.total_scans = 5;
-        intel.last_updated = Some("2026-03-30T12:00:00Z".to_string());
+        let mut intel = ProjectIntelligence {
+            total_scans: 5,
+            last_updated: Some("2026-03-30T12:00:00Z".to_string()),
+            ..Default::default()
+        };
 
         let mut stats = ModuleStats::default();
         stats.record_run(2, 1, 0, 0, 3);
@@ -406,8 +408,7 @@ mod tests {
 
     #[test]
     fn test_format_for_planner_with_data() {
-        let mut intel = ProjectIntelligence::default();
-        intel.total_scans = 2;
+        let mut intel = ProjectIntelligence { total_scans: 2, ..Default::default() };
         let mut stats = ModuleStats::default();
         stats.record_run(1, 0, 0, 0, 0);
         intel.modules.insert("ssl".to_string(), stats);

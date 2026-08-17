@@ -91,16 +91,17 @@ scorchkit run https://target.com --profile thorough
 
 ## Execution Model
 
-### Concurrent execution via semaphore
+### Bounded concurrent execution
 
 Modules run concurrently up to `max_concurrent_modules` (configurable in
-`config.toml`). A tokio `Semaphore` controls the concurrency limit.
+`config.toml`). The shared job executor also bounds each module batch by
+`timeout_seconds`, accepts caller cancellation, and returns results in module submission order.
 
 Each module:
-1. Acquires a semaphore permit
-2. Executes its `run()` method
-3. Releases the permit on completion
-4. Reports success (findings) or error (skipped with reason)
+1. Enters its family dependency phase.
+2. Starts when executor capacity is available.
+3. Executes its `run()` method through the policy-sealed context.
+4. Reports success (findings) or error (skipped with reason) in stable result order.
 
 ### Phased execution with `run_phased`
 
@@ -114,7 +115,8 @@ subdomains) to `SharedData`.
 **Phase 2 -- Scanners:** All modules with `category() == ModuleCategory::Scanner`
 run second. These can read shared data published by recon modules.
 
-Within each phase, modules still run concurrently via the semaphore.
+Standard DAST scans use these phases automatically. Within each phase, modules run concurrently
+through the shared executor.
 
 ### Checkpoint / resume
 

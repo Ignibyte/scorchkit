@@ -12,13 +12,25 @@
 //! use scorchkit::prelude::*;
 //!
 //! # async fn example() -> Result<()> {
-//! let engine = Engine::new(Arc::new(AppConfig::default()));
+//! let code = std::path::Path::new(".").canonicalize()?;
+//! let policy = EngagementPolicy::default()
+//!     .allow_scope(ScopeRule::parse("example.com").expect("web scope"))
+//!     .allow_scope(ScopeRule::path_prefix(&code)?)
+//!     .allow_capability(Capability::DastScan)
+//!     .allow_capability(Capability::CodeScan)
+//!     .allow_capability(Capability::ExternalTool)
+//!     .allow_effect(EffectClass::Intrusive)
+//!     .allow_effect(EffectClass::Passive);
+//! let engine = Engine::for_engagement(
+//!     Arc::new(AppConfig::default()),
+//!     Arc::new(Engagement::new("authorized assessment", policy)),
+//! );
 //!
 //! // DAST scan
 //! let result = engine.scan("https://example.com").await?;
 //!
 //! // SAST scan
-//! let code_result = engine.code_scan(std::path::Path::new(".")).await?;
+//! let code_result = engine.code_scan(&code).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -37,6 +49,12 @@
 //! - **[`report`]** — Output formats (terminal, JSON, HTML, SARIF)
 //! - **[`facade`]** — High-level [`Engine`] for library consumers
 //! - **[`prelude`]** — Convenience re-exports
+
+#[cfg(not(unix))]
+compile_error!(
+    "ScorchKit currently supports Unix hosts only because external-tool process-tree isolation \
+     requires Unix process groups; add a kill-on-close job-object backend before enabling Windows"
+);
 
 pub mod agent;
 pub mod ai;
@@ -61,12 +79,17 @@ pub mod scanner;
 pub mod storage;
 pub mod tools;
 
+#[cfg(test)]
+pub(crate) static TEST_ENVIRONMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 // Crate-root re-exports for the most common types.
 // Library consumers can use `scorchkit::Finding` instead of
 // `scorchkit::engine::finding::Finding`.
 pub use engine::error::{Result, ScorchError};
 pub use engine::finding::Finding;
+pub use engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy, PolicyTarget};
 pub use engine::scan_result::ScanResult;
+pub use engine::scope::ScopeRule;
 pub use engine::severity::Severity;
 pub use engine::target::Target;
 pub use facade::Engine;

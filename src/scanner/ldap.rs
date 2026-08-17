@@ -393,8 +393,8 @@ fn extract_forms(body: &str, base_url: &Url) -> Vec<FormInfo> {
 mod tests {
     use super::*;
 
-    /// Tests for the LDAP injection scanner module's pure helper functions
-    /// and constant data integrity.
+    // Tests for the LDAP injection scanner module's pure helper functions
+    // and constant data integrity.
 
     /// Verify that the module metadata returns correct values.
     #[test]
@@ -459,7 +459,7 @@ mod tests {
 
         // Must contain filter-closing parentheses
         assert!(
-            payloads.iter().any(|p| p.contains(")(") || p.contains(")")),
+            payloads.iter().any(|p| p.contains(")(") || p.contains(')')),
             "must include filter-closing payloads"
         );
 

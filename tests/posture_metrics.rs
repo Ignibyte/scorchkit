@@ -157,7 +157,7 @@ fn test_unresolved_finding_roundtrip() -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-/// Verify `TrendDirection` round-trips through JSON with snake_case.
+/// Verify `TrendDirection` round-trips through JSON with `snake_case`.
 #[cfg(feature = "storage")]
 #[test]
 fn test_trend_direction_serde() -> Result<(), Box<dyn std::error::Error>> {

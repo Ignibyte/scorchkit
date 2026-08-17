@@ -1,93 +1,44 @@
-# Hook Architecture
+# Lifecycle hooks
 
-ScorchKit's hook system provides scan lifecycle extensibility via external scripts. Users configure hooks in `config.toml` that fire at key points during scanning.
+Lifecycle hooks are configured local executables. They receive one JSON value on standard input and
+may return one JSON value on standard output. They run through the policy-sealed, bounded process
+executor and therefore require `ExternalTool` authorization for the DAST target and profile effect.
 
-## Hook Points
+## Hook points
 
-| Point | When | Can Modify | Use Case |
-|-------|------|-----------|----------|
-| `pre_scan` | Before modules run | Scan configuration | Auth token injection, target discovery |
-| `post_module` | After each module | Module findings | Finding filtering, enrichment, tagging |
-| `post_scan` | After all modules | Nothing (fire-and-forget) | SIEM export, Slack/Jira notifications |
+| Setting | Runs | Input | Output behavior |
+|---|---|---|---|
+| `pre_scan` | before modules start | target, profile, runnable module IDs | parsed but not applied in the current runner |
+| `post_module` | after each successful module | module identity and findings | a valid `findings` array replaces that module's findings |
+| `post_scan` | after findings are collected | scan identity, target, count, critical/high summary | ignored after completion |
+
+Scripts at one hook point run sequentially. Valid JSON output from one script becomes the next
+script's input. Empty output is a passthrough. Invalid JSON is a hook failure.
 
 ## Configuration
 
 ```toml
 [hooks]
-pre_scan = ["./hooks/authenticate.sh"]
-post_module = ["./hooks/filter-false-positives.py"]
-post_scan = ["./hooks/notify-slack.sh", "./hooks/export-jira.sh"]
-timeout_seconds = 30  # Max time per hook (default)
-fail_open = true      # Hook failure doesn't block scan (default)
+pre_scan = ["/opt/scorchkit/hooks/check-window"]
+post_module = ["/opt/scorchkit/hooks/enrich-findings"]
+post_scan = ["/opt/scorchkit/hooks/export-summary"]
+timeout_seconds = 30
+fail_open = false
 ```
 
-## Protocol
+`fail_open = true` logs a terminal-escaped warning and continues. `false` returns a typed hook error
+and aborts the scan. Use fail-closed behavior when a hook represents an authorization, maintenance
+window, or evidence-handling requirement.
 
-- **Input:** JSON on stdin (content varies by hook point)
-- **Output:** Modified JSON on stdout, or empty for no modification
-- **Non-zero exit:** Hook failure — logged, scan continues (fail-open)
-- **Timeout exceeded:** Same as failure — logged, scan continues
+## Process controls
 
-## Hook Chaining
+Each invocation has a timeout, bounded stdout and stderr, canonical executable resolution, no shell
+interpolation, and Unix process-group cleanup. Hook output is untrusted until JSON parsing succeeds.
+Secrets should not be written to stdout or stderr because hook output can enter logs and reports.
 
-Hooks for the same point run **sequentially**. The output of hook 1 becomes the input of hook 2. This enables composition:
+## Webhooks
 
-```
-hook 1: adds custom tags to findings
-hook 2: filters findings by tags
-hook 3: enriches remaining findings with JIRA links
-```
-
-## JSON Contracts
-
-### Pre-Scan
-```json
-{
-  "target": "https://example.com",
-  "profile": "standard",
-  "modules": ["headers", "ssl", "injection", ...]
-}
-```
-
-### Post-Module
-```json
-{
-  "module_id": "injection",
-  "module_name": "SQL Injection Scanner",
-  "findings": [ ...Finding objects... ],
-  "finding_count": 3
-}
-```
-
-### Post-Scan
-```json
-{
-  "scan_id": "uuid",
-  "target": "https://example.com",
-  "total_findings": 15,
-  "summary": { "critical": 2, "high": 5 }
-}
-```
-
-## Integration with Existing Systems
-
-- **Webhooks** (`runner/hooks.rs`): HTTP POST notifications — complementary, not replaced
-- **Plugins** (`runner/plugin.rs`): Custom scan modules via TOML — different purpose (modules vs interceptors)
-- **Both DAST and SAST**: Hook runner works with both Orchestrator and CodeOrchestrator
-
-## Example: CI/CD Fail on Critical
-
-```bash
-#!/bin/bash
-# hooks/fail-on-critical.sh (post_scan)
-INPUT=$(cat)
-CRITICAL=$(echo "$INPUT" | jq '.summary.critical')
-if [ "$CRITICAL" -gt 0 ]; then
-  echo "CRITICAL findings detected!" >&2
-  exit 1  # Logged as warning (fail_open=true) or blocks (fail_open=false)
-fi
-```
-
-## Security Model
-
-Hooks run as the same user as ScorchKit. They have full filesystem access. Only configure hooks from trusted sources. The `fail_open` setting controls whether hook failures block scans — set to `false` for CI/CD enforcement.
+Webhook configuration is retained only for configuration compatibility. ScorchKit does not send
+outbound webhook requests. A future delivery service must use an engagement-bound HTTP client,
+authorize redirects and resolved addresses, apply the common redaction policy, and bound its queue
+and retry behavior outside scan execution.

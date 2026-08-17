@@ -316,7 +316,7 @@ fn method_override_headers() -> Vec<&'static str> {
 mod tests {
     use super::*;
 
-    /// Test suite for access control testing.
+    // Test suite for access control testing.
 
     /// Verify admin path list covers common frameworks and patterns.
     #[test]

@@ -200,6 +200,11 @@ pub struct ScanSchedule {
     pub profile: String,
     /// Cron expression defining the recurrence pattern.
     pub cron_expression: String,
+    /// Exact engagement that authorized schedule creation.
+    ///
+    /// Legacy rows created before the authorization boundary was introduced
+    /// contain `None` and are denied at execution until recreated.
+    pub engagement_snapshot: Option<serde_json::Value>,
     /// Whether this schedule is active.
     pub enabled: bool,
     /// When this schedule was last executed.
@@ -214,7 +219,7 @@ pub struct ScanSchedule {
 mod tests {
     use super::*;
 
-    /// Verify VulnStatus round-trips through database string
+    /// Verify `VulnStatus` round-trips through database string
     /// representation without data loss.
     #[test]
     fn vuln_status_round_trip() {

@@ -14,9 +14,9 @@ Scans HTTP response bodies for exposed secrets, API keys, cryptographic material
 | Pattern | Name | Severity |
 |---------|------|----------|
 | `AKIA` | AWS Access Key ID | Critical |
-| `-----BEGIN RSA PRIVATE KEY-----` | RSA Private Key | Critical |
-| `-----BEGIN PRIVATE KEY-----` | Private Key | Critical |
-| `-----BEGIN EC PRIVATE KEY-----` | EC Private Key | Critical |
+| `-----BEGIN RSA PRIVATE KEY-----` | RSA Private Key | Critical | <!-- gitleaks:allow -- documented detection signature -->
+| `-----BEGIN PRIVATE KEY-----` | Private Key | Critical | <!-- gitleaks:allow -- documented detection signature -->
+| `-----BEGIN EC PRIVATE KEY-----` | EC Private Key | Critical | <!-- gitleaks:allow -- documented detection signature -->
 | `sk_live_` | Stripe Secret Key | Critical |
 | `sk_test_` | Stripe Test Key | Medium |
 | `ghp_` | GitHub Personal Access Token | High |

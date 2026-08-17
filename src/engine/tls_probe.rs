@@ -42,6 +42,8 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
+
+use super::policy_network::PolicyNetwork;
 use x509_parser::prelude::*;
 
 use crate::engine::finding::Finding;
@@ -112,7 +114,7 @@ pub enum StarttlsProtocol {
 ///
 /// Returns the parsed [`CertInfo`] on success, or a human-readable
 /// error string on any failure (TCP refused, STARTTLS rejected, TLS
-/// handshake failed, unparseable cert). The caller surfaces the
+/// handshake failed, unparsable cert). The caller surfaces the
 /// error as a finding — the probe itself never panics.
 ///
 /// The total wall-clock bound is roughly
@@ -122,16 +124,17 @@ pub enum StarttlsProtocol {
 /// # Errors
 ///
 /// Returns an `Err(String)` describing the failure phase.
-pub async fn probe_tls(
+pub(crate) async fn probe_tls(
+    network: &PolicyNetwork,
     host: &str,
     port: u16,
     mode: TlsMode,
 ) -> std::result::Result<CertInfo, String> {
     let addr = format!("{host}:{port}");
-    let tcp = timeout(DEFAULT_PHASE_TIMEOUT, TcpStream::connect(&addr))
+    let tcp = network
+        .connect(host, port, DEFAULT_PHASE_TIMEOUT)
         .await
-        .map_err(|_| format!("tcp connect to {addr} timed out"))?
-        .map_err(|e| format!("tcp connect to {addr} failed: {e}"))?;
+        .map_err(|error| format!("tcp connect to {addr} failed: {error}"))?;
 
     let tcp = match mode {
         TlsMode::Implicit => tcp,
@@ -688,7 +691,7 @@ mod tests {
     //! Pure-function coverage for [`check_certificate`] and the
     //! STARTTLS preamble wire format. The full TLS handshake path
     //! exercises real network I/O and lives in caller-side tests
-    //! (scanner/ssl.rs and infra/tls_probe.rs).
+    //! (scanner/ssl.rs and `infra/tls_probe.rs`).
 
     use super::*;
     use tokio::net::TcpListener;
@@ -725,7 +728,7 @@ mod tests {
         assert!(findings.is_empty());
     }
 
-    /// Expired cert yields a Critical finding with module_id = caller.
+    /// Expired cert yields a Critical finding with `module_id` = caller.
     #[test]
     fn check_certificate_expired_tagged_with_caller_module_id() {
         let cert = fixture_cert(true, false, "SHA-256 with RSA", vec!["example.com"]);

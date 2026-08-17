@@ -305,7 +305,7 @@ mod tests {
         assert!((a - b).abs() < 0.05, "expected {b} ± 0.05, got {a}");
     }
 
-    /// CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H — Log4Shell shape.
+    /// CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H — `Log4Shell` shape.
     /// Pinning the canonical 9.8 lets us catch any regression in the
     /// rounding helper or metric tables.
     #[test]

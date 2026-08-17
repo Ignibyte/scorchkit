@@ -1,127 +1,112 @@
 # Configuration
 
-The config module (`src/config/`) provides a TOML-based configuration system with sensible defaults. All fields have defaults, so ScorchKit works without any config file.
+`AppConfig` is the serialized input to the policy-gated engine. Every section has operational
+defaults, but the absence of `[engagement]` is intentional: configuration can load and read-only
+commands can run, while every scan family fails closed.
 
-## Files
+## Discovery order
 
-```
-config/
-  mod.rs       Re-exports types.rs
-  types.rs     All config structs + loading logic
-```
+`AppConfig::load` uses one file:
 
-## Config Structs
+1. an explicit `--config <path>`, which must exist and be a regular file;
+2. `scorchkit.toml` in the current directory;
+3. legacy `config.toml` in the current directory;
+4. in-memory defaults when none exists.
 
-### AppConfig (top-level)
+An explicit missing path is an error. ScorchKit does not silently replace a mistyped configuration
+with defaults.
 
-```rust
-pub struct AppConfig {
-    pub scan: ScanConfig,
-    pub tools: ToolsConfig,
-    pub ai: AiConfig,
-    pub report: ReportConfig,
-}
-```
+## Safe generation
 
-### ScanConfig
-
-Controls HTTP behavior and scan execution.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `timeout_seconds` | `u64` | `300` | Global scan timeout |
-| `max_concurrent_modules` | `usize` | `4` | Max parallel module execution |
-| `user_agent` | `String` | `"ScorchKit/0.1.0"` | HTTP User-Agent header |
-| `follow_redirects` | `bool` | `true` | Follow HTTP redirects |
-| `max_redirects` | `usize` | `10` | Max redirect chain length |
-| `headers` | `HashMap<String, String>` | `{}` | Extra headers on every request |
-
-### ToolsConfig
-
-Path overrides for external tool binaries. All default to `None` (search PATH).
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `nmap` | `Option<String>` | `None` | Path to nmap binary |
-| `nikto` | `Option<String>` | `None` | Path to nikto binary |
-| `sqlmap` | `Option<String>` | `None` | Path to sqlmap binary |
-| `nuclei` | `Option<String>` | `None` | Path to nuclei binary |
-| `feroxbuster` | `Option<String>` | `None` | Path to feroxbuster binary |
-| `sslyze` | `Option<String>` | `None` | Path to sslyze binary |
-| `testssl` | `Option<String>` | `None` | Path to testssl.sh binary |
-
-### AiConfig
-
-Controls Claude AI integration.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | `bool` | `true` | Whether AI analysis is available |
-| `claude_binary` | `String` | `"claude"` | Path to claude CLI |
-| `model` | `String` | `"sonnet"` | Model for analysis |
-| `max_budget_usd` | `f64` | `0.50` | Cost cap per analysis run |
-| `auto_analyze` | `bool` | `false` | Auto-run AI after scan completes |
-
-### ReportConfig
-
-Controls report output.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `output_dir` | `PathBuf` | `"./reports"` | Directory for saved reports |
-| `include_evidence` | `bool` | `true` | Include raw evidence in reports |
-| `include_remediation` | `bool` | `true` | Include fix suggestions |
-
-## Loading
-
-```rust
-AppConfig::load(path: Option<&Path>) -> Result<Self>
+```bash
+scorchkit init https://owned.example
 ```
 
-1. If a path is provided and the file exists, parse it as TOML
-2. Missing fields fall back to defaults (via `#[serde(default)]`)
-3. If no path or file doesn't exist, return full defaults
+This sends no HTTP request. It parses the target, performs a five-second DNS lookup, pins every
+current address, and writes a quick-profile `scorchkit.toml`. The generated engagement grants only
+`dast-scan`, `external-tool`, `passive`, and `active-safe`. The quick profile itself does not execute
+external tools.
 
-The CLI passes `--config` flag value (if provided) to this function.
+Running `scorchkit init` without a target writes the legacy default `config.toml`. It has no
+engagement and therefore authorizes no scan.
 
-## Generating Default Config
+## Top-level sections
 
-```rust
-AppConfig::default_toml() -> Result<String>
-```
+| Section | Purpose |
+|---|---|
+| `engagement` | authoritative target, capability, effect, deny, expiry, and enabled state |
+| `scan` | timeout, concurrency, user agent, redirect limit, rate limit, profile, proxy, headers, and legacy display scope |
+| `auth` | web bearer, cookie, basic, or custom-header credentials |
+| `tools` | external executable overrides |
+| `ai` | optional provider adapter |
+| `report` | artifact directory and evidence/remediation inclusion |
+| `database` | connection URL, pool size, and migration behavior |
+| `wordlists` | optional discovery and enumeration files |
+| `hooks` | bounded local lifecycle processes |
+| `audit_log` | local JSONL event sink |
+| `cve` | disabled, mock, NVD, OSV, or composite lookup |
+| `network_credentials` | SSH, SMB, SNMP, and Kerberos inputs |
+| `cloud` | AWS, GCP, Azure, and Kubernetes credential hints |
+| `webhooks` | compatibility-only shape; outbound delivery is disabled |
 
-Serializes the default config as a TOML string. Used by `scorchkit init`.
+Secret-bearing structs use redacted `Debug` implementations. TOML serialization is not redaction and
+must be protected like any other credentials file.
 
-## Example config.toml
+## Generated quick engagement
+
+The generated shape is equivalent to:
 
 ```toml
-[scan]
-timeout_seconds = 300
-max_concurrent_modules = 4
-user_agent = "ScorchKit/0.1.0"
-follow_redirects = true
-max_redirects = 10
-
-[scan.headers]
-
-[tools]
-
-[ai]
+[engagement]
+name = "quick scan: owned.example"
 enabled = true
-claude_binary = "claude"
-model = "sonnet"
-max_budget_usd = 0.5
-auto_analyze = false
 
-[report]
-output_dir = "./reports"
-include_evidence = true
-include_remediation = true
+[engagement.policy]
+capabilities = ["dast-scan", "external-tool"]
+effects = ["passive", "active-safe"]
+
+[[engagement.policy.allowed_scope]]
+kind = "exact"
+value = "owned.example"
+
+# One exact entry is also written for each DNS answer observed at init time.
+[[engagement.policy.allowed_scope]]
+kind = "exact"
+value = "192.0.2.10"
+
+[scan]
+profile = "quick"
 ```
 
-## Adding New Config Fields
+The real file also contains a generated UUID and every default section. A later DNS change is denied
+until the operator regenerates or deliberately changes the engagement.
 
-1. Add the field to the appropriate struct in `config/types.rs`
-2. Add a default value in the struct's `Default` impl
-3. Add `#[serde(default)]` on the struct if not already present
-4. The field is now available via `ctx.config.<section>.<field>` in any module
+## AI
+
+```toml
+[ai]
+enabled = true
+provider = "codex"
+# binary = "codex"
+# model = "your-approved-model"
+auto_analyze = false
+```
+
+`provider = "claude"` selects the compatibility adapter. `max_budget_usd` applies only to that
+adapter. Legacy `claude_binary` remains readable but should not appear in new files.
+
+## CVE providers
+
+NVD and OSV are separate effect targets. Before either backend is constructed, the engagement must
+allow its canonical provider URL and resolved addresses under `infra-scan/passive`, and allow the
+existing cache directory through a `path_prefix` scope rule. The cache directory must already exist
+so authorization cannot be used to create an arbitrary path.
+
+## Adding a field
+
+1. Add it to the narrow owning struct.
+2. Define an explicit safe default.
+3. Add serialization and compatibility tests.
+4. Add redacted `Debug` behavior when it can carry a secret or credential-bearing URL.
+5. If it enables an effect, add capability classification, authorization, audit, negative tests, and
+   documentation before wiring the effect.

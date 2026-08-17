@@ -4,7 +4,7 @@
 //! They derive `Deserialize` for JSON-RPC parameter parsing and
 //! `JsonSchema` for automatic schema generation by the `rmcp` macros.
 //! Field `///` doc comments become `description` fields in the generated
-//! JSON Schema, helping Claude understand each parameter's purpose.
+//! JSON Schema, helping any MCP agent understand each parameter's purpose.
 
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -16,11 +16,10 @@ pub struct ScanParams {
     /// "example.com" (defaults to HTTPS), "192.168.1.1". Must be a host the user
     /// has authorized for testing.
     pub target: String,
-    /// Scan profile controlling which modules run. "quick" = 4 recon modules
-    /// (headers, tech, ssl, misconfig) for fast initial assessment. "standard" =
-    /// all 20 built-in modules covering OWASP Top 10. "thorough" = all 41
-    /// modules including external tools (requires tools installed). Defaults to
-    /// "standard".
+    /// Scan profile controlling which modules run. "quick" = 4 safe recon
+    /// modules. "standard" = built-in modules only. "thorough" adds
+    /// non-restricted external tools. "pentest" adds credential/exploit modules
+    /// and requires explicit engagement grants. Defaults to "standard".
     #[serde(default = "default_profile")]
     pub profile: String,
     /// Comma-separated list of specific module IDs to run, ignoring the profile.
@@ -75,9 +74,9 @@ pub struct ProjectScanParams {
     pub project: String,
     /// Target URL to scan. Must be a URL the user has authorized for testing.
     pub target: String,
-    /// Scan profile: "quick" for fast recon (4 modules), "standard" for full
-    /// built-in assessment (20 modules), "thorough" for all modules including
-    /// external tools (41 modules). Defaults to "standard".
+    /// Scan profile: "quick" for safe recon, "standard" for built-ins,
+    /// "thorough" for non-restricted external tools, or "pentest" for explicitly
+    /// authorized credential/exploit modules. Defaults to "standard".
     #[serde(default = "default_profile")]
     pub profile: String,
 }
@@ -146,7 +145,7 @@ pub struct ScheduleScanParams {
     /// "0 0 * * *" (daily at midnight), "0 */6 * * *" (every 6 hours),
     /// "0 9 * * 1" (Mondays at 9am).
     pub cron: String,
-    /// Scan profile for scheduled runs. "quick", "standard", or "thorough".
+    /// Scan profile for scheduled runs: "quick", "standard", "thorough", or "pentest".
     /// Defaults to "standard".
     #[serde(default = "default_profile")]
     pub profile: String,
@@ -197,8 +196,9 @@ pub struct AutoScanParams {
     /// Target URL to scan. Examples: "<https://example.com>", "example.com".
     /// Must be a host the user has authorized for testing.
     pub target: String,
-    /// Scan profile: "quick" (recon only), "standard" (all built-in modules),
-    /// "thorough" (all modules including external tools). Defaults to "standard".
+    /// Scan profile: "quick" (safe recon), "standard" (built-ins), "thorough"
+    /// (non-restricted external tools), or "pentest" (credential/exploit modules
+    /// with explicit grants). Defaults to "standard".
     #[serde(default = "default_profile")]
     pub profile: String,
     /// Optional project name to persist results to. If provided, findings are

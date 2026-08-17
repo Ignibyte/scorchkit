@@ -24,7 +24,7 @@ async fn main() {
         .init();
 
     if let Err(e) = runner::execute(cli).await {
-        eprintln!("error: {e}");
+        eprintln!("error: {}", scorchkit::report::terminal::escape_terminal_text(&e.to_string()));
         std::process::exit(1);
     }
 }

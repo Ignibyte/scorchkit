@@ -405,7 +405,7 @@ fn mass_assignment_fields() -> Vec<(&'static str, &'static str)> {
 mod tests {
     use super::*;
 
-    /// Test suite for REST API security module.
+    // Test suite for REST API security module.
 
     /// Verify sensitive field detection in JSON responses.
     #[test]

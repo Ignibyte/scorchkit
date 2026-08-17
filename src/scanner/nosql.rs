@@ -512,8 +512,8 @@ fn extract_forms(body: &str, base_url: &Url) -> Vec<FormInfo> {
 mod tests {
     use super::*;
 
-    /// Tests for the NoSQL injection scanner module's pure helper functions
-    /// and constant data integrity.
+    // Tests for the `NoSQL` injection scanner module's pure helper functions
+    // and constant data integrity.
 
     /// Verify that the module metadata returns correct values.
     #[test]
@@ -527,7 +527,7 @@ mod tests {
         assert!(!module.requires_external_tool());
     }
 
-    /// Verify that the NoSQL payload database is non-empty and all entries
+    /// Verify that the `NoSQL` payload database is non-empty and all entries
     /// have non-empty fields.
     #[test]
     fn test_nosql_payloads_not_empty() {
@@ -539,7 +539,7 @@ mod tests {
         }
     }
 
-    /// Verify that `detect_nosql_error` identifies MongoDB errors in response bodies.
+    /// Verify that `detect_nosql_error` identifies `MongoDB` errors in response bodies.
     #[test]
     fn test_detect_nosql_error_mongodb() {
         let body = "Error: MongoError: $where clause has invalid type";
@@ -556,7 +556,7 @@ mod tests {
         assert_eq!(detect_nosql_error(body), None);
     }
 
-    /// Verify that the error pattern database covers MongoDB and CouchDB.
+    /// Verify that the error pattern database covers `MongoDB` and `CouchDB`.
     #[test]
     fn test_nosql_error_patterns_cover_databases() {
         let db_types: Vec<&str> = NOSQL_ERROR_PATTERNS.iter().map(|&(_, db)| db).collect();

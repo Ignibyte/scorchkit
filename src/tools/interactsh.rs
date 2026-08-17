@@ -25,7 +25,26 @@ use crate::engine::severity::Severity;
 /// the target's query parameters across four blind vulnerability categories
 /// (SSRF, XXE, RCE, `SQLi`), then polls for interactions to confirm exploitability.
 #[derive(Debug)]
-pub struct InteractshModule;
+pub struct InteractshModule {
+    client_program: String,
+    client_arguments: Vec<String>,
+}
+
+impl Default for InteractshModule {
+    fn default() -> Self {
+        Self {
+            client_program: "interactsh-client".to_string(),
+            client_arguments: vec!["-json".to_string(), "-v".to_string()],
+        }
+    }
+}
+
+impl InteractshModule {
+    #[cfg(test)]
+    const fn with_client_invocation(client_program: String, client_arguments: Vec<String>) -> Self {
+        Self { client_program, client_arguments }
+    }
+}
 
 #[async_trait]
 impl ScanModule for InteractshModule {
@@ -50,14 +69,18 @@ impl ScanModule for InteractshModule {
     }
 
     fn required_tool(&self) -> Option<&str> {
-        Some("interactsh-client")
+        Some(&self.client_program)
     }
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let url = ctx.target.url.as_str();
 
-        // Start the OOB session
-        let mut session = InteractshSession::start().await?;
+        // The long-lived client has a dedicated process owner, but it must
+        // cross the same policy boundary as every one-shot tool wrapper.
+        ctx.require_tool_authorization(&self.client_program)?;
+        let mut session =
+            InteractshSession::start_with_arguments(&self.client_program, &self.client_arguments)
+                .await?;
         let base_domain = session.base_url().to_string();
 
         // Collect all payloads and their correlation IDs
@@ -266,9 +289,23 @@ const fn remediation_for(category: BlindCategory) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
 
-    /// Tests for interactsh OOB interaction correlation and finding builder.
+    use httpmock::MockServer;
+
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::engine::target::Target;
+
+    // Tests for interactsh OOB interaction correlation and finding builder.
+
+    #[test]
+    fn module_declares_the_client_it_executes() {
+        let module = InteractshModule::default();
+        assert!(module.requires_external_tool());
+        assert_eq!(module.required_tool(), Some("interactsh-client"));
+        assert_eq!(module.client_arguments, ["-json", "-v"]);
+    }
 
     /// Verify that `build_findings` correctly correlates OOB interactions
     /// with payloads and produces findings with proper severity and CWE.
@@ -320,5 +357,46 @@ mod tests {
     fn test_build_findings_empty() {
         let findings = build_findings("https://example.com", &[], &[], &[]);
         assert!(findings.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_executes_the_session_and_observes_a_callback() {
+        let server = MockServer::start_async().await;
+        let requests = server
+            .mock_async(|when, then| {
+                when.any_request();
+                then.status(204);
+            })
+            .await;
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let script = directory.path().join("interactsh-fixture");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+printf '%s\n' '[INF] session123.oast.fun'
+sleep 0.02
+printf '%s\n' '{"protocol":"dns","unique-id":"session123","full-id":"ssrf-id.session123","remote-address":"127.0.0.1"}'
+"#,
+        )
+        .expect("write fixture client");
+
+        let target = Target::parse(&format!("{}?id=1", server.base_url())).expect("target");
+        let client = reqwest::Client::builder().build().expect("HTTP client");
+        let context = ScanContext::new(target, Arc::new(AppConfig::default()), client, Vec::new());
+        let module = InteractshModule::with_client_invocation(
+            "/bin/sh".to_string(),
+            vec![script.to_string_lossy().into_owned()],
+        );
+
+        let findings = tokio::time::timeout(Duration::from_secs(2), module.run(&context))
+            .await
+            .expect("module timeout")
+            .expect("module run");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].title.contains("SSRF"));
+        assert_eq!(findings[0].cwe_id, Some(918));
+        requests.assert_calls_async(7).await;
     }
 }

@@ -9,7 +9,7 @@
 //!
 //! - [`AttackChain`] — a sequence of findings forming an exploit path
 //! - [`ChainStep`] — one finding within a chain, with role annotation
-//! - [`CorrelationRule`] — trigger + filter for identifying a pattern
+//! - `CorrelationRule` — trigger + filter for identifying a pattern
 //! - [`correlate`] — applies all rules to a finding set
 //!
 //! ## Built-in rules
@@ -488,7 +488,7 @@ mod tests {
         assert!(chains.iter().any(|c| c.name.contains("Session Hijacking")));
     }
 
-    /// SQLi + open DB port → database compromise chain.
+    /// `SQLi` + open DB port → database compromise chain.
     #[test]
     fn test_correlate_sqli_db_port_chain() {
         let findings = vec![

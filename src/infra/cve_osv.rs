@@ -43,9 +43,12 @@ use tracing::warn;
 use crate::config::cve::OsvConfig;
 use crate::engine::cve::{cvss_v3_base_score, severity_from_cvss, CveLookup, CveRecord};
 use crate::engine::error::{Result, ScorchError};
+use crate::engine::policy::{Capability, EffectClass, Engagement};
+use crate::engine::policy_http::{build_service_client, RedirectMode};
 use crate::engine::severity::Severity;
 use crate::infra::cpe_purl::{cpe_to_package, PackageCoord};
 use crate::infra::cve_cache::FsCache;
+use crate::infra::cve_lookup::authorize_cve_resources;
 
 /// Default OSV endpoint base.
 pub const DEFAULT_BASE_URL: &str = "https://api.osv.dev";
@@ -69,6 +72,10 @@ pub struct OsvCveLookup {
     limiter: Arc<DirectLimiter>,
     /// On-disk TTL cache (or disabled cache).
     cache: FsCache,
+    /// Engagement rechecked before every cache or provider operation.
+    engagement: Arc<Engagement>,
+    /// Canonical authorized cache directory.
+    cache_dir: PathBuf,
 }
 
 impl std::fmt::Debug for OsvCveLookup {
@@ -88,35 +95,41 @@ impl OsvCveLookup {
     ///
     /// Returns [`ScorchError::Config`] if the underlying
     /// [`reqwest::Client`] cannot be built or `cfg.max_rps` is zero.
-    pub fn from_config(cfg: &OsvConfig) -> Result<Self> {
+    pub fn from_config(cfg: &OsvConfig, engagement: Arc<Engagement>) -> Result<Self> {
         let base_url = cfg
             .base_url
             .clone()
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
             .trim_end_matches('/')
             .to_string();
+        let cache_dir = cfg.cache_dir.clone().unwrap_or_else(default_cache_dir);
+        let (endpoint, cache_dir) = authorize_cve_resources(&engagement, &base_url, &cache_dir)?;
 
         let user_agent = format!("ScorchKit-CVE-OSV/{}", env!("CARGO_PKG_VERSION"));
-        let http = reqwest::Client::builder()
-            .user_agent(user_agent)
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| ScorchError::Config(format!("osv: failed to build http client: {e}")))?;
+        let http = build_service_client(
+            Arc::clone(&engagement),
+            &endpoint,
+            Capability::InfraScan,
+            EffectClass::Passive,
+            &user_agent,
+            Duration::from_secs(30),
+            RedirectMode::Follow { max_redirects: 3 },
+        )?;
 
         let burst = NonZeroU32::new(cfg.max_rps)
             .ok_or_else(|| ScorchError::Config("osv: max_rps must be > 0".into()))?;
         let limiter = Arc::new(RateLimiter::direct(quota_for_rps(burst)));
 
-        let cache_dir = cfg.cache_dir.clone().unwrap_or_else(default_cache_dir);
-        let cache = FsCache::new(cache_dir, Duration::from_secs(cfg.cache_ttl_secs));
+        let cache = FsCache::new(cache_dir.clone(), Duration::from_secs(cfg.cache_ttl_secs));
 
-        Ok(Self { base_url, http, limiter, cache })
+        Ok(Self { base_url, http, limiter, cache, engagement, cache_dir })
     }
 }
 
 #[async_trait]
 impl CveLookup for OsvCveLookup {
     async fn query(&self, cpe: &str) -> Result<Vec<CveRecord>> {
+        authorize_cve_resources(&self.engagement, &self.base_url, &self.cache_dir)?;
         if let Some(records) = self.cache.get(cpe) {
             return Ok(records);
         }
@@ -304,7 +317,7 @@ mod tests {
     use super::*;
 
     /// A fully-populated OSV vuln entry maps every field we surface,
-    /// including CVSS_V3 vector → numeric score → severity.
+    /// including `CVSS_V3` vector → numeric score → severity.
     #[test]
     fn parse_osv_response_extracts_records() {
         let body = br#"{
@@ -367,7 +380,7 @@ mod tests {
     /// thanks to `#[serde(default)]`.
     #[test]
     fn parse_osv_response_handles_missing_vulns_key() {
-        let body = br#"{}"#;
+        let body = br"{}";
         let recs =
             parse_osv_response(body, "cpe:2.3:a:expressjs:express:1.0:*:*:*:*:*:*:*").expect("p");
         assert!(recs.is_empty());
@@ -422,6 +435,8 @@ mod tests {
     /// from NVD's.
     #[test]
     fn default_cache_dir_honours_xdg() {
+        let _guard =
+            crate::TEST_ENVIRONMENT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let prior_xdg = env::var("XDG_CACHE_HOME").ok();
         let prior_home = env::var("HOME").ok();
         env::set_var("XDG_CACHE_HOME", "/tmp/xdg-osv-test");

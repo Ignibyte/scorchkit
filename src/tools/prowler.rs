@@ -13,7 +13,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Cloud infrastructure security assessment via Prowler.
 #[derive(Debug)]
@@ -46,12 +45,9 @@ impl ScanModule for ProwlerModule {
     }
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
-        let output = subprocess::run_tool(
-            "prowler",
-            &["-M", "json-ocsf", "--no-banner", "-q"],
-            Duration::from_secs(600),
-        )
-        .await?;
+        let output = ctx
+            .run_tool("prowler", &["-M", "json-ocsf", "--no-banner", "-q"], Duration::from_mins(10))
+            .await?;
 
         Ok(parse_prowler_output(&output.stdout, ctx.target.url.as_str()))
     }

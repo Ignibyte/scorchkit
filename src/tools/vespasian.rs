@@ -42,7 +42,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Cap on per-endpoint findings to keep reports readable on large APIs.
 const MAX_ENDPOINT_FINDINGS: usize = 50;
@@ -83,12 +82,9 @@ impl ScanModule for VespasianModule {
         };
         let out_path = tmp.path().to_string_lossy().to_string();
         let url = ctx.target.url.as_str();
-        let output = subprocess::run_tool(
-            "vespasian",
-            &["scan", url, "-o", &out_path],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool("vespasian", &["scan", url, "-o", &out_path], Duration::from_mins(5))
+            .await?;
         // Vespasian writes the spec to the file; we read it back.
         // If the file is missing or empty, parse_vespasian_output
         // gracefully returns an empty Vec.
@@ -252,12 +248,13 @@ fn matches_http_method(s: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    //! Coverage for the OpenAPI YAML parser. Pins the wire format
+    //! Coverage for the `OpenAPI` YAML parser. Pins the wire format
     //! Vespasian emits.
 
     use super::*;
+    use std::fmt::Write as _;
 
-    /// Real-shape OpenAPI 3.0 YAML with three endpoints yields a
+    /// Real-shape `OpenAPI` 3.0 YAML with three endpoints yields a
     /// summary finding + one finding per endpoint.
     #[test]
     fn parse_vespasian_output_extracts_endpoints() {
@@ -306,14 +303,14 @@ paths:
     }
 
     /// Endpoint count above the cap truncates per-endpoint findings
-    /// to MAX_ENDPOINT_FINDINGS but preserves the summary count.
+    /// to `MAX_ENDPOINT_FINDINGS` but preserves the summary count.
     #[test]
     fn parse_vespasian_output_caps_endpoint_findings() {
         // Build a YAML with more than the cap.
         let mut yaml =
             String::from("openapi: 3.0.0\ninfo:\n  title: Big\n  version: 1.0.0\npaths:\n");
         for i in 0..(MAX_ENDPOINT_FINDINGS + 10) {
-            yaml.push_str(&format!("  /endpoint/{i}:\n    get:\n      responses: {{}}\n"));
+            writeln!(yaml, "  /endpoint/{i}:\n    get:\n      responses: {{}}").unwrap();
         }
         let findings = parse_vespasian_output(&yaml, "https://example.com", "");
         // 1 summary + MAX_ENDPOINT_FINDINGS endpoints
@@ -321,7 +318,7 @@ paths:
         assert!(findings[0].title.contains(&format!("{}", MAX_ENDPOINT_FINDINGS + 10)));
     }
 
-    /// HTTP method discriminator filters out OpenAPI keys that aren't
+    /// HTTP method discriminator filters out `OpenAPI` keys that aren't
     /// methods (e.g. `parameters`, `summary`, `$ref`).
     #[test]
     fn matches_http_method_filters_non_methods() {

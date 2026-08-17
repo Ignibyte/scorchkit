@@ -26,11 +26,10 @@ use crate::engine::service_fingerprint::{
     parse_nmap_xml_fingerprints, publish_fingerprints, ServiceFingerprint,
 };
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Default nmap CLI timeout — port scans can take a while on `/24`-scale
 /// networks or for the top-1000 port set.
-const NMAP_TIMEOUT: Duration = Duration::from_secs(600);
+const NMAP_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// nmap port scan + fingerprint module.
 #[derive(Debug, Default)]
@@ -72,12 +71,13 @@ impl InfraModule for NmapModule {
             return Ok(Vec::new());
         }
 
-        let output = subprocess::run_tool(
-            "nmap",
-            &["-sV", "--top-ports", "1000", "-oX", "-", &target_arg],
-            NMAP_TIMEOUT,
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "nmap",
+                &["-sV", "--top-ports", "1000", "-oX", "-", &target_arg],
+                NMAP_TIMEOUT,
+            )
+            .await?;
 
         let fingerprints = parse_nmap_xml_fingerprints(&output.stdout);
         if !fingerprints.is_empty() {

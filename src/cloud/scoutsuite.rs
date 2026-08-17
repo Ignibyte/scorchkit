@@ -48,10 +48,9 @@ use crate::engine::cloud_target::CloudTarget;
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Per-provider sub-timeout for a single scout invocation.
-const SCOUT_PER_PROVIDER_TIMEOUT: Duration = Duration::from_secs(900);
+const SCOUT_PER_PROVIDER_TIMEOUT: Duration = Duration::from_mins(15);
 
 /// Scout Suite multi-cloud audit — AWS / GCP / Azure posture
 /// against Scout's full check catalog.
@@ -102,7 +101,7 @@ impl CloudModule for ScoutsuiteCloudModule {
         let mut findings = Vec::new();
         let mut first_err: Option<ScorchError> = None;
         for provider in providers {
-            match run_one_provider(provider, creds, &target_label).await {
+            match run_one_provider(ctx, provider, creds, &target_label).await {
                 Ok(mut fs) => findings.append(&mut fs),
                 Err(e) => {
                     tracing::warn!(
@@ -271,11 +270,12 @@ fn build_scoutsuite_argv(
 /// Spawn Scout for a single provider, parse its output JSON, and
 /// return the cloud-tagged findings.
 ///
-/// Graceful-degrade: if the output file is missing or unparseable
+/// Graceful-degrade: if the output file is missing or unparsable
 /// (possible if Scout's directory layout changes or the run
 /// errored before writing), returns an empty vec with a `debug!`
 /// log rather than failing the scan.
 async fn run_one_provider(
+    ctx: &CloudContext,
     provider: ScoutProvider,
     creds: Option<&CloudCredentials>,
     target_label: &str,
@@ -285,8 +285,7 @@ async fn run_one_provider(
 
     let argv = build_scoutsuite_argv(provider, creds, &report_dir);
     let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
-    let _output =
-        subprocess::run_tool_lenient("scout", &argv_refs, SCOUT_PER_PROVIDER_TIMEOUT).await?;
+    let _output = ctx.run_tool_lenient("scout", &argv_refs, SCOUT_PER_PROVIDER_TIMEOUT).await?;
 
     let json_path = format!("{report_dir}/scoutsuite-results/scoutsuite-results.json");
     let json = std::fs::read_to_string(&json_path).unwrap_or_default();

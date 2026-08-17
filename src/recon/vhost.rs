@@ -167,7 +167,7 @@ const VHOST_PREFIXES: &[&str] = &[
 mod tests {
     use super::*;
 
-    /// Tests for the virtual host discovery module.
+    // Tests for the virtual host discovery module.
 
     /// Verify module metadata.
     #[test]

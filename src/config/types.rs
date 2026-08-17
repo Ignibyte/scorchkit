@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,13 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 #[derive(Default)]
 pub struct AppConfig {
+    /// Authorization context for every scan effect started from this configuration.
+    ///
+    /// Scans fail closed when this is absent. Callers embedding `ScorchKit` may
+    /// instead supply an engagement explicitly through
+    /// [`crate::facade::Engine::for_engagement`].
+    #[serde(default)]
+    pub engagement: Option<crate::engine::policy::Engagement>,
     pub scan: ScanConfig,
     pub auth: AuthConfig,
     pub tools: ToolsConfig,
@@ -65,7 +73,7 @@ pub struct AuditLogConfig {
 }
 
 /// Database connection configuration for persistent storage.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DatabaseConfig {
     /// `PostgreSQL` connection URL (e.g., `postgresql://user:pass@localhost/scorchkit`).
@@ -77,6 +85,17 @@ pub struct DatabaseConfig {
     pub migrate_on_startup: bool,
 }
 
+impl fmt::Debug for DatabaseConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DatabaseConfig")
+            .field("url", &self.url.as_ref().map(|_| "<configured>"))
+            .field("max_connections", &self.max_connections)
+            .field("migrate_on_startup", &self.migrate_on_startup)
+            .finish()
+    }
+}
+
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self { url: None, max_connections: 5, migrate_on_startup: true }
@@ -84,7 +103,7 @@ impl Default for DatabaseConfig {
 }
 
 /// Scan behavior configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ScanConfig {
     /// Global scan timeout in seconds.
@@ -121,6 +140,30 @@ pub struct ScanConfig {
     pub insecure: bool,
 }
 
+impl fmt::Debug for ScanConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut header_names: Vec<_> = self.headers.keys().collect();
+        header_names.sort_unstable();
+        formatter
+            .debug_struct("ScanConfig")
+            .field("timeout_seconds", &self.timeout_seconds)
+            .field("max_concurrent_modules", &self.max_concurrent_modules)
+            .field("user_agent", &self.user_agent)
+            .field("follow_redirects", &self.follow_redirects)
+            .field("max_redirects", &self.max_redirects)
+            .field("header_names", &header_names)
+            .field("rate_limit", &self.rate_limit)
+            .field("profile", &self.profile)
+            .field("proxy", &self.proxy.as_ref().map(|_| "<configured>"))
+            .field("scope_include", &self.scope_include)
+            .field("scope_exclude", &self.scope_exclude)
+            .field("plugins_dir", &self.plugins_dir)
+            .field("rules_dir", &self.rules_dir)
+            .field("insecure", &self.insecure)
+            .finish()
+    }
+}
+
 impl Default for ScanConfig {
     fn default() -> Self {
         Self {
@@ -143,7 +186,7 @@ impl Default for ScanConfig {
 }
 
 /// Authentication configuration for scanning behind login.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 #[derive(Default)]
 pub struct AuthConfig {
@@ -159,6 +202,20 @@ pub struct AuthConfig {
     pub custom_header: Option<String>,
     /// Custom auth header value.
     pub custom_header_value: Option<String>,
+}
+
+impl fmt::Debug for AuthConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthConfig")
+            .field("bearer_token", &self.bearer_token.as_ref().map(|_| "***"))
+            .field("cookies", &self.cookies.as_ref().map(|_| "***"))
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "***"))
+            .field("custom_header", &self.custom_header)
+            .field("custom_header_value", &self.custom_header_value.as_ref().map(|_| "***"))
+            .finish()
+    }
 }
 
 /// External tool path overrides.
@@ -232,14 +289,39 @@ impl ToolsConfig {
     }
 }
 
+/// Supported AI host adapters.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiProviderKind {
+    /// `OpenAI` Codex CLI, run non-interactively in its read-only sandbox.
+    #[default]
+    Codex,
+    /// Compatibility adapter for the Claude CLI.
+    Claude,
+}
+
+impl AiProviderKind {
+    /// Default executable name for this adapter.
+    #[must_use]
+    pub const fn default_binary(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+        }
+    }
+}
+
 /// AI analysis configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AiConfig {
     pub enabled: bool,
-    pub claude_binary: String,
-    pub model: String,
-    pub max_budget_usd: f64,
+    pub provider: AiProviderKind,
+    /// Optional executable override. Defaults to the selected provider's CLI.
+    pub binary: Option<String>,
+    /// Optional provider model override. `None` uses the CLI's configured default.
+    pub model: Option<String>,
+    /// Optional Claude CLI cost ceiling. Ignored by other adapters.
+    pub max_budget_usd: Option<f64>,
     pub auto_analyze: bool,
 }
 
@@ -247,11 +329,71 @@ impl Default for AiConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            claude_binary: "claude".to_string(),
-            model: "sonnet".to_string(),
-            max_budget_usd: 0.50,
+            provider: AiProviderKind::Codex,
+            binary: None,
+            model: None,
+            max_budget_usd: None,
             auto_analyze: false,
         }
+    }
+}
+
+impl AiConfig {
+    /// Executable selected for the configured provider.
+    #[must_use]
+    pub fn resolved_binary(&self) -> &str {
+        self.binary.as_deref().unwrap_or_else(|| self.provider.default_binary())
+    }
+}
+
+impl<'de> Deserialize<'de> for AiConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(default)]
+        struct WireConfig {
+            enabled: bool,
+            provider: Option<AiProviderKind>,
+            binary: Option<String>,
+            model: Option<String>,
+            max_budget_usd: Option<f64>,
+            auto_analyze: bool,
+            claude_binary: Option<String>,
+        }
+
+        impl Default for WireConfig {
+            fn default() -> Self {
+                let defaults = AiConfig::default();
+                Self {
+                    enabled: defaults.enabled,
+                    provider: None,
+                    binary: defaults.binary,
+                    model: defaults.model,
+                    max_budget_usd: defaults.max_budget_usd,
+                    auto_analyze: defaults.auto_analyze,
+                    claude_binary: None,
+                }
+            }
+        }
+
+        let wire = WireConfig::deserialize(deserializer)?;
+        let legacy_claude = wire.claude_binary.is_some();
+        let provider = wire.provider.unwrap_or(if legacy_claude {
+            AiProviderKind::Claude
+        } else {
+            AiProviderKind::Codex
+        });
+
+        Ok(Self {
+            enabled: wire.enabled,
+            provider,
+            binary: wire.binary.or(wire.claude_binary),
+            model: wire.model,
+            max_budget_usd: wire.max_budget_usd,
+            auto_analyze: wire.auto_analyze,
+        })
     }
 }
 
@@ -287,7 +429,7 @@ pub struct HookConfig {
     /// Scripts to run after each module completes. Can filter/enrich findings.
     #[serde(default)]
     pub post_module: Vec<PathBuf>,
-    /// Scripts to run after all modules complete. Fire-and-forget (output ignored).
+    /// Scripts to run after all modules complete. Output is ignored, but completion is awaited.
     #[serde(default)]
     pub post_scan: Vec<PathBuf>,
     /// Maximum time in seconds to wait for each hook script. Default: 30.
@@ -305,6 +447,14 @@ impl Default for HookConfig {
             timeout_seconds: 30,
             fail_open: true,
         }
+    }
+}
+
+impl HookConfig {
+    /// Whether no lifecycle script is configured.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.pre_scan.is_empty() && self.post_module.is_empty() && self.post_scan.is_empty()
     }
 }
 
@@ -356,24 +506,26 @@ impl AppConfig {
     ///
     /// Returns an error if the config file cannot be read or contains invalid TOML.
     pub fn load(path: Option<&std::path::Path>) -> crate::engine::error::Result<Self> {
-        if let Some(path) = path {
-            if path.exists() {
-                let content = std::fs::read_to_string(path).map_err(|e| {
-                    crate::engine::error::ScorchError::Config(format!(
-                        "failed to read config file {}: {e}",
-                        path.display()
-                    ))
-                })?;
-                let config: Self = toml::from_str(&content).map_err(|e| {
-                    crate::engine::error::ScorchError::Config(format!(
-                        "failed to parse config file {}: {e}",
-                        path.display()
-                    ))
-                })?;
-                return Ok(config);
-            }
-        }
-        Ok(Self::default())
+        let current_dir = std::env::current_dir().map_err(|error| {
+            crate::engine::error::ScorchError::Config(format!(
+                "failed to resolve current directory for config discovery: {error}"
+            ))
+        })?;
+        let Some(path) = select_config_path(path, &current_dir)? else {
+            return Ok(Self::default());
+        };
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            crate::engine::error::ScorchError::Config(format!(
+                "failed to read config file {}: {e}",
+                path.display()
+            ))
+        })?;
+        toml::from_str(&content).map_err(|e| {
+            crate::engine::error::ScorchError::Config(format!(
+                "failed to parse config file {}: {e}",
+                path.display()
+            ))
+        })
     }
 
     /// Serialize the default configuration as a TOML string.
@@ -388,9 +540,129 @@ impl AppConfig {
     }
 }
 
+fn select_config_path(
+    explicit: Option<&std::path::Path>,
+    current_dir: &std::path::Path,
+) -> crate::engine::error::Result<Option<std::path::PathBuf>> {
+    if let Some(path) = explicit {
+        if !path.is_file() {
+            return Err(crate::engine::error::ScorchError::Config(format!(
+                "config file '{}' does not exist or is not a regular file",
+                path.display()
+            )));
+        }
+        return Ok(Some(path.to_path_buf()));
+    }
+
+    for filename in ["scorchkit.toml", "config.toml"] {
+        let candidate = current_dir.join(filename);
+        if candidate.is_file() {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_discovery_prefers_safe_init_output_and_rejects_missing_explicit_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let legacy = directory.path().join("config.toml");
+        std::fs::write(&legacy, "").unwrap();
+        assert_eq!(select_config_path(None, directory.path()).unwrap(), Some(legacy));
+
+        let initialized = directory.path().join("scorchkit.toml");
+        std::fs::write(&initialized, "").unwrap();
+        assert_eq!(select_config_path(None, directory.path()).unwrap(), Some(initialized));
+
+        let missing = directory.path().join("missing.toml");
+        assert!(select_config_path(Some(&missing), directory.path()).is_err());
+    }
+
+    #[test]
+    fn app_config_load_reads_the_explicit_file_instead_of_returning_defaults() {
+        let directory = tempfile::tempdir().expect("create config fixture directory");
+        let path = directory.path().join("explicit.toml");
+        std::fs::write(
+            &path,
+            r#"
+[scan]
+profile = "thorough"
+rate_limit = 17
+"#,
+        )
+        .expect("write explicit config");
+
+        let config = AppConfig::load(Some(&path)).expect("load explicit config");
+        assert_eq!(config.scan.profile, "thorough");
+        assert_eq!(config.scan.rate_limit, 17);
+    }
+
+    #[test]
+    fn app_config_debug_redacts_every_direct_secret_channel() {
+        let mut config = AppConfig::default();
+        config.auth.bearer_token = Some("bearer-secret".to_string());
+        config.auth.cookies = Some("session=cookie-secret".to_string());
+        config.auth.password = Some("basic-password".to_string());
+        config.auth.custom_header = Some("X-Api-Key".to_string());
+        config.auth.custom_header_value = Some("header-secret".to_string());
+        config.scan.headers.insert("Authorization".to_string(), "scan-header-secret".to_string());
+        config.scan.proxy = Some("https://proxy-user:proxy-secret@proxy.example".to_string());
+        config.database.url =
+            Some("postgresql://db-user:db-secret@localhost/scorchkit".to_string());
+        config.cve.nvd.api_key = Some("nvd-secret".to_string());
+        config.webhooks.push(crate::runner::hooks::WebhookConfig {
+            url: "https://webhook-secret@hooks.example/path".to_string(),
+            events: Vec::new(),
+        });
+
+        let rendered = format!("{config:?}");
+        for secret in [
+            "bearer-secret",
+            "cookie-secret",
+            "basic-password",
+            "header-secret",
+            "scan-header-secret",
+            "proxy-secret",
+            "db-secret",
+            "nvd-secret",
+            "webhook-secret",
+        ] {
+            assert!(!rendered.contains(secret), "debug output leaked {secret}: {rendered}");
+        }
+        assert!(rendered.contains("***"));
+        assert!(rendered.contains("<configured>"));
+        assert!(rendered.contains("Authorization"), "header names remain diagnosable");
+    }
+
+    #[test]
+    fn nested_config_debug_views_are_complete_and_secret_safe() {
+        let database = DatabaseConfig {
+            url: Some("postgresql://user:database-secret@localhost/scorchkit".to_string()),
+            max_connections: 7,
+            migrate_on_startup: false,
+        };
+        assert_eq!(
+            format!("{database:?}"),
+            "DatabaseConfig { url: Some(\"<configured>\"), max_connections: 7, migrate_on_startup: false }"
+        );
+
+        let auth = AuthConfig {
+            bearer_token: Some("bearer-secret".to_string()),
+            cookies: Some("cookie-secret".to_string()),
+            username: Some("fixture-user".to_string()),
+            password: Some("password-secret".to_string()),
+            custom_header: Some("X-Fixture-Key".to_string()),
+            custom_header_value: Some("header-secret".to_string()),
+        };
+        assert_eq!(
+            format!("{auth:?}"),
+            "AuthConfig { bearer_token: Some(\"***\"), cookies: Some(\"***\"), username: Some(\"fixture-user\"), password: Some(\"***\"), custom_header: Some(\"X-Fixture-Key\"), custom_header_value: Some(\"***\") }"
+        );
+    }
 
     /// Verify all wordlist paths default to None.
     #[test]
@@ -441,5 +713,55 @@ subdomain = "/opt/SecLists/Discovery/DNS/subdomains-top1million-5000.txt"
         );
         assert!(config.wordlists.vhost.is_none());
         assert!(config.wordlists.params.is_none());
+    }
+
+    #[test]
+    fn engagement_configuration_round_trips_and_defaults_to_absent() {
+        assert!(AppConfig::default().engagement.is_none());
+
+        let policy = crate::engine::policy::EngagementPolicy::default()
+            .allow_scope(crate::engine::scope::ScopeRule::parse("example.com").unwrap())
+            .allow_capability(crate::engine::policy::Capability::DastScan)
+            .allow_effect(crate::engine::policy::EffectClass::ActiveSafe);
+        let config = AppConfig {
+            engagement: Some(crate::engine::policy::Engagement::new("round-trip", policy)),
+            ..AppConfig::default()
+        };
+        let encoded = toml::to_string(&config).expect("serialize engagement config");
+        let decoded: AppConfig = toml::from_str(&encoded).expect("deserialize engagement config");
+
+        assert_eq!(decoded.engagement, config.engagement);
+    }
+
+    #[test]
+    fn ai_config_defaults_to_codex_and_round_trips() {
+        let config = AiConfig::default();
+        assert_eq!(config.provider, AiProviderKind::Codex);
+        assert_eq!(config.resolved_binary(), "codex");
+
+        let encoded = toml::to_string(&config).expect("serialize AI config");
+        assert!(!encoded.contains("claude_binary"));
+        let decoded: AiConfig = toml::from_str(&encoded).expect("deserialize AI config");
+        assert_eq!(decoded.provider, AiProviderKind::Codex);
+        assert_eq!(decoded.resolved_binary(), "codex");
+        assert!(decoded.enabled);
+    }
+
+    #[test]
+    fn legacy_claude_binary_selects_compatibility_adapter() {
+        let config: AiConfig = toml::from_str(
+            r#"
+enabled = true
+claude_binary = "/opt/claude"
+model = "sonnet"
+max_budget_usd = 0.5
+"#,
+        )
+        .expect("deserialize legacy AI config");
+
+        assert_eq!(config.provider, AiProviderKind::Claude);
+        assert_eq!(config.resolved_binary(), "/opt/claude");
+        assert_eq!(config.model.as_deref(), Some("sonnet"));
+        assert_eq!(config.max_budget_usd, Some(0.5));
     }
 }

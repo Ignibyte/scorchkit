@@ -12,7 +12,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Dockerfile linting via Hadolint.
 #[derive(Debug)]
@@ -45,12 +44,9 @@ impl CodeModule for HadolintModule {
             return Ok(Vec::new());
         }
         let path_str = dockerfile.display().to_string();
-        let output = subprocess::run_tool_lenient(
-            "hadolint",
-            &["--format", "json", &path_str],
-            Duration::from_secs(60),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient("hadolint", &["--format", "json", &path_str], Duration::from_mins(1))
+            .await?;
 
         Ok(parse_hadolint_output(&output.stdout))
     }

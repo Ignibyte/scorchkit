@@ -181,7 +181,7 @@ fn check_fingerprint<'a>(
 mod tests {
     use super::*;
 
-    /// Test suite for subdomain takeover detection.
+    // Test suite for subdomain takeover detection.
 
     /// Verify fingerprint matching against known provider error pages.
     #[test]

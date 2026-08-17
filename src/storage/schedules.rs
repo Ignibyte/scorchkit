@@ -7,11 +7,12 @@ use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use croner::Cron;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use super::models::ScanSchedule;
 use crate::engine::error::{Result, ScorchError};
+use crate::engine::policy::Engagement;
 
 /// Compute the next run time from a cron expression relative to now.
 ///
@@ -50,20 +51,27 @@ pub async fn create_schedule(
     target_url: &str,
     profile: &str,
     cron_expression: &str,
+    engagement: &Engagement,
 ) -> Result<ScanSchedule> {
     let next_run = compute_next_run(cron_expression).ok_or_else(|| {
         ScorchError::Config(format!("invalid cron expression: '{cron_expression}'"))
     })?;
 
+    let engagement_snapshot = serde_json::to_value(engagement).map_err(|error| {
+        ScorchError::Config(format!("serialize schedule engagement snapshot: {error}"))
+    })?;
+
     sqlx::query_as::<_, ScanSchedule>(
-        "INSERT INTO scan_schedules (project_id, target_url, profile, cron_expression, next_run) \
-         VALUES ($1, $2, $3, $4, $5) RETURNING *",
+        "INSERT INTO scan_schedules \
+         (project_id, target_url, profile, cron_expression, next_run, engagement_snapshot) \
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
     )
     .bind(project_id)
     .bind(target_url)
     .bind(profile)
     .bind(cron_expression)
     .bind(next_run)
+    .bind(engagement_snapshot)
     .fetch_one(pool)
     .await
     .map_err(|e| ScorchError::Database(format!("create schedule: {e}")))
@@ -142,6 +150,83 @@ pub async fn find_due_schedules(pool: &PgPool) -> Result<Vec<ScanSchedule>> {
     .fetch_all(pool)
     .await
     .map_err(|e| ScorchError::Database(format!("find due schedules: {e}")))
+}
+
+/// Atomically claim every schedule that is currently due.
+///
+/// Rows are locked with `SKIP LOCKED`, advanced inside one short transaction,
+/// and returned only after the claim commits. No transaction or pooled
+/// connection remains held while the caller performs scan effects. Advancing
+/// before execution gives each due occurrence at-most-once semantics: a
+/// failed or interrupted scan is recorded as an attempt and is not silently
+/// retried by another overlapping caller.
+///
+/// # Errors
+///
+/// Returns an error if rows cannot be selected, advanced, or committed.
+pub async fn claim_due_schedules(pool: &PgPool) -> Result<Vec<ScanSchedule>> {
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|error| ScorchError::Database(format!("begin schedule claim: {error}")))?;
+    let due = sqlx::query_as::<_, ScanSchedule>(
+        "SELECT * FROM scan_schedules \
+         WHERE enabled = true AND next_run <= now() \
+         ORDER BY next_run, id \
+         FOR UPDATE SKIP LOCKED",
+    )
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|error| ScorchError::Database(format!("claim due schedules: {error}")))?;
+
+    let claimed_at = Utc::now();
+    for schedule in &due {
+        advance_claimed_schedule(&mut transaction, schedule, &claimed_at).await?;
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|error| ScorchError::Database(format!("commit schedule claim: {error}")))?;
+    Ok(due)
+}
+
+async fn advance_claimed_schedule(
+    transaction: &mut Transaction<'_, Postgres>,
+    schedule: &ScanSchedule,
+    claimed_at: &DateTime<Utc>,
+) -> Result<()> {
+    match compute_next_run_after(&schedule.cron_expression, claimed_at) {
+        Some(next_run) => {
+            sqlx::query(
+                "UPDATE scan_schedules \
+                 SET last_run = $2, next_run = $3 \
+                 WHERE id = $1",
+            )
+            .bind(schedule.id)
+            .bind(claimed_at)
+            .bind(next_run)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| {
+                ScorchError::Database(format!("advance claimed schedule {}: {error}", schedule.id))
+            })?;
+        }
+        None => {
+            sqlx::query(
+                "UPDATE scan_schedules \
+                 SET last_run = $2, enabled = false \
+                 WHERE id = $1",
+            )
+            .bind(schedule.id)
+            .bind(claimed_at)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| {
+                ScorchError::Database(format!("disable claimed schedule {}: {error}", schedule.id))
+            })?;
+        }
+    }
+    Ok(())
 }
 
 /// Mark a schedule as run and compute the next execution time.

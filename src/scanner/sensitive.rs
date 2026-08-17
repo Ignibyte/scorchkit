@@ -181,9 +181,9 @@ async fn check_source_maps(
 /// Secret patterns: (pattern, name, severity).
 const SECRET_PATTERNS: &[(&str, &str, Severity)] = &[
     ("AKIA", "AWS Access Key ID", Severity::Critical),
-    ("-----BEGIN RSA PRIVATE KEY-----", "RSA Private Key", Severity::Critical),
-    ("-----BEGIN PRIVATE KEY-----", "Private Key", Severity::Critical),
-    ("-----BEGIN EC PRIVATE KEY-----", "EC Private Key", Severity::Critical),
+    ("-----BEGIN RSA PRIVATE KEY-----", "RSA Private Key", Severity::Critical), // gitleaks:allow -- detector signature
+    ("-----BEGIN PRIVATE KEY-----", "Private Key", Severity::Critical), // gitleaks:allow -- detector signature
+    ("-----BEGIN EC PRIVATE KEY-----", "EC Private Key", Severity::Critical), // gitleaks:allow -- detector signature
     ("sk_live_", "Stripe Secret Key", Severity::Critical),
     ("sk_test_", "Stripe Test Key", Severity::Medium),
     ("ghp_", "GitHub Personal Access Token", Severity::High),
@@ -202,7 +202,7 @@ const SECRET_PATTERNS: &[(&str, &str, Severity)] = &[
 mod tests {
     use super::*;
 
-    /// Unit tests for the sensitive data exposure module's secret detection logic.
+    // Unit tests for the sensitive data exposure module's secret detection logic.
 
     /// Verify that `check_secrets` detects an AWS access key pattern in the response body.
     #[test]
@@ -257,7 +257,7 @@ mod tests {
         let body = r#"
             keys:
               stripe: "sk_live_aBcDeFgHiJkLmNoPqRsTuVwXyZ123"
-              slack: "xoxb-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx"
+              slack: "xoxb-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx" # gitleaks:allow -- detector fixture
         "#;
         let mut findings = Vec::new();
 

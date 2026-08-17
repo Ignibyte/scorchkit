@@ -14,7 +14,7 @@
 //!   `RDP_NEG_FAILURE` and surface as Info findings (port speaks RDP
 //!   but not plain `PROTOCOL_SSL`), not defects.
 //!
-//! Per-port, the module runs [`crate::engine::tls_probe::probe_tls`]
+//! Per-port, the module runs the internal `engine::tls_probe::probe_tls`
 //! then pipes the resulting [`crate::engine::tls_probe::CertInfo`]
 //! through [`crate::engine::tls_probe::check_certificate`] tagged with
 //! the `"tls_infra"` module id. Findings are identical in shape to the
@@ -23,13 +23,13 @@
 //! ## Hardening enumeration (WORK-143)
 //!
 //! When [`TlsInfraConfig::enum_protocols`] is enabled (default), each
-//! probe also runs [`crate::engine::tls_enum::enumerate_tls_versions`]
+//! probe also runs the internal `engine::tls_enum::enumerate_tls_versions`
 //! and raises findings for accepted deprecated versions:
 //! SSLv3/TLSv1.0 → Critical, TLSv1.1 → High. Findings are
 //! aggregated per severity tier to keep the report readable.
 //!
 //! When [`TlsInfraConfig::cipher_enum_limit`] is set, each probe also
-//! runs [`crate::engine::tls_enum::enumerate_weak_ciphers`] (opt-in;
+//! runs the internal `engine::tls_enum::enumerate_weak_ciphers` helper (opt-in;
 //! each probe is a full TCP handshake). Accepted weak suites produce
 //! aggregated Critical / High / Medium findings.
 //!
@@ -188,12 +188,23 @@ impl InfraModule for TlsInfraModule {
 
         let mut findings = Vec::new();
         for target in &self.config.targets {
-            findings.extend(probe_one(&host, *target).await);
+            findings.extend(probe_one(ctx, &host, *target).await);
             if self.config.enum_protocols {
-                findings.extend(enum_protocols_for(&host, *target).await);
+                let results =
+                    enumerate_tls_versions(ctx.network_policy(), &host, target.port, target.mode)
+                        .await;
+                findings.extend(protocol_findings(&host, *target, results));
             }
             if let Some(limit) = self.config.cipher_enum_limit {
-                findings.extend(enum_ciphers_for(&host, *target, limit).await);
+                let accepted = enumerate_weak_ciphers(
+                    ctx.network_policy(),
+                    &host,
+                    target.port,
+                    target.mode,
+                    Some(limit),
+                )
+                .await;
+                findings.extend(cipher_findings(&host, *target, accepted));
             }
         }
         Ok(findings)
@@ -222,9 +233,9 @@ fn probe_host_from_target(target: &InfraTarget) -> Option<String> {
 /// Finding rather than failing the whole module run. This matches the
 /// scanner/ssl.rs behaviour and keeps a single flaky service from
 /// wiping out the report.
-async fn probe_one(host: &str, target: TlsProbeTarget) -> Vec<Finding> {
+async fn probe_one(ctx: &InfraContext, host: &str, target: TlsProbeTarget) -> Vec<Finding> {
     let affected = format!("{host}:{}", target.port);
-    match probe_tls(host, target.port, target.mode).await {
+    match probe_tls(ctx.network_policy(), host, target.port, target.mode).await {
         Ok(cert) => check_certificate(&cert, "tls_infra", host, &affected),
         Err(e) => vec![Finding::new(
             "tls_infra",
@@ -250,9 +261,12 @@ async fn probe_one(host: &str, target: TlsProbeTarget) -> Vec<Finding> {
 /// at most one High finding (TLSv1.1 accepted) per port. Accepted
 /// modern versions (TLSv1.2, TLSv1.3) are not surfaced as findings;
 /// that's the expected happy path.
-async fn enum_protocols_for(host: &str, target: TlsProbeTarget) -> Vec<Finding> {
+fn protocol_findings(
+    host: &str,
+    target: TlsProbeTarget,
+    results: Vec<(TlsVersionId, ProbeOutcome)>,
+) -> Vec<Finding> {
     let affected = format!("{host}:{}", target.port);
-    let results = enumerate_tls_versions(host, target.port, target.mode).await;
 
     // Bucket by severity tier.
     let mut critical: Vec<TlsVersionId> = Vec::new();
@@ -336,9 +350,12 @@ async fn enum_protocols_for(host: &str, target: TlsProbeTarget) -> Vec<Finding> 
 }
 
 /// Enumerate weak cipher suites and aggregate into per-severity findings.
-async fn enum_ciphers_for(host: &str, target: TlsProbeTarget, limit: usize) -> Vec<Finding> {
+fn cipher_findings(
+    host: &str,
+    target: TlsProbeTarget,
+    accepted: Vec<CipherSuiteId>,
+) -> Vec<Finding> {
     let affected = format!("{host}:{}", target.port);
-    let accepted = enumerate_weak_ciphers(host, target.port, target.mode, Some(limit)).await;
 
     let mut critical: Vec<CipherSuiteId> = Vec::new();
     let mut weak: Vec<CipherSuiteId> = Vec::new();
@@ -446,8 +463,7 @@ mod tests {
     use std::sync::Arc;
 
     fn ctx_for(target: InfraTarget) -> InfraContext {
-        let client = reqwest::Client::builder().build().expect("client");
-        InfraContext::new(target, Arc::new(AppConfig::default()), client)
+        InfraContext::new(target, Arc::new(AppConfig::default()), Vec::new())
     }
 
     /// Default config includes every common TLS-bearing port in the
@@ -586,7 +602,7 @@ mod tests {
         assert_eq!(cfg.cipher_enum_limit, Some(4));
     }
 
-    /// Closed port with enum_protocols=true still emits only the
+    /// Closed port with `enum_protocols=true` still emits only the
     /// single Info skipped finding — enum fanned out to 5 probes that
     /// each returned Unknown, which must not fabricate findings.
     #[tokio::test]
@@ -619,5 +635,67 @@ mod tests {
         let list = cipher_list(&[CipherSuiteId(0x0004)]);
         assert!(list.contains("TLS_RSA_WITH_RC4_128_MD5"));
         assert!(list.contains("0x0004"));
+    }
+
+    #[test]
+    fn protocol_findings_map_each_accepted_severity_and_ignore_other_outcomes() {
+        let target = TlsProbeTarget { port: 443, mode: TlsMode::Implicit, label: "fixture" };
+        let findings = protocol_findings(
+            "127.0.0.1",
+            target,
+            vec![
+                (TlsVersionId::Ssl30, ProbeOutcome::Accepted),
+                (TlsVersionId::Tls10, ProbeOutcome::Rejected),
+                (TlsVersionId::Tls11, ProbeOutcome::Accepted),
+                (TlsVersionId::Tls12, ProbeOutcome::Accepted),
+                (TlsVersionId::Tls13, ProbeOutcome::Unknown),
+            ],
+        );
+
+        assert_eq!(findings.len(), 3);
+        assert_eq!(
+            findings.iter().map(|finding| finding.severity).collect::<Vec<_>>(),
+            vec![Severity::Critical, Severity::High, Severity::Info]
+        );
+        assert_eq!(findings[0].evidence.as_deref(), Some("SSLv3"));
+        assert_eq!(findings[1].evidence.as_deref(), Some("TLSv1.1"));
+        assert_eq!(findings[2].evidence.as_deref(), Some("TLSv1.2"));
+        assert!(findings.iter().all(|finding| finding.affected_target == "127.0.0.1:443"));
+        assert!(protocol_findings("127.0.0.1", target, Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn cipher_findings_map_critical_weak_and_legacy_suites_only() {
+        let target = TlsProbeTarget { port: 443, mode: TlsMode::Implicit, label: "fixture" };
+        let findings = cipher_findings(
+            "127.0.0.1",
+            target,
+            vec![
+                CipherSuiteId(0x0000),
+                CipherSuiteId(0x0004),
+                CipherSuiteId(0x002F),
+                CipherSuiteId(0x009C),
+            ],
+        );
+
+        assert_eq!(findings.len(), 3);
+        assert_eq!(
+            findings.iter().map(|finding| finding.severity).collect::<Vec<_>>(),
+            vec![Severity::Critical, Severity::High, Severity::Medium]
+        );
+        assert!(findings.iter().all(|finding| finding.cwe_id == Some(327)));
+        assert!(findings[0]
+            .evidence
+            .as_deref()
+            .is_some_and(|evidence| evidence.contains("0x0000")));
+        assert!(findings[1]
+            .evidence
+            .as_deref()
+            .is_some_and(|evidence| evidence.contains("0x0004")));
+        assert!(findings[2]
+            .evidence
+            .as_deref()
+            .is_some_and(|evidence| evidence.contains("0x002F")));
+        assert!(cipher_findings("127.0.0.1", target, Vec::new()).is_empty());
     }
 }

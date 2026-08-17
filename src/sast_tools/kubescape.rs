@@ -14,7 +14,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Kubernetes posture via kubescape.
 #[derive(Debug)]
@@ -46,12 +45,13 @@ impl CodeModule for KubescapeModule {
 
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
-        let output = subprocess::run_tool_lenient(
-            "kubescape",
-            &["scan", "--format", "json", &path_str],
-            Duration::from_secs(180),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "kubescape",
+                &["scan", "--format", "json", &path_str],
+                Duration::from_mins(3),
+            )
+            .await?;
         Ok(parse_kubescape_output(&output.stdout))
     }
 }

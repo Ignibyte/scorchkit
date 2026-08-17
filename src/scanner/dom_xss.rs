@@ -194,7 +194,7 @@ fn detect_sinks(body: &str) -> Vec<&'static str> {
 mod tests {
     use super::*;
 
-    /// Tests for the DOM XSS scanner module.
+    // Tests for the DOM XSS scanner module.
 
     /// Verify module metadata.
     #[test]

@@ -18,10 +18,9 @@ use crate::engine::cloud_module::{CloudCategory, CloudModule, CloudProvider};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Timeout for a `pacu` session.
-const PACU_TIMEOUT: Duration = Duration::from_secs(600);
+const PACU_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// Rhino Security `pacu` AWS exploitation framework.
 ///
@@ -62,7 +61,7 @@ impl CloudModule for PacuCloudModule {
 
     async fn run(&self, ctx: &CloudContext) -> Result<Vec<Finding>> {
         let argv = vec!["--exec", "run iam__enum_permissions", "--set-regions", "all"];
-        let output = subprocess::run_tool_lenient("pacu", &argv, PACU_TIMEOUT).await?;
+        let output = ctx.run_tool_lenient("pacu", &argv, PACU_TIMEOUT).await?;
         let target_label = ctx.target.display_raw();
         Ok(parse_pacu_output(&output.stdout, &target_label))
     }

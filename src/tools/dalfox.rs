@@ -3,7 +3,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 use async_trait::async_trait;
 use std::time::Duration;
 
@@ -33,12 +32,13 @@ impl ScanModule for DalfoxModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.url.as_str();
-        let output = subprocess::run_tool(
-            "dalfox",
-            &["url", target, "--format", "json", "--silence"],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "dalfox",
+                &["url", target, "--format", "json", "--silence"],
+                Duration::from_mins(5),
+            )
+            .await?;
         Ok(parse_dalfox_output(&output.stdout, target))
     }
 }
@@ -78,10 +78,10 @@ fn parse_dalfox_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for Dalfox JSON-lines output parser.
+    // Tests for Dalfox JSON-lines output parser.
 
     /// Verify that `parse_dalfox_output` correctly extracts XSS findings
-    /// from Dalfox JSON-lines output including PoC evidence.
+    /// from Dalfox JSON-lines output including `PoC` evidence.
     #[test]
     fn test_parse_dalfox_output() {
         let output = r#"{"type":"V","data":"Reflected XSS found","param":"q","poc":"https://example.com/search?q=<script>alert(1)</script>"}"#;
@@ -89,7 +89,7 @@ mod tests {
         let findings = parse_dalfox_output(output, "https://example.com");
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, Severity::High);
-        assert!(findings[0].title.contains("q"));
+        assert!(findings[0].title.contains('q'));
         assert_eq!(findings[0].cwe_id, Some(79));
     }
 

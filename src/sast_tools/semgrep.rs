@@ -12,7 +12,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Multi-language static analysis via Semgrep.
 #[derive(Debug)]
@@ -41,12 +40,13 @@ impl CodeModule for SemgrepModule {
 
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
-        let output = subprocess::run_tool_lenient(
-            "semgrep",
-            &["scan", "--config", "auto", "--json", "--quiet", &path_str],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "semgrep",
+                &["scan", "--config", "auto", "--json", "--quiet", &path_str],
+                Duration::from_mins(5),
+            )
+            .await?;
         Ok(parse_semgrep_output(&output.stdout))
     }
 }

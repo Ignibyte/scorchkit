@@ -16,7 +16,6 @@ use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::network_credentials::{format_redacted_argv, NetworkCredentials};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// SMB / AD assessment via nxc (`NetExec`).
 #[derive(Debug)]
@@ -55,7 +54,7 @@ impl ScanModule for NxcModule {
         // Borrow into &[&str] for subprocess::run_tool + argv logging.
         let args: Vec<&str> = owned.iter().map(String::as_str).collect();
         debug!("nxc: {}", format_redacted_argv(&args));
-        let output = subprocess::run_tool("nxc", &args, Duration::from_secs(60)).await?;
+        let output = ctx.run_tool("nxc", &args, Duration::from_mins(1)).await?;
         Ok(parse_nxc_output(&output.stdout, ctx.target.url.as_str(), host))
     }
 }

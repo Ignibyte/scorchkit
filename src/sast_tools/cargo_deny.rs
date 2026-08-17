@@ -15,7 +15,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Rust dependency policy + advisory check via cargo-deny.
 #[derive(Debug)]
@@ -49,12 +48,19 @@ impl CodeModule for CargoDenyModule {
         let path_str = ctx.path.display().to_string();
         // cargo-deny exits non-zero on policy violations; that's
         // expected — use lenient runner. JSON output via --format json.
-        let output = subprocess::run_tool_lenient(
-            "cargo-deny",
-            &["--manifest-path", &format!("{path_str}/Cargo.toml"), "--format", "json", "check"],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "cargo-deny",
+                &[
+                    "--manifest-path",
+                    &format!("{path_str}/Cargo.toml"),
+                    "--format",
+                    "json",
+                    "check",
+                ],
+                Duration::from_mins(2),
+            )
+            .await?;
         Ok(parse_cargo_deny_output(&output.stdout, &output.stderr))
     }
 }

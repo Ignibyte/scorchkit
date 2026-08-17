@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Recursive directory brute-forcing via feroxbuster.
 #[derive(Debug)]
@@ -42,24 +41,25 @@ impl ScanModule for FeroxbusterModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.url.as_str();
 
-        let output = subprocess::run_tool(
-            "feroxbuster",
-            &[
-                "-u",
-                target,
-                "--json",
-                "-q",
-                "--no-state",
-                "-t",
-                "20",
-                "--time-limit",
-                "5m",
-                "-C",
-                "404,403",
-            ],
-            Duration::from_secs(360),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "feroxbuster",
+                &[
+                    "-u",
+                    target,
+                    "--json",
+                    "-q",
+                    "--no-state",
+                    "-t",
+                    "20",
+                    "--time-limit",
+                    "5m",
+                    "-C",
+                    "404,403",
+                ],
+                Duration::from_mins(6),
+            )
+            .await?;
 
         Ok(parse_feroxbuster_output(&output.stdout, target))
     }
@@ -113,7 +113,7 @@ fn parse_feroxbuster_output(output: &str, _target_url: &str) -> Vec<Finding> {
     }
 
     // Limit findings to most interesting ones
-    findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+    findings.sort_by_key(|finding| std::cmp::Reverse(finding.severity));
     findings.truncate(50);
 
     findings
@@ -171,7 +171,7 @@ fn classify_discovered_path(url: &str) -> (Severity, &'static str) {
 mod tests {
     use super::*;
 
-    /// Tests for feroxbuster JSON-lines output parser.
+    // Tests for feroxbuster JSON-lines output parser.
 
     /// Verify that `parse_feroxbuster_output` correctly extracts discovered
     /// paths and classifies their severity.

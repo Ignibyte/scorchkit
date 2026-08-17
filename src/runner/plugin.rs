@@ -17,7 +17,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Plugin definition deserialized from a TOML file.
 ///
@@ -151,17 +150,15 @@ impl ScanModule for PluginModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.url.as_str();
 
+        // JUSTIFICATION: `{target}` is plugin-template syntax, not a Rust format placeholder.
         #[allow(clippy::literal_string_with_formatting_args)]
         let args: Vec<String> =
             self.def.args.iter().map(|a| a.replace("{target}", target)).collect();
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
 
-        let output = subprocess::run_tool(
-            &self.def.command,
-            &arg_refs,
-            Duration::from_secs(self.def.timeout_seconds),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(&self.def.command, &arg_refs, Duration::from_secs(self.def.timeout_seconds))
+            .await?;
 
         Ok(parse_plugin_output(
             &output.stdout,
@@ -341,7 +338,7 @@ mod tests {
         assert_eq!(def.severity, "high");
     }
 
-    /// Verify plugin module implements ScanModule trait correctly.
+    /// Verify plugin module implements `ScanModule` trait correctly.
     #[test]
     fn test_plugin_module_metadata() {
         let def = PluginDef {
@@ -364,25 +361,27 @@ mod tests {
         assert_eq!(module.required_tool(), Some("test-cmd"));
     }
 
-    /// Verify {target} placeholder substitution in args.
+    /// Verify `{target}` placeholder substitution in args.
     #[test]
     fn test_plugin_arg_substitution() {
-        let args = vec![
+        const TARGET_PLACEHOLDER: &str = "{target}";
+        let args = [
             "--url".to_string(),
-            "{target}".to_string(),
+            TARGET_PLACEHOLDER.to_string(),
             "--output".to_string(),
             "json".to_string(),
         ];
         let target = "https://example.com";
 
-        let substituted: Vec<String> = args.iter().map(|a| a.replace("{target}", target)).collect();
+        let substituted: Vec<String> =
+            args.iter().map(|arg| arg.replace(TARGET_PLACEHOLDER, target)).collect();
 
         assert_eq!(substituted[0], "--url");
         assert_eq!(substituted[1], "https://example.com");
         assert_eq!(substituted[2], "--output");
     }
 
-    /// Verify line-based output parsing produces consolidated finding.
+    /// Verify line-based output parsing produces a consolidated finding.
     #[test]
     fn test_plugin_parse_lines() {
         let output = "found issue 1\nfound issue 2\nfound issue 3\n";

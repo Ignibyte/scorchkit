@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Refuse commits that are not bound to a current delivery-gate receipt.
+
+set -uo pipefail
+
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${SCORCHKIT_PROJECT_ROOT:-$(git -C "$HOOK_DIR" rev-parse --show-toplevel 2>/dev/null || pwd)}"
+GATE_STATE_HELPER="${SCORCHKIT_GATE_STATE_HELPER:-$ROOT_DIR/bin/gate-state.sh}"
+
+# shellcheck source=bin/gate-state.sh
+. "$GATE_STATE_HELPER" || exit 2
+
+selftest() {
+    local fixture receipt receipt_backup receipt_tampered
+    fixture="$(mktemp -d /tmp/scorchkit-precommit.XXXXXX)" || return 1
+    PRECOMMIT_FIXTURE="$fixture"
+    trap 'rm -rf "${PRECOMMIT_FIXTURE:-}"' EXIT
+    git -C "$fixture" init -q || return 1
+    git -C "$fixture" config user.name 'ScorchKit Hook Test'
+    git -C "$fixture" config user.email 'hook-test@invalid.example'
+    mkdir -p "$fixture/docs/planning/pipeline/active"
+    printf '%s\n' 'one' > "$fixture/probe.txt"
+    printf '%s\n' 'one' > "$fixture/probe-copy.txt"
+    ln -s probe.txt "$fixture/probe-link"
+    git -C "$fixture" add probe.txt probe-copy.txt probe-link docs/planning/pipeline/active
+    git -C "$fixture" commit -q --no-verify -m baseline || return 1
+    receipt="$fixture/.git/test-gate-receipt"
+
+    SCORCHKIT_PROJECT_ROOT="$fixture" SCORCHKIT_GATE_RECEIPT="$receipt" \
+        SCORCHKIT_GATE_MODE=diff \
+        bash -c '. "$1"; scorchkit_write_gate_receipt' _ "$ROOT_DIR/bin/gate-state.sh" \
+        || return 1
+    if ! grep -Fqx 'version=2' "$receipt" || ! grep -Fqx 'mode=diff' "$receipt"; then
+        echo "pre-commit selftest failed: receipt mode was not recorded" >&2
+        return 1
+    fi
+    SCORCHKIT_PROJECT_ROOT="$fixture" SCORCHKIT_GATE_RECEIPT="$receipt" \
+        SCORCHKIT_GATE_STATE_HELPER="$GATE_STATE_HELPER" \
+        bash "$0" --verify-only || return 1
+    receipt_backup="$fixture/.git/receipt-good"
+    receipt_tampered="$fixture/.git/receipt-tampered"
+    cp "$receipt" "$receipt_backup"
+    sed 's/^mode=diff$/mode=unknown/' "$receipt_backup" > "$receipt_tampered"
+    mv "$receipt_tampered" "$receipt"
+    if SCORCHKIT_PROJECT_ROOT="$fixture" SCORCHKIT_GATE_RECEIPT="$receipt" \
+        SCORCHKIT_GATE_STATE_HELPER="$GATE_STATE_HELPER" \
+        bash "$0" --verify-only >/dev/null 2>&1; then
+        echo "pre-commit selftest failed: unknown receipt mode was accepted" >&2
+        return 1
+    fi
+    mv "$receipt_backup" "$receipt"
+    ln -snf probe-copy.txt "$fixture/probe-link"
+    if SCORCHKIT_PROJECT_ROOT="$fixture" SCORCHKIT_GATE_RECEIPT="$receipt" \
+        SCORCHKIT_GATE_STATE_HELPER="$GATE_STATE_HELPER" \
+        bash "$0" --verify-only >/dev/null 2>&1; then
+        echo "pre-commit selftest failed: symlink retarget was accepted" >&2
+        return 1
+    fi
+    ln -snf probe.txt "$fixture/probe-link"
+    printf '%s\n' 'two' >> "$fixture/probe.txt"
+    if SCORCHKIT_PROJECT_ROOT="$fixture" SCORCHKIT_GATE_RECEIPT="$receipt" \
+        SCORCHKIT_GATE_STATE_HELPER="$GATE_STATE_HELPER" \
+        bash "$0" --verify-only >/dev/null 2>&1; then
+        echo "pre-commit selftest failed: stale receipt was accepted" >&2
+        return 1
+    fi
+    echo "pre-commit receipt selftest OK"
+}
+
+if [ "${1:-}" = "--selftest" ]; then
+    selftest
+    exit $?
+fi
+
+if find "$ROOT_DIR/docs/planning/pipeline/active" -maxdepth 1 -name '*.spec.md' \
+    -type f 2>/dev/null | grep -q .; then
+    echo "COMMIT BLOCKED: an active pipeline has not completed and archived." >&2
+    echo "Run: bash bin/pipeline.sh status" >&2
+    exit 1
+fi
+
+if ! scorchkit_verify_gate_receipt; then
+    echo "COMMIT BLOCKED: no current delivery-gate receipt matches this worktree and its evidence." >&2
+    echo "Run the delivery mode required by the active ticket; normally: bash bin/gate.sh --diff" >&2
+    exit 1
+fi
+
+[ "${1:-}" = "--verify-only" ] && echo "delivery receipt matches current worktree"

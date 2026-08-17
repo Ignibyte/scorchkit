@@ -13,7 +13,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// SMB and network service enumeration via enum4linux.
 #[derive(Debug)]
@@ -48,8 +47,7 @@ impl ScanModule for Enum4linuxModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
 
-        let output =
-            subprocess::run_tool("enum4linux", &["-a", target], Duration::from_secs(300)).await?;
+        let output = ctx.run_tool("enum4linux", &["-a", target], Duration::from_mins(5)).await?;
 
         Ok(parse_enum4linux_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -213,7 +211,7 @@ mod tests {
     /// Verify enum4linux output parsing with shares, users, and policy.
     #[test]
     fn test_parse_enum4linux_output() {
-        let output = r#"
+        let output = r"
  ====( Share Enumeration on 10.0.0.1 )====
 
 	Sharename       Type      Comment
@@ -232,7 +230,7 @@ S-1-5-21-1234-5678-9012-1000 WORKGROUP\jsmith (Local User)
 Minimum password length: 7
 Password Complexity: Disabled
 Account Lockout Threshold: None
-"#;
+";
 
         let findings = parse_enum4linux_output(output, "https://10.0.0.1");
         assert_eq!(findings.len(), 3);

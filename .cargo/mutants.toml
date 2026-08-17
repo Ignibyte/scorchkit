@@ -1,0 +1,7 @@
+# Composition roots contain wiring rather than domain behavior. Keep the rest of
+# the library in the mutation set and add exclusions only with a narrow reason.
+copy_target = false
+copy_vcs = false
+timeout_multiplier = 3.0
+
+exclude_globs = ["src/main.rs"]

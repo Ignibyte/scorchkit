@@ -23,6 +23,7 @@ fn test_scan_schedule_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         target_url: "https://example.com".to_string(),
         profile: "standard".to_string(),
         cron_expression: "0 0 * * *".to_string(),
+        engagement_snapshot: Some(serde_json::json!({"id": uuid::Uuid::new_v4()})),
         enabled: true,
         last_run: None,
         next_run: Utc::now(),
@@ -35,6 +36,7 @@ fn test_scan_schedule_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(parsed.target_url, "https://example.com");
     assert_eq!(parsed.profile, "standard");
     assert_eq!(parsed.cron_expression, "0 0 * * *");
+    assert!(parsed.engagement_snapshot.is_some());
     assert!(parsed.enabled);
     assert!(parsed.last_run.is_none());
     Ok(())

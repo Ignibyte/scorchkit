@@ -1,0 +1,4 @@
+# Tests use panic-based assertions by design. Production code remains covered by
+# `unwrap_used = "deny"` and `expect_used = "deny"` in Cargo.toml.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

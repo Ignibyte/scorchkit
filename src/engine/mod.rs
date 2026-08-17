@@ -30,6 +30,9 @@ pub mod infra_target;
 pub mod module_trait;
 pub mod network_credentials;
 pub mod oob;
+pub mod policy;
+pub(crate) mod policy_http;
+pub(crate) mod policy_network;
 pub mod risk_score;
 pub mod scan_context;
 pub mod scan_result;
@@ -38,5 +41,6 @@ pub mod service_fingerprint;
 pub mod severity;
 pub mod shared_data;
 pub mod target;
+#[cfg(any(feature = "infra", test))]
 pub mod tls_enum;
 pub mod tls_probe;

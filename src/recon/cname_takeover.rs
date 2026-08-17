@@ -198,7 +198,7 @@ fn extract_crt_sh_subdomains(body: &str, domain: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Tests for the CNAME takeover and cert transparency module.
+    // Tests for the CNAME takeover and cert transparency module.
 
     /// Verify module metadata.
     #[test]

@@ -58,11 +58,11 @@ pub enum Commands {
         #[arg(long)]
         analyze: bool,
 
-        /// Use AI-guided scan planning (recon first, then Claude decides modules)
+        /// Use AI-guided scan planning with the configured provider
         #[arg(long)]
         plan: bool,
 
-        /// Scan profile: quick, standard, thorough
+        /// Scan profile: quick, standard, thorough, pentest
         #[arg(long, default_value = "standard")]
         profile: String,
 
@@ -156,9 +156,9 @@ pub enum Commands {
         check_tools: bool,
     },
 
-    /// Initialize a config file, optionally probing a target for fingerprinting
+    /// Initialize a config file, optionally binding a safe engagement to a target
     Init {
-        /// Target URL to probe and generate a tailored config for
+        /// Target URL to resolve and pin without sending an HTTP request
         target: Option<String>,
 
         /// Create a named project and add the target (requires storage feature)
@@ -516,7 +516,7 @@ pub enum ScheduleCommands {
         /// Cron expression (e.g., "0 0 * * *" for daily at midnight)
         cron: String,
 
-        /// Scan profile (quick, standard, thorough)
+        /// Scan profile (quick, standard, thorough, pentest)
         #[arg(long, default_value = "standard")]
         profile: String,
     },

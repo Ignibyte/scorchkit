@@ -13,7 +13,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Web technology fingerprinting via `WhatWeb`.
 #[derive(Debug)]
@@ -42,12 +41,9 @@ impl ScanModule for WhatwebModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let url = ctx.target.url.as_str();
-        let output = subprocess::run_tool_lenient(
-            "whatweb",
-            &["--log-json=-", "-q", url],
-            Duration::from_secs(60),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient("whatweb", &["--log-json=-", "-q", url], Duration::from_mins(1))
+            .await?;
         Ok(parse_whatweb_output(&output.stdout, url))
     }
 }

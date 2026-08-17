@@ -220,7 +220,7 @@ pub enum StructuredAnalysis {
     Filter(FilterAnalysis),
     /// Unparsed raw text — fallback when JSON extraction fails.
     Raw {
-        /// The raw analysis text from Claude.
+        /// The raw analysis text from the configured provider.
         content: String,
     },
 }
@@ -272,17 +272,17 @@ pub struct StatusBreakdown {
 
 /// AI-generated scan plan based on recon analysis.
 ///
-/// Produced by [`crate::ai::planner::ScanPlanner`] after Claude analyzes
+/// Produced by the internal `ScanPlanner` after the configured provider analyzes
 /// reconnaissance results and the available module catalog.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanPlan {
     /// The target being scanned.
     pub target: String,
-    /// Modules Claude recommends running, ordered by priority.
+    /// Modules the configured provider recommends running, ordered by priority.
     pub recommendations: Vec<ModuleRecommendation>,
-    /// Modules Claude recommends skipping, with justification.
+    /// Modules the configured provider recommends skipping, with justification.
     pub skipped_modules: Vec<SkippedModule>,
-    /// Claude's high-level strategy description.
+    /// The provider's high-level strategy description.
     pub overall_strategy: String,
     /// Rough time estimate for executing the plan.
     pub estimated_scan_time: Option<String>,
@@ -301,12 +301,12 @@ pub struct ModuleRecommendation {
     pub category: String,
 }
 
-/// A module Claude recommends skipping, with justification.
+/// A module the configured provider recommends skipping, with justification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkippedModule {
     /// Module ID.
     pub module_id: String,
-    /// Why Claude recommends skipping this module.
+    /// Why the provider recommends skipping this module.
     pub reason: String,
 }
 
@@ -344,14 +344,14 @@ pub fn validate_plan(plan: &ScanPlan, known_ids: &[&str]) -> PlanValidation {
 /// Complete result from an AI analysis session.
 ///
 /// Contains the structured (or raw fallback) analysis, metadata about
-/// the analysis run, and the original Claude response for debugging.
+/// the analysis run, and the original provider response for debugging.
 #[derive(Debug, Clone)]
 pub struct AiAnalysis {
     /// Which analysis mode was used.
     pub focus: AnalysisFocus,
     /// Parsed structured analysis or raw fallback.
     pub analysis: StructuredAnalysis,
-    /// The unmodified response text from Claude.
+    /// The unmodified response text from the configured provider.
     pub raw_response: String,
     /// Cost of the analysis in USD, if reported.
     pub cost_usd: Option<f64>,

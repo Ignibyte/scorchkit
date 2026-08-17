@@ -3,7 +3,7 @@
 //! This crate demonstrates how to implement a custom DAST [`ScanModule`]
 //! for the ScorchKit scanner. A plugin author:
 //!
-//! 1. Adds `scorchkit = "1.0"` and `async-trait = "0.1"` to `Cargo.toml`.
+//! 1. Adds a reviewed ScorchKit 3.x release and `async-trait` to `Cargo.toml`.
 //! 2. Imports types from [`scorchkit::prelude`].
 //! 3. Defines a struct implementing [`ScanModule`].
 //! 4. Registers it with an orchestrator (typically by building a custom
@@ -15,7 +15,7 @@
 //! - Has a stable string `id` for CLI/config reference
 //! - Has a human-readable `name` and `description`
 //! - Belongs to a [`ModuleCategory`] (`Recon` or `Scanner`)
-//! - Receives a [`ScanContext`] with target, HTTP client, and config
+//! - Receives a policy-sealed [`ScanContext`] with target, HTTP access, and config
 //! - Returns `Result<Vec<Finding>>`
 //!
 //! # Finding Builder
@@ -72,7 +72,7 @@ impl ScanModule for DebugMarkerScanner {
         // Fetch the target URL using the context's HTTP client.
         // The client is preconfigured with auth, proxy, and TLS settings.
         let response = ctx
-            .http_client
+            .http_client()
             .get(ctx.target.url.as_str())
             .send()
             .await

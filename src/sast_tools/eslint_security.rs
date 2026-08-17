@@ -12,7 +12,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// JavaScript/TypeScript security analysis via `ESLint`.
 #[derive(Debug)]
@@ -44,29 +43,30 @@ impl CodeModule for EslintSecurityModule {
 
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
-        let output = subprocess::run_tool_lenient(
-            "eslint",
-            &[
-                "--format",
-                "json",
-                "--no-eslintrc",
-                "--plugin",
-                "security",
-                "--rule",
-                "security/detect-eval-with-expression: error",
-                "--rule",
-                "security/detect-non-literal-regexp: warn",
-                "--rule",
-                "security/detect-non-literal-fs-filename: warn",
-                "--rule",
-                "security/detect-object-injection: warn",
-                "--rule",
-                "security/detect-possible-timing-attacks: warn",
-                &path_str,
-            ],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "eslint",
+                &[
+                    "--format",
+                    "json",
+                    "--no-eslintrc",
+                    "--plugin",
+                    "security",
+                    "--rule",
+                    "security/detect-eval-with-expression: error",
+                    "--rule",
+                    "security/detect-non-literal-regexp: warn",
+                    "--rule",
+                    "security/detect-non-literal-fs-filename: warn",
+                    "--rule",
+                    "security/detect-object-injection: warn",
+                    "--rule",
+                    "security/detect-possible-timing-attacks: warn",
+                    &path_str,
+                ],
+                Duration::from_mins(2),
+            )
+            .await?;
 
         Ok(parse_eslint_output(&output.stdout))
     }
@@ -139,7 +139,7 @@ pub fn parse_eslint_output(stdout: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Verify ESLint JSON output is correctly parsed into findings
+    /// Verify `ESLint` JSON output is correctly parsed into findings
     /// with rule ID, file path, line number, and severity mapping.
     #[test]
     fn test_parse_eslint_output() {

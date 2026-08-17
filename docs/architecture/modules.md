@@ -1,243 +1,112 @@
-# Writing Scan Modules
+# Module architecture
 
-This is the guide for adding new scan modules to ScorchKit. ScorchKit has three module families, each with its own trait. Pick the family that matches your input:
+ScorchKit has four module families. They return the same `Finding` type and feed the same reporting
+and storage surfaces, but each family receives a context sealed for its target and effects.
 
-| Family | Trait | Input | Context | When to use |
-|--------|-------|-------|---------|-------------|
-| **DAST** | `ScanModule` | URL target | `ScanContext` (HTTP client, cookies, shared data) | Probing a running web application |
-| **SAST** | `CodeModule` | Filesystem path | `CodeContext` (path, language, manifests, shared data) | Static code analysis, dependency auditing, secrets, IaC |
-| **Infra** | `InfraModule` | IP / CIDR / host / host:port | `InfraContext` (infra target, HTTP client, shared data) | Port scanning, service fingerprinting, CVE correlation, non-HTTP TLS, DNS hygiene |
+| Family | Trait | Context | Production registry |
+|---|---|---|---:|
+| DAST and reconnaissance | `ScanModule` | `ScanContext` | 91 |
+| SAST | `CodeModule` | `CodeContext` | 22 |
+| Infrastructure | `InfraModule` | `InfraContext` | 4, plus optional CVE correlation |
+| Cloud | `CloudModule` | `CloudContext` | 5 |
 
-All three orchestrators emit the same `ScanEvent` lifecycle, all three feed `Vec<Finding>` into the same reporting / storage / AI pipelines, and all three respect the same `EventBus` and `SharedData`. This section walks through `ScanModule` in detail; `CodeModule` and `InfraModule` are architecturally analogous — only the inputs and the trait-specific accessors differ.
+`tests/module_census.rs` owns these counts. The cloud count excludes twelve private, test-only
+provider SDK modules and the unregistered Pacu exploit module.
 
-- `CodeModule` — see [sast.md](sast.md). Additional method: `fn languages(&self) -> &[&str]` for language-aware filtering.
-- `InfraModule` — see [infra.md](infra.md). Additional method: `fn protocols(&self) -> &[&str]` for protocol filtering, plus a `fn category(&self) -> InfraCategory` that returns one of five infra variants instead of the two `ModuleCategory` variants.
+## Common contract
 
-## The ScanModule Trait
+Each trait supplies stable module metadata and one asynchronous `run` method. The DAST shape is:
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait ScanModule: Send + Sync {
-    /// Human-readable name for display. E.g., "HTTP Security Headers"
     fn name(&self) -> &str;
-
-    /// Short identifier for CLI flags and config. E.g., "headers"
     fn id(&self) -> &str;
-
-    /// Recon or Scanner
     fn category(&self) -> ModuleCategory;
-
-    /// One-line description. E.g., "Analyze HTTP security headers..."
     fn description(&self) -> &str;
-
-    /// Run the scan. Returns findings (empty vec = no issues).
-    /// Errors = infrastructure failure, not "no vulnerabilities found".
-    async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>>;
-
-    /// Override to true if this module wraps an external tool.
+    async fn run(&self, context: &ScanContext) -> Result<Vec<Finding>>;
     fn requires_external_tool(&self) -> bool { false }
-
-    /// Return the binary name needed. E.g., "nmap"
     fn required_tool(&self) -> Option<&str> { None }
 }
 ```
 
-## Step-by-Step: Adding a Built-in Module
+SAST adds language selection. Infrastructure and cloud use family-specific categories and target
+metadata. Their concrete definitions under `src/engine` are authoritative.
 
-### 1. Create the module file
+An empty finding vector means the module completed and observed no issue. An error means it could not
+complete its contract. A denial, timeout, unavailable program, or malformed response must remain an
+error or an explicit skipped-module outcome. It is not a clean security result.
 
-Create `src/recon/my_module.rs` or `src/scanner/my_module.rs`:
+## Context ownership
 
-```rust
-use async_trait::async_trait;
+Production contexts come from `facade::Engine`. Their constructors are internal so callers cannot
+pair an unverified target with an arbitrary client, resolver, executor, credential set, or path.
 
-use crate::engine::error::{Result, ScorchError};
-use crate::engine::finding::Finding;
-use crate::engine::module_trait::{ModuleCategory, ScanModule};
-use crate::engine::scan_context::ScanContext;
-use crate::engine::severity::Severity;
+Context effect seams include:
 
-#[derive(Debug)]
-pub struct MyModule;
+- `ScanContext::http_client()` for policy-bound HTTP;
+- `ScanContext::run_tool` and `CodeContext::run_tool` for bounded external programs;
+- the private `PolicyNetwork` in DAST and infrastructure contexts for DNS, TCP, and TLS;
+- a canonical authorized root in `CodeContext`;
+- credential and external-tool authorization in `CloudContext`.
 
-#[async_trait]
-impl ScanModule for MyModule {
-    fn name(&self) -> &'static str {
-        "My Security Check"
-    }
+A module must use those seams. If a required effect has no context-owned operation, extend the engine
+boundary with policy, audit, bounds, and tests before adding the module. Do not construct a raw HTTP
+client, resolver, socket, subprocess, credential loader, or effectful path inside the module.
 
-    fn id(&self) -> &'static str {
-        "my-check"
-    }
+## Registries and profiles
 
-    fn category(&self) -> ModuleCategory {
-        ModuleCategory::Recon  // or ModuleCategory::Scanner
-    }
+Each family has one `register_modules()` function. An orchestrator loads that registry, then applies
+profile, category, include, and exclude filters. Installed tools affect availability, not
+authorization. The facade validates the profile's capability and effect requirements before it
+creates the context.
 
-    fn description(&self) -> &'static str {
-        "Checks for something specific"
-    }
+Trusted callers can add a Rust module with the orchestrator's `add_module` method. Calling
+`register_default_modules()` first runs the extension alongside the built-in registry. The public
+example and security constraints are in [the Rust module extension API](../plugin-sdk.md).
 
-    async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
-        let url = ctx.target.url.as_str();
-        let mut findings = Vec::new();
+TOML DAST plugins describe bounded external commands. They still run through the context executor,
+including target and `ExternalTool` authorization, executable resolution, timeout, output limit,
+exit policy, and process-tree cleanup. They are trusted configuration, not a sandbox.
 
-        // Use ctx.http_client for HTTP requests
-        let response = ctx.http_client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| ScorchError::Http {
-                url: url.to_string(),
-                source: e,
-            })?;
+## External-tool modules
 
-        // Analyze response, create findings
-        if some_condition {
-            findings.push(
-                Finding::new(
-                    "my-check",           // must match id()
-                    Severity::Medium,
-                    "Issue Title",
-                    "Detailed description of the issue",
-                    url,
-                )
-                .with_evidence("raw evidence string")
-                .with_remediation("How to fix this")
-                .with_owasp("A05:2021 Security Misconfiguration")
-                .with_cwe(693),
-            );
-        }
+One-shot tool modules declare a `ToolInvocation` and call a context-owned executor. The registry-wide
+contract test checks the declared program, arguments, timeout, output cap, exit behavior, and parser
+result for all 45 DAST and 21 SAST wrappers.
 
-        Ok(findings)
-    }
-}
-```
+Interactsh is deliberately separate because it owns a long-lived callback session. It still uses the
+shared process-group owner, bounded reader, and cleanup behavior for stop, failure, timeout, overflow,
+and drop.
 
-### 2. Declare the module
+Cloud production modules are the five bounded wrappers. Native AWS, GCP, and Azure implementations
+remain private and test-only until provider authentication and service requests use a policy-owned
+transport.
 
-Add to `src/recon/mod.rs` (or `src/scanner/mod.rs`):
+## Findings and evidence
 
-```rust
-mod my_module;
-```
+The module ID on a `Finding` must match `id()`. Use severity for impact and confidence for evidence
+strength. Attach the actual observation, a specific remediation, and OWASP or CWE mappings only when
+the mapping is supported.
 
-### 3. Register the module
+Keep raw scanner observations intact. Terminal encoding changes presentation only. Agent analysis is
+a separate labeled layer and never replaces evidence or changes a scanner result.
 
-Add to the `register_modules()` function in the same `mod.rs`:
+## Tests
 
-```rust
-pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
-    vec![
-        Box::new(headers::HeadersModule),
-        Box::new(tech::TechModule),
-        Box::new(discovery::DiscoveryModule),
-        Box::new(subdomain::SubdomainModule),
-        Box::new(crawler::CrawlerModule),
-        Box::new(dns::DnsSecurityModule),
-        Box::new(my_module::MyModule),  // Add this line
-    ]
-}
-```
+A module change normally needs:
 
-That's it. The orchestrator will automatically discover, run, and report findings from the new module.
+- metadata and registry coverage;
+- clean and positive fixtures;
+- malformed and boundary inputs for parsers;
+- a loopback integration test for network behavior;
+- explicit denial tests for every new target or effect path;
+- executor-contract coverage for an external tool;
+- profile-selection and report mapping when behavior changes across public surfaces.
 
-## Step-by-Step: Adding an External Tool Wrapper
+Run repository Cargo checks sequentially. The normal final delivery verdict is
+`bash bin/gate.sh --diff`, not a hand-selected subset of tests. The focused-repair exception is
+limited by `CONSTITUTION.md` §19 and does not change module-level test requirements.
 
-### 1. Create the wrapper
-
-```rust
-use async_trait::async_trait;
-use std::time::Duration;
-
-use crate::engine::error::{Result, ScorchError};
-use crate::engine::finding::Finding;
-use crate::engine::module_trait::{ModuleCategory, ScanModule};
-use crate::engine::scan_context::ScanContext;
-use crate::engine::severity::Severity;
-use crate::runner::subprocess;
-
-#[derive(Debug)]
-pub struct NmapModule;
-
-#[async_trait]
-impl ScanModule for NmapModule {
-    fn name(&self) -> &'static str { "Nmap Port Scanner" }
-    fn id(&self) -> &'static str { "nmap" }
-    fn category(&self) -> ModuleCategory { ModuleCategory::Scanner }
-    fn description(&self) -> &'static str { "Port scanning and service detection via nmap" }
-
-    fn requires_external_tool(&self) -> bool { true }
-    fn required_tool(&self) -> Option<&str> { Some("nmap") }
-
-    async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
-        let target = ctx.target.domain.as_deref()
-            .unwrap_or(ctx.target.url.as_str());
-
-        let output = subprocess::run_tool(
-            "nmap",
-            &["-sV", "-oX", "-", target],
-            Duration::from_secs(300),
-        ).await?;
-
-        parse_nmap_output(&output.stdout, ctx.target.url.as_str())
-    }
-}
-
-fn parse_nmap_output(xml: &str, target_url: &str) -> Result<Vec<Finding>> {
-    // Parse the tool's output format into Vec<Finding>
-    let mut findings = Vec::new();
-    // ... parsing logic ...
-    Ok(findings)
-}
-```
-
-### 2. Register
-
-Same as built-in modules. The orchestrator will check tool availability before running and skip gracefully if the tool isn't installed.
-
-## Module Counts
-
-See [overview.md §2](overview.md#2-module-system) for the authoritative per-family breakdown. Headline numbers as of v2.1:
-
-| Family | Trait | Count | Location |
-|--------|-------|-------|----------|
-| DAST / Recon | `ScanModule` | 10 | `src/recon/` |
-| DAST / Scanner | `ScanModule` | 35 | `src/scanner/` |
-| DAST / Tools | `ScanModule` | 46 | `src/tools/` |
-| SAST / Built-in | `CodeModule` | 1 | `src/sast/` — `dep-audit` |
-| SAST / Tools | `CodeModule` | 21 | `src/sast_tools/` |
-| Infra | `InfraModule` | 5 | `src/infra/` (feature-gated `infra`) |
-| User Plugins | `ScanModule` | variable | Loaded from TOML files via `runner::plugin::load_plugins()` |
-
-## What the Orchestrator Provides
-
-Your module receives a `ScanContext` with:
-
-- **`ctx.target`** - Parsed target with URL, domain, port, TLS status
-- **`ctx.config`** - Full `AppConfig` (scan settings, tool paths, etc.)
-- **`ctx.http_client`** - Pre-configured `reqwest::Client` with:
-  - User-Agent set
-  - Redirect policy configured
-  - Connection pooling enabled
-  - TLS certificate validation on
-
-## Finding Best Practices
-
-1. **`module_id` must match `id()`** - This links findings to their source module
-2. **Include OWASP category** when applicable - e.g., `"A05:2021 Security Misconfiguration"`
-3. **Include CWE ID** when there's a direct mapping
-4. **Use `.with_compliance()`** when OWASP/CWE is set - auto-maps to NIST/PCI-DSS/SOC2/HIPAA via `engine::compliance`
-5. **Use `.with_http_evidence()`** for PoC replay - attach the full request/response pair via `engine::evidence::HttpEvidence`
-6. **Evidence should be raw data** - the actual header value, response snippet, or tool output
-7. **Remediation should be actionable** - specific header to add, config to change, etc.
-8. **Return empty vec for clean scans** - don't create "info" findings just to say "everything OK"
-9. **Return `Err` only for infrastructure failures** - tool not responding, network down, parse error. NOT for "no vulnerabilities found"
-
-## Conventions
-
-- Module IDs are lowercase, hyphenated: `headers`, `ssl`, `tech-fingerprint`, `dir-discovery`
-- Module names are human-readable: "HTTP Security Headers", "TLS/SSL Analysis"
-- One struct per module file
-- Helper/parser functions are private to the module file
-- Use `&'static str` for name/id/description returns (they're string literals)
+See [the extension tutorial](../tutorials/06-extending-with-custom-modules.md), [SAST](sast.md),
+[infrastructure](infra.md), and [cloud](cloud.md) for family details.

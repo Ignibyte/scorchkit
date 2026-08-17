@@ -12,14 +12,28 @@
 //! - [`correlate_interactions`] — matches interactions to correlation IDs
 
 use std::fmt;
+use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
+use tokio::process::ChildStdout;
 
 use super::error::{Result, ScorchError};
+use crate::runner::subprocess::{
+    configure_owned_process_group, resolve_tool_path, stop_owned_process, OwnedProcessGroup,
+    DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
+};
 
 /// Default timeout for polling OOB interactions after payload injection.
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Maximum accepted size of one line from the long-lived client.
+const INTERACTSH_LINE_LIMIT_BYTES: usize = 1_048_576;
+
+/// Sentinel used when process infrastructure fails before yielding an exit status.
+const TOOL_INFRASTRUCTURE_FAILURE_STATUS: i32 = -1;
 
 /// A received OOB interaction from the Interactsh server.
 ///
@@ -199,92 +213,88 @@ pub fn correlate_interactions<'a>(
 ///
 /// Handles the full lifecycle: starting the client, extracting the base URL,
 /// collecting interactions, and stopping the process. Unlike one-shot tool
-/// wrappers that use [`subprocess::run_tool`](crate::runner::subprocess::run_tool),
-/// this maintains a persistent subprocess because `interactsh-client` keeps an
+/// wrappers that use the shared bounded executor, this maintains a persistent
+/// subprocess because `interactsh-client` keeps an
 /// ephemeral session alive for receiving callbacks.
 pub struct InteractshSession {
+    /// Requested executable name or path, retained for typed errors.
+    program: String,
+    /// Canonical executable selected for the session.
+    resolved_program: PathBuf,
     /// The base callback domain (e.g., `abc123.oast.fun`).
     base_url: String,
+    /// Owned process group for the `interactsh-client` process tree.
+    process_group: OwnedProcessGroup,
     /// Handle to the running `interactsh-client` subprocess.
     child: tokio::process::Child,
-    /// Collected stdout lines that may contain interaction JSON.
-    stdout_lines: Vec<String>,
+    /// Persistent reader for interaction lines produced after startup.
+    stdout: BufReader<ChildStdout>,
+    /// Total stdout bytes consumed across startup and polling.
+    output_bytes: usize,
 }
 
 impl fmt::Debug for InteractshSession {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InteractshSession")
+            .field("program", &self.program)
             .field("base_url", &self.base_url)
+            .field("resolved_program", &self.resolved_program)
+            .field("process_group", &"<owned>")
             .field("child", &"<running>")
-            .field("collected_lines", &self.stdout_lines.len())
+            .field("stdout", &"<piped>")
+            .field("output_bytes", &self.output_bytes)
             .finish()
     }
 }
 
 impl InteractshSession {
-    /// Start a new Interactsh session by spawning `interactsh-client`.
+    /// Start a session with an explicit client program.
     ///
-    /// Launches the client with JSON output mode and reads stdout until the
-    /// base callback URL is extracted. Returns an error if the tool is not
-    /// installed or fails to produce a valid URL within the startup timeout.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ScorchError::ToolNotFound`] if `interactsh-client` is not in PATH,
-    /// [`ScorchError::ToolFailed`] if the subprocess fails to start or crashes,
-    /// [`ScorchError::ToolOutputParse`] if no base URL can be extracted from stdout,
-    /// or [`ScorchError::Cancelled`] if the startup timeout (30s) is exceeded.
-    pub async fn start() -> Result<Self> {
-        // Verify tool is installed
-        let which =
-            tokio::process::Command::new("which").arg("interactsh-client").output().await.map_err(
-                |e| ScorchError::ToolFailed {
-                    tool: "interactsh-client".to_string(),
-                    status: -1,
-                    stderr: e.to_string(),
-                },
-            )?;
-
-        if !which.status.success() {
-            return Err(ScorchError::ToolNotFound { tool: "interactsh-client".to_string() });
-        }
-
-        let mut child = tokio::process::Command::new("interactsh-client")
-            .args(["-json", "-v"])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| ScorchError::ToolFailed {
-                tool: "interactsh-client".to_string(),
-                status: -1,
-                stderr: e.to_string(),
-            })?;
+    /// This is used by the tool adapter and its local lifecycle contract so
+    /// executable selection remains observable without mutating global `PATH`.
+    pub(crate) async fn start_with_arguments(program: &str, arguments: &[String]) -> Result<Self> {
+        let resolved_program = resolve_tool_path(program)?;
+        let mut command = tokio::process::Command::new(&resolved_program);
+        command
+            .args(arguments)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        configure_owned_process_group(&mut command);
+        let mut child = command.spawn().map_err(|e| ScorchError::ToolFailed {
+            tool: program.to_string(),
+            status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
+            stderr: e.to_string(),
+        })?;
+        let mut process_group = OwnedProcessGroup::for_child(&child);
 
         let stdout = child.stdout.take().ok_or_else(|| ScorchError::ToolOutputParse {
-            tool: "interactsh-client".to_string(),
+            tool: program.to_string(),
             reason: "failed to capture stdout".to_string(),
         })?;
 
         let mut reader = tokio::io::BufReader::new(stdout);
         let mut base_url = String::new();
-        let mut collected_lines = Vec::new();
+        let mut output_bytes = 0usize;
 
         // Read lines until we find the base URL (contains .oast. or similar pattern)
         let startup_timeout = Duration::from_secs(30);
         let deadline = tokio::time::Instant::now() + startup_timeout;
 
         loop {
-            use tokio::io::AsyncBufReadExt;
-
-            let mut line = String::new();
-            let read_result = tokio::time::timeout_at(deadline, reader.read_line(&mut line)).await;
+            let remaining = DEFAULT_TOOL_OUTPUT_LIMIT_BYTES.saturating_sub(output_bytes);
+            let line_limit = remaining.min(INTERACTSH_LINE_LIMIT_BYTES);
+            let read_result =
+                tokio::time::timeout_at(deadline, read_bounded_line(&mut reader, line_limit)).await;
 
             match read_result {
-                Ok(Ok(0)) => {
+                Ok(Ok(None)) => {
                     // EOF — process exited
                     break;
                 }
-                Ok(Ok(_)) => {
+                Ok(Ok(Some((line, bytes_read)))) => {
+                    output_bytes += bytes_read;
                     let trimmed = line.trim().to_string();
 
                     // Look for the base URL in the output
@@ -292,21 +302,13 @@ impl InteractshSession {
                         base_url = url;
                         break;
                     }
-
-                    if !trimmed.is_empty() {
-                        collected_lines.push(trimmed);
-                    }
                 }
                 Ok(Err(e)) => {
-                    let _ = child.kill().await;
-                    return Err(ScorchError::ToolFailed {
-                        tool: "interactsh-client".to_string(),
-                        status: -1,
-                        stderr: e.to_string(),
-                    });
+                    let _ = stop_owned_process(&mut child, &mut process_group).await;
+                    return Err(output_read_error(program, &e));
                 }
                 Err(_) => {
-                    let _ = child.kill().await;
+                    let _ = stop_owned_process(&mut child, &mut process_group).await;
                     return Err(ScorchError::Cancelled {
                         reason: "interactsh-client did not produce a base URL within 30s"
                             .to_string(),
@@ -316,20 +318,34 @@ impl InteractshSession {
         }
 
         if base_url.is_empty() {
-            let _ = child.kill().await;
+            let _ = stop_owned_process(&mut child, &mut process_group).await;
             return Err(ScorchError::ToolOutputParse {
-                tool: "interactsh-client".to_string(),
+                tool: program.to_string(),
                 reason: "could not extract base URL from output".to_string(),
             });
         }
 
-        Ok(Self { base_url, child, stdout_lines: collected_lines })
+        Ok(Self {
+            program: program.to_string(),
+            resolved_program,
+            base_url,
+            process_group,
+            child,
+            stdout: reader,
+            output_bytes,
+        })
     }
 
     /// The base callback domain for this session.
     #[must_use]
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Canonical executable selected for this session.
+    #[must_use]
+    pub fn resolved_program(&self) -> &std::path::Path {
+        &self.resolved_program
     }
 
     /// Generate a callback URL with the given correlation ID.
@@ -345,14 +361,27 @@ impl InteractshSession {
     ///
     /// Returns an error if reading from the subprocess stdout fails.
     pub async fn poll(&mut self, timeout: Duration) -> Result<Vec<OobInteraction>> {
-        tokio::time::sleep(timeout).await;
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut interactions = Vec::new();
+        loop {
+            let remaining = DEFAULT_TOOL_OUTPUT_LIMIT_BYTES.saturating_sub(self.output_bytes);
+            let line_limit = remaining.min(INTERACTSH_LINE_LIMIT_BYTES);
 
-        let interactions = self
-            .stdout_lines
-            .iter()
-            .filter_map(|line| serde_json::from_str::<OobInteraction>(line).ok())
-            .collect();
-
+            match tokio::time::timeout_at(deadline, read_bounded_line(&mut self.stdout, line_limit))
+                .await
+            {
+                Err(_) | Ok(Ok(None)) => break,
+                Ok(Ok(Some((line, bytes_read)))) => {
+                    self.output_bytes += bytes_read;
+                    if let Ok(interaction) = serde_json::from_str::<OobInteraction>(line.trim()) {
+                        interactions.push(interaction);
+                    }
+                }
+                Ok(Err(error)) => {
+                    return Err(output_read_error(&self.program, &error));
+                }
+            }
+        }
         Ok(interactions)
     }
 
@@ -370,10 +399,71 @@ impl InteractshSession {
     /// # Errors
     ///
     /// Returns an error if the subprocess cannot be terminated.
-    pub async fn stop(mut self) -> Result<()> {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
-        Ok(())
+    pub async fn stop(&mut self) -> Result<()> {
+        stop_owned_process(&mut self.child, &mut self.process_group).await.map_err(|error| {
+            ScorchError::ToolFailed {
+                tool: self.program.clone(),
+                status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
+                stderr: error.to_string(),
+            }
+        })
+    }
+}
+
+fn output_limit_error(tool: &str) -> ScorchError {
+    ScorchError::ToolOutputLimit {
+        tool: tool.to_string(),
+        stream: "stdout",
+        limit_bytes: DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
+    }
+}
+
+fn output_read_error(tool: &str, error: &std::io::Error) -> ScorchError {
+    if error.kind() == std::io::ErrorKind::InvalidData {
+        output_limit_error(tool)
+    } else {
+        ScorchError::ToolFailed {
+            tool: tool.to_string(),
+            status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
+            stderr: error.to_string(),
+        }
+    }
+}
+
+async fn read_bounded_line<R>(
+    reader: &mut R,
+    limit_bytes: usize,
+) -> std::io::Result<Option<(String, usize)>>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut bytes = Vec::with_capacity(limit_bytes.min(8 * 1024));
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return if bytes.is_empty() {
+                Ok(None)
+            } else {
+                let byte_count = bytes.len();
+                Ok(Some((String::from_utf8_lossy(&bytes).into_owned(), byte_count)))
+            };
+        }
+
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let consumed = newline.map_or(available.len(), |index| index + 1);
+        if bytes.len().saturating_add(consumed) > limit_bytes {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "interactsh output line exceeded the configured limit",
+            ));
+        }
+        bytes.extend_from_slice(&available[..consumed]);
+        reader.consume(consumed);
+
+        if newline.is_some() {
+            let byte_count = bytes.len();
+            return Ok(Some((String::from_utf8_lossy(&bytes).into_owned(), byte_count)));
+        }
     }
 }
 
@@ -384,24 +474,58 @@ impl InteractshSession {
 fn extract_base_url(line: &str) -> Option<String> {
     let oob_patterns = [".oast.fun", ".oast.pro", ".oast.live", ".oast.me", ".interact.sh"];
 
-    for token in line.split_whitespace() {
-        let cleaned = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '-');
-        if oob_patterns.iter().any(|pattern| cleaned.ends_with(pattern)) && cleaned.contains('.') {
-            return Some(cleaned.to_string());
-        }
-    }
+    line.split(|character: char| {
+        !character.is_ascii_alphanumeric() && character != '.' && character != '-'
+    })
+    .find(|candidate| is_interactsh_domain(candidate, &oob_patterns))
+    .map(str::to_string)
+}
 
-    None
+fn is_interactsh_domain(candidate: &str, suffixes: &[&str]) -> bool {
+    suffixes.iter().any(|suffix| {
+        candidate.strip_suffix(suffix).is_some_and(|prefix| {
+            !prefix.is_empty() && prefix.split('.').all(is_valid_domain_label)
+        })
+    })
+}
+
+fn is_valid_domain_label(label: &str) -> bool {
+    !label.is_empty()
+        && !label.starts_with('-')
+        && !label.ends_with('-')
+        && label.chars().all(|character| character.is_ascii_alphanumeric() || character == '-')
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
-    /// Test suite for OOB callback infrastructure.
-    ///
-    /// Validates interaction parsing, URL generation, correlation matching,
-    /// and blind payload generation without requiring a live interactsh server.
+    #[cfg(unix)]
+    static SESSION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    #[cfg(unix)]
+    const SESSION_STARTUP_LINE: &str = "[INF] session123.oast.fun";
+    #[cfg(unix)]
+    const SESSION_INTERACTION_LINE: &str =
+        r#"{"protocol":"dns","unique-id":"session123","full-id":"ssrf-url.session123"}"#;
+
+    #[cfg(unix)]
+    async fn start_shell_fixture(script: &Path) -> Result<InteractshSession> {
+        let arguments = vec![script.to_string_lossy().into_owned()];
+        InteractshSession::start_with_arguments("/bin/sh", &arguments).await
+    }
+
+    // Test suite for OOB callback infrastructure.
+    //
+    // Validates interaction parsing, URL generation, correlation matching,
+    // and blind payload generation without requiring a live interactsh server.
+
+    #[test]
+    fn oob_process_limits_and_failure_status_are_stable() {
+        assert_eq!(DEFAULT_POLL_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(INTERACTSH_LINE_LIMIT_BYTES, 1_048_576);
+        assert_eq!(TOOL_INFRASTRUCTURE_FAILURE_STATUS, -1);
+    }
 
     /// Verify `OobInteraction` deserializes from interactsh JSON format.
     ///
@@ -469,7 +593,7 @@ mod tests {
 
     /// Verify correlation ID extraction from full interaction IDs.
     ///
-    /// The `full_id` is `{correlation_id}.{unique_id}`. Stripping the unique_id
+    /// The `full_id` is `{correlation_id}.{unique_id}`. Stripping the `unique_id`
     /// suffix recovers the correlation prefix.
     #[test]
     fn test_correlation_id_extraction() {
@@ -535,7 +659,7 @@ mod tests {
     /// Verify blind payload generation produces all 4 categories.
     ///
     /// Each call should produce: 1 SSRF, 1 XXE, 3 RCE (nslookup, curl, backtick),
-    /// 1 SQLi = 6 payloads total.
+    /// 1 `SQLi` = 6 payloads total.
     #[test]
     fn test_blind_payloads_contain_oob_url() {
         let payloads = generate_blind_payloads("abc123.oast.fun", "url");
@@ -604,8 +728,18 @@ mod tests {
             Some("session123.oast.pro".to_string())
         );
 
+        assert_eq!(
+            extract_base_url("callback=(punctuated-123.oast.live),"),
+            Some("punctuated-123.oast.live".to_string())
+        );
+
         // No OOB domain present
         assert_eq!(extract_base_url("some random log line"), None);
+        assert_eq!(extract_base_url("visit example.com for details"), None);
+        assert_eq!(extract_base_url(".oast.fun"), None);
+        assert_eq!(extract_base_url("-invalid.oast.fun"), None);
+        assert_eq!(extract_base_url("invalid-.oast.fun"), None);
+        assert_eq!(extract_base_url("invalid..label.oast.fun"), None);
     }
 
     /// Verify correlation IDs are unique per parameter name.
@@ -627,5 +761,187 @@ mod tests {
                 "Correlation ID collision: {id} appears in both url and src payloads"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn bounded_line_reader_rejects_oversized_lines() {
+        let mut reader = BufReader::new(&b"12345\n"[..]);
+        let error = read_bounded_line(&mut reader, 4)
+            .await
+            .expect_err("line must exceed the four-byte limit");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn bounded_line_reader_accepts_the_exact_limit() {
+        let mut reader = BufReader::new(&b"123\n"[..]);
+        let line = read_bounded_line(&mut reader, 4)
+            .await
+            .expect("exact-limit line should be readable")
+            .expect("fixture should contain one line");
+        assert_eq!(line, ("123\n".to_string(), 4));
+    }
+
+    #[test]
+    fn output_read_errors_distinguish_limits_from_infrastructure() {
+        let limit = std::io::Error::new(std::io::ErrorKind::InvalidData, "too large");
+        assert!(matches!(
+            output_read_error("fixture", &limit),
+            ScorchError::ToolOutputLimit {
+                tool,
+                stream: "stdout",
+                limit_bytes: DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
+            } if tool == "fixture"
+        ));
+
+        let infrastructure = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed");
+        assert!(matches!(
+            output_read_error("fixture", &infrastructure),
+            ScorchError::ToolFailed {
+                tool,
+                status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
+                stderr,
+            } if tool == "fixture" && stderr == "pipe closed"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn session_reads_interactions_produced_after_startup() {
+        let _session_guard = SESSION_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let script = directory.path().join("interactsh-fixture");
+        std::fs::write(
+            &script,
+            format!(
+                r"#!/bin/sh
+printf '%s\n' '{SESSION_STARTUP_LINE}'
+sleep 0.02
+printf '%s\n' '{SESSION_INTERACTION_LINE}'
+"
+            ),
+        )
+        .expect("write fixture client");
+
+        let mut session = start_shell_fixture(&script).await.expect("start fixture session");
+        assert_eq!(session.base_url(), "session123.oast.fun");
+        assert_eq!(
+            session.resolved_program(),
+            Path::new("/bin/sh").canonicalize().expect("canonical shell")
+        );
+        assert_eq!(session.callback_url("ssrf-url"), "ssrf-url.session123.oast.fun");
+        assert_eq!(session.output_bytes, SESSION_STARTUP_LINE.len() + 1);
+
+        let debug = format!("{session:?}");
+        assert!(debug.starts_with("InteractshSession {"));
+        assert!(debug.contains("base_url: \"session123.oast.fun\""));
+        assert!(debug.contains("child: \"<running>\""));
+        assert!(debug.contains("stdout: \"<piped>\""));
+        assert!(!debug.contains("Child {"));
+
+        let interactions = session.poll_default().await.expect("poll fixture interactions");
+        assert_eq!(interactions.len(), 1);
+        assert_eq!(interactions[0].protocol, "dns");
+        assert_eq!(interactions[0].full_id, "ssrf-url.session123");
+        assert_eq!(
+            session.output_bytes,
+            SESSION_STARTUP_LINE.len() + SESSION_INTERACTION_LINE.len() + 2
+        );
+        session.stop().await.expect("stop fixture session");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_terminates_and_reaps_a_running_client() {
+        let _session_guard = SESSION_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let script = directory.path().join("interactsh-running-fixture");
+        std::fs::write(
+            &script,
+            r"#!/bin/sh
+printf '%s\n' '[INF] running123.oast.fun'
+sleep 60
+",
+        )
+        .expect("write running fixture client");
+
+        let mut session =
+            start_shell_fixture(&script).await.expect("start running fixture session");
+        assert!(session.child.try_wait().expect("inspect running client").is_none());
+
+        session.stop().await.expect("stop running fixture session");
+        assert!(session.child.try_wait().expect("inspect stopped client").is_some());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_terminates_interactsh_descendants() {
+        let _session_guard = SESSION_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let pid_file = directory.path().join("stop-descendant.pid");
+        let script = write_descendant_fixture(directory.path(), &pid_file);
+
+        let mut session = start_shell_fixture(&script).await.expect("start descendant fixture");
+        let descendant = wait_for_fixture_pid(&pid_file).await;
+        session.stop().await.expect("stop descendant fixture");
+
+        assert_process_exits(descendant).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dropping_session_terminates_interactsh_descendants() {
+        let _session_guard = SESSION_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let pid_file = directory.path().join("drop-descendant.pid");
+        let script = write_descendant_fixture(directory.path(), &pid_file);
+
+        let session = start_shell_fixture(&script).await.expect("start descendant fixture");
+        let descendant = wait_for_fixture_pid(&pid_file).await;
+        drop(session);
+
+        assert_process_exits(descendant).await;
+    }
+
+    #[cfg(unix)]
+    fn write_descendant_fixture(directory: &Path, pid_file: &Path) -> PathBuf {
+        let script = directory.join(format!(
+            "interactsh-descendant-fixture-{}",
+            pid_file.file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("process")
+        ));
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' '[INF] descendant123.oast.fun'\nsleep 60 &\nprintf '%s' \"$!\" > '{}'\nwait\n",
+                pid_file.display()
+            ),
+        )
+        .expect("write descendant fixture client");
+        script
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_fixture_pid(path: &Path) -> rustix::process::Pid {
+        for _ in 0..100 {
+            if let Ok(raw) = std::fs::read_to_string(path) {
+                return rustix::process::Pid::from_raw(
+                    raw.parse::<i32>().expect("parse descendant PID"),
+                )
+                .expect("positive descendant PID");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("descendant PID fixture was not created at {}", path.display());
+    }
+
+    #[cfg(unix)]
+    async fn assert_process_exits(pid: rustix::process::Pid) {
+        for _ in 0..100 {
+            if matches!(rustix::process::test_kill_process(pid), Err(rustix::io::Errno::SRCH)) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("interactsh descendant {pid:?} survived process-tree cleanup");
     }
 }

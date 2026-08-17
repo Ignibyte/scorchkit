@@ -12,7 +12,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// PHP static analysis via `PHPStan`.
 #[derive(Debug)]
@@ -44,12 +43,13 @@ impl CodeModule for PhpstanModule {
 
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
-        let output = subprocess::run_tool_lenient(
-            "phpstan",
-            &["analyse", "--error-format", "json", "--no-progress", &path_str],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "phpstan",
+                &["analyse", "--error-format", "json", "--no-progress", &path_str],
+                Duration::from_mins(5),
+            )
+            .await?;
 
         Ok(parse_phpstan_output(&output.stdout))
     }
@@ -117,7 +117,7 @@ pub fn parse_phpstan_output(stdout: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Verify PHPStan JSON output is correctly parsed with file paths,
+    /// Verify `PHPStan` JSON output is correctly parsed with file paths,
     /// line numbers, messages, and optional tips as remediation.
     #[test]
     fn test_parse_phpstan_output() {

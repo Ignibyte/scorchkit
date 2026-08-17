@@ -2,6 +2,34 @@ use colored::Colorize;
 
 use crate::engine::scan_result::ScanResult;
 
+/// Escape terminal control and bidirectional-format characters in untrusted text.
+///
+/// This operates only at presentation sinks. Structured findings and evidence
+/// remain byte-for-byte unchanged for JSON, SARIF, storage, and later analysis.
+#[must_use]
+pub fn escape_terminal_text(input: &str) -> String {
+    let mut escaped = String::with_capacity(input.len());
+    for character in input.chars() {
+        if character.is_control() || is_bidirectional_format(character) {
+            escaped.extend(character.escape_unicode());
+        } else {
+            escaped.push(character);
+        }
+    }
+    escaped
+}
+
+const fn is_bidirectional_format(character: char) -> bool {
+    matches!(
+        character,
+        '\u{061c}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+    )
+}
+
 /// Print a scan report to the terminal with colors.
 pub fn print_report(result: &ScanResult) {
     println!();
@@ -43,7 +71,12 @@ pub fn print_report(result: &ScanResult) {
             if result.modules_skipped.len() == 1 { "" } else { "s" }
         );
         for (id, reason) in &result.modules_skipped {
-            println!("    {} {}: {}", "-".dimmed(), id.dimmed(), reason.dimmed());
+            println!(
+                "    {} {}: {}",
+                "-".dimmed(),
+                escape_terminal_text(id).dimmed(),
+                escape_terminal_text(reason).dimmed()
+            );
         }
     }
 
@@ -64,21 +97,21 @@ pub fn print_report(result: &ScanResult) {
                 format!("#{}", i + 1).dimmed(),
                 finding.severity.colored_str(),
                 conf_pct.to_string().dimmed(),
-                finding.title.bold()
+                escape_terminal_text(&finding.title).bold()
             );
-            println!("  {}", finding.description.dimmed());
-            println!("  Target: {}", finding.affected_target.cyan());
+            println!("  {}", escape_terminal_text(&finding.description).dimmed());
+            println!("  Target: {}", escape_terminal_text(&finding.affected_target).cyan());
 
             if let Some(evidence) = &finding.evidence {
-                println!("  Evidence: {}", evidence.yellow());
+                println!("  Evidence: {}", escape_terminal_text(evidence).yellow());
             }
 
             if let Some(remediation) = &finding.remediation {
-                println!("  Fix: {}", remediation.green());
+                println!("  Fix: {}", escape_terminal_text(remediation).green());
             }
 
             if let Some(owasp) = &finding.owasp_category {
-                print!("  {}", owasp.dimmed());
+                print!("  {}", escape_terminal_text(owasp).dimmed());
             }
             if let Some(cwe) = finding.cwe_id {
                 print!("  CWE-{}", cwe.to_string().dimmed());
@@ -91,7 +124,7 @@ pub fn print_report(result: &ScanResult) {
 
     println!();
     println!("{}", "━".repeat(60).dimmed());
-    println!("  Scan ID: {}", result.scan_id.dimmed());
+    println!("  Scan ID: {}", escape_terminal_text(&result.scan_id).dimmed());
     println!("  Duration: {}", format_duration(result.started_at, result.completed_at).dimmed());
     println!("{}", "━".repeat(60).dimmed());
     println!();
@@ -109,5 +142,28 @@ fn format_duration(
         format!("{secs}s")
     } else {
         format!("{}m {}s", secs / 60, secs % 60)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_text_escapes_c0_c1_escape_and_bidi_controls() {
+        let input = "title\u{001b}[2J\rforged\u{0007}\u{0085}\u{202e}txt\nnext";
+        let rendered = escape_terminal_text(input);
+        assert_eq!(rendered, "title\\u{1b}[2J\\u{d}forged\\u{7}\\u{85}\\u{202e}txt\\u{a}next");
+        assert!(!rendered.chars().any(char::is_control));
+        assert!(!rendered.chars().any(is_bidirectional_format));
+        assert_eq!(input.as_bytes()[5], 0x1b, "the source evidence must remain unchanged");
+    }
+
+    #[test]
+    fn ordinary_terminal_text_is_preserved() {
+        assert_eq!(
+            escape_terminal_text("SQL injection at /search?q=1"),
+            "SQL injection at /search?q=1"
+        );
     }
 }

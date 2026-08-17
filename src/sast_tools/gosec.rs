@@ -13,7 +13,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Go security analysis via Gosec.
 #[derive(Debug)]
@@ -46,12 +45,13 @@ impl CodeModule for GosecModule {
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_arg = format!("{}/...", ctx.path.display());
         // gosec exits 1 when issues are found — that's normal, not an error.
-        let output = subprocess::run_tool_lenient(
-            "gosec",
-            &["-fmt", "json", "-quiet", &path_arg],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "gosec",
+                &["-fmt", "json", "-quiet", &path_arg],
+                Duration::from_mins(2),
+            )
+            .await?;
 
         Ok(parse_gosec_output(&output.stdout))
     }

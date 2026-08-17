@@ -14,7 +14,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Command-injection scanner via commix.
 #[derive(Debug)]
@@ -43,12 +42,13 @@ impl ScanModule for CommixModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let url = ctx.target.url.as_str();
-        let output = subprocess::run_tool_lenient(
-            "commix",
-            &["-u", url, "--batch", "--skip-waf"],
-            Duration::from_secs(180),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "commix",
+                &["-u", url, "--batch", "--skip-waf"],
+                Duration::from_mins(3),
+            )
+            .await?;
         Ok(parse_commix_output(&output.stdout, url))
     }
 }

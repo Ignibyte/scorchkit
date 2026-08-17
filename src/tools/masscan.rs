@@ -19,7 +19,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Mass TCP port scanner via masscan.
 #[derive(Debug)]
@@ -53,12 +52,13 @@ impl ScanModule for MasscanModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let host = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
-        let output = subprocess::run_tool(
-            "masscan",
-            &[host, "-p0-1023", "--rate", "1000", "-oG", "-"],
-            Duration::from_secs(180),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "masscan",
+                &[host, "-p0-1023", "--rate", "1000", "-oG", "-"],
+                Duration::from_mins(3),
+            )
+            .await?;
         Ok(parse_masscan_output(&output.stdout, ctx.target.url.as_str(), host))
     }
 }

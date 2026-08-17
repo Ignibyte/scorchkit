@@ -1,220 +1,161 @@
-# 06 — Extending with custom modules
+# 06 — Extend ScorchKit with a Rust module
 
-**Goal:** implement a new `ScanModule` from scratch. Use the existing `examples/custom_scanner` as your starting point.
+This tutorial adds a trusted in-process module. ScorchKit does not expose a stable binary plugin ABI,
+and Rust extensions run with the privileges of the host process. Review extension code as part of
+ScorchKit itself.
 
-**Time:** ~45 minutes for the basic walkthrough.
+The complete public contract is in [the Rust module extension API](../plugin-sdk.md). The repository
+also contains two standalone crates that compile against the current checkout:
 
-**You'll need:** Rust 1.70+. ScorchKit cloned. Comfort reading async Rust.
+- `examples/custom_scanner` for DAST;
+- `examples/custom_code_scanner` for SAST.
 
----
+## Choose the module family
 
-## 1. The trait
+| Trait | Context | Intended work |
+|---|---|---|
+| `ScanModule` | `ScanContext` | URL-based DAST and reconnaissance |
+| `CodeModule` | `CodeContext` | local static analysis and dependency checks |
+| `InfraModule` | `InfraContext` | host, address, protocol, and network checks |
+| `CloudModule` | `CloudContext` | cloud posture checks |
 
-Every DAST module implements `ScanModule`:
+The infrastructure and cloud traits require their matching Cargo features.
 
-```rust
-#[async_trait]
-pub trait ScanModule: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn id(&self) -> &'static str;
-    fn category(&self) -> ModuleCategory;
-    fn description(&self) -> &'static str;
+## Implement a small DAST module
 
-    async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>>;
+The following module reports an `X-Powered-By` header that contains a version. It uses the HTTP
+client supplied by the context. That client enforces the engagement for the URL, redirects,
+hostname, and every resolved address.
 
-    // Optional — defaults provided
-    fn requires_external_tool(&self) -> bool { false }
-    fn required_tool(&self) -> Option<&str> { None }
-}
-```
-
-For SAST, swap in `CodeModule` + `CodeContext`. For Infra, `InfraModule` + `InfraContext` (gated `--features infra`).
-
-## 2. The example crate
-
-`examples/custom_scanner/` is a separate cargo crate that depends on `scorchkit` as a library. It implements `DebugMarkerScanner`, a minimal scanner that flags any response body containing the word "debug". A sibling crate, `examples/custom_code_scanner/`, shows the same shape for SAST via the `CodeModule` trait.
-
-Read it first:
-
-```bash
-cat examples/custom_scanner/src/lib.rs
-```
-
-The shape:
-
-```rust
+```rust,no_run
 use async_trait::async_trait;
 use scorchkit::prelude::*;
 
-#[derive(Debug, Default)]
-pub struct DebugMarkerScanner;
+#[derive(Debug)]
+struct PoweredByVersion;
 
 #[async_trait]
-impl ScanModule for DebugMarkerScanner {
-    fn name(&self) -> &'static str { "Debug Marker Scanner" }
-    fn id(&self) -> &'static str { "debug-marker" }
+impl ScanModule for PoweredByVersion {
+    fn name(&self) -> &str { "X-Powered-By version" }
+    fn id(&self) -> &str { "powered-by-version" }
     fn category(&self) -> ModuleCategory { ModuleCategory::Scanner }
-    fn description(&self) -> &'static str {
-        "Example plugin: flags responses containing the word 'debug'"
-    }
+    fn description(&self) -> &str { "Find a version disclosed by X-Powered-By" }
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
-        let body = ctx.http_client
-            .get(ctx.target.url.as_str())
-            .send().await
-            .map_err(|e| ScorchError::Config(format!("request failed: {e}")))?
-            .text().await
-            .map_err(|e| ScorchError::Config(format!("body read failed: {e}")))?;
-
-        if !body.to_lowercase().contains("debug") {
-            return Ok(Vec::new());
-        }
-        Ok(vec![Finding::new(
-            "debug-marker",
-            Severity::Low,
-            "Debug marker detected in response",
-            "Response body contains the word 'debug'.",
-            ctx.target.url.as_str(),
-        ).with_confidence(0.6)])
-    }
-}
-```
-
-The crate is a library only — there's no `demo_scan` binary. To exercise it, either build the library and the module's unit tests (`cargo test -p custom_scanner`), or wire it into your own binary crate that constructs an `Orchestrator` and registers it (see §4 below).
-
-## 3. Build your own
-
-Let's make a real one. We'll write a module that flags any HTTP response whose `X-Powered-By` header reveals a runtime version.
-
-### Skeleton
-
-```rust
-use async_trait::async_trait;
-use scorchkit::prelude::*;
-use scorchkit::engine::error::Result;
-use scorchkit::engine::module_trait::{ModuleCategory, ScanModule};
-use scorchkit::engine::scan_context::ScanContext;
-
-pub struct PoweredByVersionLeak;
-
-#[async_trait]
-impl ScanModule for PoweredByVersionLeak {
-    fn name(&self) -> &'static str { "X-Powered-By Version Leak" }
-    fn id(&self) -> &'static str { "powered_by_leak" }
-    fn category(&self) -> ModuleCategory { ModuleCategory::Scanner }
-    fn description(&self) -> &'static str {
-        "Detects X-Powered-By headers that disclose runtime version info"
-    }
-
-    async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
-        let resp = ctx.http_client
-            .get(ctx.target.url.as_str())
+        let response = ctx
+            .http_client()
+            .get(ctx.target.url.clone())
             .send()
             .await
-            .map_err(|e| scorchkit::ScorchError::Http {
+            .map_err(|source| ScorchError::Http {
                 url: ctx.target.url.to_string(),
-                source: e,
+                source,
             })?;
 
-        let header = resp.headers()
+        let Some(value) = response
+            .headers()
             .get("x-powered-by")
-            .and_then(|h| h.to_str().ok())
-            .map(str::to_string);
-
-        let Some(value) = header else {
+            .and_then(|header| header.to_str().ok())
+        else {
             return Ok(Vec::new());
         };
 
-        if !contains_version(&value) {
+        if !contains_version(value) {
             return Ok(Vec::new());
         }
 
         Ok(vec![Finding::new(
-            "powered_by_leak",
+            self.id(),
             Severity::Low,
-            "X-Powered-By header discloses runtime version",
-            format!("Header: X-Powered-By: {value}"),
+            "X-Powered-By discloses a runtime version",
+            "The response identifies a runtime and version.",
             ctx.target.url.as_str(),
         )
         .with_evidence(format!("X-Powered-By: {value}"))
-        .with_remediation("Remove the X-Powered-By header in your reverse proxy / app server config.")
-        .with_owasp("A05:2021 Security Misconfiguration")
+        .with_remediation("Remove the X-Powered-By header at the application or proxy.")
         .with_cwe(200)
         .with_confidence(0.9)])
     }
 }
 
-/// Pure helper — easy to unit test.
-fn contains_version(header_value: &str) -> bool {
-    header_value.chars().any(|c| c.is_ascii_digit())
-        && header_value.contains('.')
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn detects_version_in_header() {
-        assert!(contains_version("PHP/8.1.0"));
-        assert!(contains_version("Express 4.17"));
-        assert!(!contains_version("PHP"));
-        assert!(!contains_version(""));
-    }
+fn contains_version(value: &str) -> bool {
+    value.contains('.') && value.chars().any(|character| character.is_ascii_digit())
 }
 ```
 
-### Pattern notes
+Return an empty vector when the module ran and found nothing. Return an error when the module could
+not complete its check. Do not turn timeouts, policy denials, missing tools, or parse failures into
+findings.
 
-- **Pure helpers are the load-bearing testable units.** `contains_version` has no async, no I/O, no context — just `&str → bool`. Cover it with unit tests; the `run` method then delegates.
-- **Error handling.** `?` over `ScorchError`. Return `Ok(Vec::new())` for "no findings" — never `Err`. `Err` means infrastructure failure (network down, parse failed); the orchestrator logs it and continues with other modules.
-- **`Finding::new(...)` builder.** Always specify module_id, severity, title, description, affected. Add evidence, remediation, OWASP/CWE, confidence via `.with_*()` methods.
-- **`Severity::Info` is for observations, not bugs.** Discovered something interesting that isn't itself a defect? Use Info.
+## Register the module
 
-## 4. Wire it into the project
+Production contexts come from `Engine`; their constructors are intentionally private. Create an
+engine with an explicit engagement, ask it for a context, then add the module to an orchestrator:
 
-If you're upstreaming the module:
+```rust,no_run
+use std::sync::Arc;
 
-1. Drop the file at `src/scanner/powered_by_leak.rs` (or `src/recon/...` if it's recon-style).
-2. Register it in the appropriate `mod.rs`:
-   ```rust
-   pub mod powered_by_leak;
-   ```
-3. Add to `register_modules()`:
-   ```rust
-   Box::new(powered_by_leak::PoweredByVersionLeak),
-   ```
-4. Add a doc at `docs/modules/powered-by-leak.md`.
-5. Open a PR.
+use scorchkit::config::AppConfig;
+use scorchkit::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
+use scorchkit::engine::scope::ScopeRule;
+use scorchkit::facade::Engine;
+use scorchkit::runner::orchestrator::Orchestrator;
 
-If it's a one-off for your own use, keep it in a separate crate that depends on `scorchkit` (the way `examples/custom_scanner` does). At the moment, `Orchestrator` (DAST) only exposes `register_default_modules` + filter APIs — not a public `add_module` — so the cleanest path for out-of-tree use is to drive your module directly from your own binary:
-
-```rust
-let ctx = ScanContext::new(target, http_client, config);
-let module = PoweredByVersionLeak;
-let findings = module.run(&ctx).await?;
+# use async_trait::async_trait;
+# use scorchkit::prelude::*;
+# #[derive(Debug)] struct PoweredByVersion;
+# #[async_trait] impl ScanModule for PoweredByVersion {
+# fn name(&self) -> &str { "fixture" }
+# fn id(&self) -> &str { "powered-by-version" }
+# fn category(&self) -> ModuleCategory { ModuleCategory::Scanner }
+# fn description(&self) -> &str { "fixture" }
+# async fn run(&self, _ctx: &ScanContext) -> Result<Vec<Finding>> { Ok(Vec::new()) }
+# }
+# async fn example() -> scorchkit::Result<()> {
+let policy = EngagementPolicy::default()
+    .allow_scope(ScopeRule::parse("127.0.0.1").expect("loopback scope"))
+    .allow_capability(Capability::DastScan)
+    .allow_effect(EffectClass::ActiveSafe);
+let engine = Engine::for_engagement(
+    Arc::new(AppConfig::default()),
+    Arc::new(Engagement::new("local extension test", policy)),
+);
+let context = engine.dast_context("http://127.0.0.1:8080", "quick")?;
+let mut runner = Orchestrator::new(context);
+runner.add_module(Box::new(PoweredByVersion));
+let result = runner.run(true).await?;
+# let _ = result;
+# Ok(())
+# }
 ```
 
-If you need full orchestration (concurrency, progress, result aggregation) for an out-of-tree module, the `InfraOrchestrator` does expose `add_module` — or upstream the module via the steps above. Tracking a public `Orchestrator::add_module` extension point is a known gap.
+Call `register_default_modules()` before `add_module()` when the custom module should run with the
+built-in registry. `CodeOrchestrator`, `InfraOrchestrator`, and `CloudOrchestrator` use the same
+`add_module` pattern.
 
-## 5. Constraints to respect
+## Keep effects inside the context
 
-- **No `unwrap()` / `expect()` in production code.** Project clippy denies them. Use `?`, `let-else`, `ok_or`, `is_ok_and`.
-- **Async, not threads.** Tokio runtime is already running; spawn tasks via `tokio::spawn` if you need concurrency.
-- **Respect the proxy and TLS config.** Use `ctx.http_client` rather than building your own — it's already configured with the operator's proxy, auth, TLS, cookie jar settings.
-- **Don't burn the rate budget.** If your module makes many HTTP calls, throttle yourself or document the cost in the module description.
+- Use `ScanContext::http_client()` for target HTTP.
+- Use `ScanContext::run_tool` or `run_tool_lenient` for a bounded external program.
+- Keep SAST file access under the canonical `CodeContext::path`.
+- Do not create a raw HTTP client, resolver, socket, subprocess, credential loader, or temporary
+  directory inside a module. Add a reviewed context-owned seam when a required effect is missing.
+- Keep scanner evidence separate from agent analysis.
 
-## 6. Where to go next
+## Test the extension
 
-- **[07 — Extending CVE backends](07-extending-cve-backends.md)** — same shape, but for `CveLookup` impls
-- The `engine::` module — read it for the canonical types every module touches
+Cover metadata, clean input, positive input, parsing failures, and bounds. Network tests use a
+loopback server and a matching engagement. Tool-backed tests inject an executor and assert the
+program, arguments, timeout, output limit, and exit policy.
 
----
+The two shipped examples are executable compatibility checks:
 
-## Things that go wrong
+```bash
+cargo test --manifest-path examples/custom_scanner/Cargo.toml
+cargo test --manifest-path examples/custom_code_scanner/Cargo.toml
+```
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `cargo build` fails on your custom crate with "trait method not found" | Imported the wrong `ScanModule` (e.g. trait moved between minor versions) | `cargo doc --open --package scorchkit` to confirm the API; pin to a specific scorchkit version in your Cargo.toml |
-| Your module never runs in the orchestrator | Forgot to register it in `register_modules()` | Add `Box::new(YourModule)` to the vec |
-| Findings show with `module_id = "?"` | Used a different string in `id()` and `Finding::new(...)` | Make them match — convention is to use the same const string |
+For an in-tree module, add it to the appropriate registry, update the module documentation, and add
+or update the source-backed registry census.
+
+Next: [extend a CVE backend](07-extending-cve-backends.md).

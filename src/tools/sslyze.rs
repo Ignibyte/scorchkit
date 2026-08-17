@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Comprehensive TLS/SSL analysis via sslyze.
 #[derive(Debug)]
@@ -48,12 +47,9 @@ impl ScanModule for SslyzeModule {
             format!("{target}:{}", ctx.target.port)
         };
 
-        let output = subprocess::run_tool(
-            "sslyze",
-            &["--json_out=-", &target_with_port],
-            Duration::from_secs(300),
-        )
-        .await?;
+        let output = ctx
+            .run_tool("sslyze", &["--json_out=-", &target_with_port], Duration::from_mins(5))
+            .await?;
 
         Ok(parse_sslyze_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -328,7 +324,7 @@ fn parse_sslyze_text(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for sslyze output parser (JSON and text fallback).
+    // Tests for sslyze output parser (JSON and text fallback).
 
     /// Verify that `parse_sslyze_output` correctly extracts findings from
     /// sslyze JSON output including deprecated protocols and Heartbleed.

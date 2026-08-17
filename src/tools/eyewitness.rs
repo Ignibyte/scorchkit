@@ -15,7 +15,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Visual recon screenshot capture via `EyeWitness`.
 #[derive(Debug)]
@@ -57,12 +56,13 @@ impl ScanModule for EyewitnessModule {
         };
         let in_path = tmp.path().to_string_lossy().to_string();
         let out_path = out_dir.path().to_string_lossy().to_string();
-        let _output = subprocess::run_tool_lenient(
-            "eyewitness",
-            &["-f", &in_path, "-d", &out_path, "--no-prompt", "--web"],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let _output = ctx
+            .run_tool_lenient(
+                "eyewitness",
+                &["-f", &in_path, "-d", &out_path, "--no-prompt", "--web"],
+                Duration::from_mins(2),
+            )
+            .await?;
         Ok(parse_eyewitness_output(&out_path, url))
     }
 }

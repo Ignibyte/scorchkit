@@ -208,7 +208,7 @@ async fn test_query_param_pollution(
 mod tests {
     use super::*;
 
-    /// Tests for the prototype pollution scanner module.
+    // Tests for the prototype pollution scanner module.
 
     /// Verify module metadata.
     #[test]

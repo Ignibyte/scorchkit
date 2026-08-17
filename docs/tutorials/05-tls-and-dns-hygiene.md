@@ -10,7 +10,7 @@
 
 ## 1. Why these two modules
 
-Most pentest tooling goes deep on web-app vulnerabilities and treats infrastructure as a checklist of port-scanner output. TLS and DNS hygiene is where many real-world incidents start (see: dangling DNS, expired certs on internal services, missing CAA leading to mis-issued certs). `tls_infra` and `dns_infra` are quick, low-noise probes that catch the common slip-ups.
+Most pentest tooling goes deep on web-app vulnerabilities and treats infrastructure as a checklist of port-scanner output. TLS and DNS hygiene is where many real-world incidents start (see: dangling DNS, expired certs on internal services, missing CAA leading to misissued certs). `tls_infra` and `dns_infra` are quick, low-noise probes that catch the common slip-ups.
 
 ## 2. Run both probes
 

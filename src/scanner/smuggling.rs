@@ -293,8 +293,8 @@ async fn test_cl_handling(
 mod tests {
     use super::*;
 
-    /// Tests for the HTTP request smuggling scanner module's pure helper
-    /// functions and constant data integrity.
+    // Tests for the HTTP request smuggling scanner module's pure helper
+    // functions and constant data integrity.
 
     /// Verify that the module metadata returns correct values.
     #[test]

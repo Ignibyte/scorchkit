@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Exploit validation via Metasploit auxiliary scanners.
 #[derive(Debug)]
@@ -47,12 +46,8 @@ impl ScanModule for MetasploitModule {
             ssl = if ctx.target.is_https { "true" } else { "false" },
         );
 
-        let output = subprocess::run_tool(
-            "msfconsole",
-            &["-q", "-x", &rc_commands],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output =
+            ctx.run_tool("msfconsole", &["-q", "-x", &rc_commands], Duration::from_mins(2)).await?;
 
         Ok(parse_msf_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -110,7 +105,7 @@ fn parse_msf_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for Metasploit console output parser.
+    // Tests for Metasploit console output parser.
 
     /// Verify that `parse_msf_output` correctly extracts positive results
     /// and informational lines from Metasploit output.

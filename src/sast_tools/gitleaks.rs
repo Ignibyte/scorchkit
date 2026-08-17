@@ -12,7 +12,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Secret detection via Gitleaks.
 #[derive(Debug)]
@@ -43,21 +42,22 @@ impl CodeModule for GitleaksModule {
         let path_str = ctx.path.display().to_string();
         // gitleaks exits 1 when leaks found — that's normal, not an error.
         // Use run_tool_lenient to capture stdout regardless of exit code.
-        let output = subprocess::run_tool_lenient(
-            "gitleaks",
-            &[
-                "detect",
-                "--source",
-                &path_str,
-                "--report-format",
-                "json",
-                "--report-path",
-                "/dev/stdout",
-                "--no-git",
-            ],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient(
+                "gitleaks",
+                &[
+                    "detect",
+                    "--source",
+                    &path_str,
+                    "--report-format",
+                    "json",
+                    "--report-path",
+                    "/dev/stdout",
+                    "--no-git",
+                ],
+                Duration::from_mins(2),
+            )
+            .await?;
 
         Ok(parse_gitleaks_output(&output.stdout))
     }

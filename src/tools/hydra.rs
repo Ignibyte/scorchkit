@@ -3,7 +3,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 use async_trait::async_trait;
 use std::time::Duration;
 
@@ -37,12 +36,13 @@ impl ScanModule for HydraModule {
         let proto = if ctx.target.is_https { "https-get" } else { "http-get" };
 
         // Only test a very small set of default credentials
-        let output = subprocess::run_tool(
-            "hydra",
-            &["-l", "admin", "-p", "admin", "-s", &port, "-f", target, proto, "/admin"],
-            Duration::from_secs(30),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "hydra",
+                &["-l", "admin", "-p", "admin", "-s", &port, "-f", target, proto, "/admin"],
+                Duration::from_secs(30),
+            )
+            .await?;
 
         Ok(parse_hydra_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -75,7 +75,7 @@ fn parse_hydra_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for Hydra console output parser.
+    // Tests for Hydra console output parser.
 
     /// Verify that `parse_hydra_output` correctly extracts credential
     /// findings from Hydra output containing login/password pairs.

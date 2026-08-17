@@ -13,7 +13,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// URL parameter mining via `ParamSpider`.
 #[derive(Debug)]
@@ -48,12 +47,8 @@ impl ScanModule for ParamSpiderModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let domain = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
 
-        let output = subprocess::run_tool(
-            "paramspider",
-            &["-d", domain, "--quiet"],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output =
+            ctx.run_tool("paramspider", &["-d", domain, "--quiet"], Duration::from_mins(2)).await?;
 
         Ok(parse_paramspider_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -112,7 +107,7 @@ fn parse_paramspider_output(stdout: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Verify ParamSpider output parsing filters for parameterized URLs.
+    /// Verify `ParamSpider` output parsing filters for parameterized URLs.
     #[test]
     fn test_parse_paramspider_output() {
         let output = "https://example.com/search?q=FUZZ\n\

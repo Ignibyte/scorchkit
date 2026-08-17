@@ -454,13 +454,13 @@ remediation: Restrict access
     #[test]
     fn test_load_rules_from_dir() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let yaml = r#"
+        let yaml = r"
 id: test-rule
 name: Test Rule
 severity: low
 matchers:
   status: 200
-"#;
+";
         std::fs::write(dir.path().join("test.yaml"), yaml).expect("write");
         std::fs::write(dir.path().join("README.md"), "# Notes").expect("write"); // non-yaml
 

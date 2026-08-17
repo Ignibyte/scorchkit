@@ -12,7 +12,7 @@
 //!    logged at `warn!` and the sub-backend contributes an empty `Vec`
 //!    to the merge. The aggregate call always returns `Ok`.
 //! 3. **Dedup by canonical CVE ID.** After merging, records are
-//!    collapsed via [`canonical_cve_key`] — prefer a `CVE-YYYY-NNNN`
+//!    collapsed via `canonical_cve_key` — prefer a `CVE-YYYY-NNNN`
 //!    `id`, else search [`CveRecord::aliases`] for one, else fall back
 //!    to the raw `id`. On collision, the record with the **higher
 //!    `cvss_score`** wins (`None < Some(0.0)`); equal scores defer to
@@ -150,7 +150,7 @@ mod tests {
     use crate::engine::severity::Severity;
 
     /// Convenience builder for fixture records.
-    fn make_record(id: &str, score: Option<f64>, aliases: Vec<&str>) -> CveRecord {
+    fn make_record(id: &str, score: Option<f64>, aliases: &[&str]) -> CveRecord {
         let severity = score.map_or(Severity::Info, severity_from_cvss);
         CveRecord {
             id: id.to_string(),
@@ -163,7 +163,7 @@ mod tests {
         }
     }
 
-    /// Fixture CveLookup wrapping a static Vec<CveRecord>. Calls
+    /// Fixture `CveLookup` wrapping a static Vec<CveRecord>. Calls
     /// `query(cpe)` with no CPE filtering — returns the stored records
     /// unconditionally.
     struct FixtureLookup {
@@ -177,7 +177,7 @@ mod tests {
         }
     }
 
-    /// CveLookup that always returns Err — used to verify per-source
+    /// `CveLookup` that always returns Err — used to verify per-source
     /// error isolation.
     struct FailingLookup;
 
@@ -192,19 +192,19 @@ mod tests {
 
     #[test]
     fn canonical_key_prefers_cve_prefix() {
-        let rec = make_record("CVE-2024-1", Some(7.5), vec![]);
+        let rec = make_record("CVE-2024-1", Some(7.5), &[]);
         assert_eq!(canonical_cve_key(&rec), "CVE-2024-1");
     }
 
     #[test]
     fn canonical_key_uses_alias_cve_id() {
-        let rec = make_record("GHSA-abcd-efgh-ijkl", Some(7.5), vec!["CVE-2024-1"]);
+        let rec = make_record("GHSA-abcd-efgh-ijkl", Some(7.5), &["CVE-2024-1"]);
         assert_eq!(canonical_cve_key(&rec), "CVE-2024-1");
     }
 
     #[test]
     fn canonical_key_falls_back_to_raw_id() {
-        let rec = make_record("GHSA-abcd-efgh-ijkl", Some(7.5), vec![]);
+        let rec = make_record("GHSA-abcd-efgh-ijkl", Some(7.5), &[]);
         assert_eq!(canonical_cve_key(&rec), "GHSA-abcd-efgh-ijkl");
     }
 
@@ -212,7 +212,7 @@ mod tests {
     fn canonical_key_skips_non_cve_aliases() {
         // An alias not starting with `CVE-` should be ignored; the
         // raw id is returned instead.
-        let rec = make_record("GHSA-abcd", Some(7.5), vec!["PYSEC-2024-1", "OSV-2024-5"]);
+        let rec = make_record("GHSA-abcd", Some(7.5), &["PYSEC-2024-1", "OSV-2024-5"]);
         assert_eq!(canonical_cve_key(&rec), "GHSA-abcd");
     }
 
@@ -226,9 +226,9 @@ mod tests {
 
     #[test]
     fn dedupe_handles_no_duplicates() {
-        let a = make_record("CVE-2024-1", Some(7.5), vec![]);
-        let b = make_record("CVE-2024-2", Some(8.0), vec![]);
-        let c = make_record("GHSA-xxxx", Some(5.0), vec![]);
+        let a = make_record("CVE-2024-1", Some(7.5), &[]);
+        let b = make_record("CVE-2024-2", Some(8.0), &[]);
+        let c = make_record("GHSA-xxxx", Some(5.0), &[]);
         let out = dedupe_by_canonical_id(vec![a.clone(), b.clone(), c.clone()]);
         assert_eq!(out.len(), 3);
         assert_eq!(out[0].id, a.id);
@@ -238,8 +238,8 @@ mod tests {
 
     #[test]
     fn dedupe_preserves_highest_cvss() {
-        let lower = make_record("CVE-2024-1", Some(7.5), vec![]);
-        let higher = make_record("CVE-2024-1", Some(9.0), vec![]);
+        let lower = make_record("CVE-2024-1", Some(7.5), &[]);
+        let higher = make_record("CVE-2024-1", Some(9.0), &[]);
         // Insert lower first, higher second — dedup should swap in higher.
         let out = dedupe_by_canonical_id(vec![lower, higher.clone()]);
         assert_eq!(out.len(), 1);
@@ -274,9 +274,9 @@ mod tests {
     #[test]
     fn dedupe_collapses_across_cve_and_ghsa_via_alias() {
         // NVD-style: id = CVE-2024-1, no aliases.
-        let nvd = make_record("CVE-2024-1", Some(7.5), vec![]);
+        let nvd = make_record("CVE-2024-1", Some(7.5), &[]);
         // OSV-style: id = GHSA-..., aliases include CVE-2024-1.
-        let osv = make_record("GHSA-abcd", Some(9.0), vec!["CVE-2024-1"]);
+        let osv = make_record("GHSA-abcd", Some(9.0), &["CVE-2024-1"]);
         let out = dedupe_by_canonical_id(vec![nvd, osv.clone()]);
         assert_eq!(out.len(), 1, "records with the same canonical key must collapse");
         // Higher CVSS (OSV) wins.
@@ -285,8 +285,8 @@ mod tests {
 
     #[test]
     fn dedupe_none_score_loses_to_numeric() {
-        let nvd_none = make_record("CVE-2024-1", None, vec![]);
-        let osv_numeric = make_record("CVE-2024-1", Some(5.0), vec![]);
+        let nvd_none = make_record("CVE-2024-1", None, &[]);
+        let osv_numeric = make_record("CVE-2024-1", Some(5.0), &[]);
         let out = dedupe_by_canonical_id(vec![nvd_none, osv_numeric.clone()]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].cvss_score, osv_numeric.cvss_score);
@@ -296,22 +296,21 @@ mod tests {
 
     #[tokio::test]
     async fn multi_cve_lookup_merges_from_multiple_sources() {
-        let a = FixtureLookup { records: vec![make_record("CVE-2024-1", Some(7.5), vec![])] };
-        let b = FixtureLookup { records: vec![make_record("CVE-2024-2", Some(8.0), vec![])] };
+        let a = FixtureLookup { records: vec![make_record("CVE-2024-1", Some(7.5), &[])] };
+        let b = FixtureLookup { records: vec![make_record("CVE-2024-2", Some(8.0), &[])] };
         let multi = MultiCveLookup::new(vec![Box::new(a), Box::new(b)]);
         let out = multi.query("cpe:2.3:*:*:*:*:*:*:*:*:*:*:*").await.expect("query");
         let ids: Vec<&str> = out.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, vec!["CVE-2024-1", "CVE-2024-2"]);
+        assert_eq!(ids, &["CVE-2024-1", "CVE-2024-2"]);
     }
 
     #[tokio::test]
     async fn multi_cve_lookup_dedupes_cross_backend_overlap() {
         // NVD returns CVE-2024-1 with CVSS 7.5.
         // OSV returns GHSA-abcd with CVSS 9.0 aliased to CVE-2024-1.
-        let nvd = FixtureLookup { records: vec![make_record("CVE-2024-1", Some(7.5), vec![])] };
-        let osv = FixtureLookup {
-            records: vec![make_record("GHSA-abcd", Some(9.0), vec!["CVE-2024-1"])],
-        };
+        let nvd = FixtureLookup { records: vec![make_record("CVE-2024-1", Some(7.5), &[])] };
+        let osv =
+            FixtureLookup { records: vec![make_record("GHSA-abcd", Some(9.0), &["CVE-2024-1"])] };
         let multi = MultiCveLookup::new(vec![Box::new(nvd), Box::new(osv)]);
         let out = multi.query("cpe:2.3:*:*:*:*:*:*:*:*:*:*:*").await.expect("query");
         assert_eq!(out.len(), 1, "overlap must collapse to one record");
@@ -322,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn multi_cve_lookup_isolates_per_source_errors() {
         let fail = FailingLookup;
-        let ok = FixtureLookup { records: vec![make_record("CVE-2024-1", Some(7.5), vec![])] };
+        let ok = FixtureLookup { records: vec![make_record("CVE-2024-1", Some(7.5), &[])] };
         let multi = MultiCveLookup::new(vec![Box::new(fail), Box::new(ok)]);
         let out = multi.query("cpe:2.3:*:*:*:*:*:*:*:*:*:*:*").await.expect("aggregate still Ok");
         assert_eq!(out.len(), 1, "only the working source contributes");

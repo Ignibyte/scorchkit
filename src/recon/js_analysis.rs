@@ -211,7 +211,7 @@ fn check_source_map(content: &str, js_url: &str, findings: &mut Vec<Finding>) {
 mod tests {
     use super::*;
 
-    /// Tests for the JS analysis recon module.
+    // Tests for the JS analysis recon module.
 
     /// Verify module metadata.
     #[test]

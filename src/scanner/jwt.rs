@@ -338,7 +338,7 @@ fn decode_base64url(input: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Unit tests for JWT analysis helper functions.
+    // Unit tests for JWT analysis helper functions.
 
     // Helper: build a minimal JWT with the given header and payload JSON.
     // Signature is a placeholder (not cryptographically valid).
@@ -355,7 +355,7 @@ mod tests {
     fn test_is_jwt_valid() {
         // eyJhbGciOiJIUzI1NiJ9 is base64url for {"alg":"HS256"}
         // nosemgrep: hardcoded-secret — test fixture, not a real credential
-        let token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123";
+        let token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123"; // gitleaks:allow -- generated test JWT
 
         assert!(is_jwt(token));
     }

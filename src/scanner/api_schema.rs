@@ -109,7 +109,7 @@ const SWAGGER_PATHS: &[&str] = &[
 mod tests {
     use super::*;
 
-    /// Unit tests for the API schema discovery module's pure helper functions and constants.
+    // Unit tests for the API schema discovery module's pure helper functions and constants.
 
     /// Verify that `is_swagger_spec` correctly identifies OpenAPI/Swagger JSON bodies
     /// and rejects non-spec content.
@@ -132,7 +132,7 @@ mod tests {
         assert!(!is_swagger_spec(incomplete));
     }
 
-    /// Verify that `count_api_endpoints` correctly counts paths in a valid OpenAPI spec
+    /// Verify that `count_api_endpoints` correctly counts paths in a valid `OpenAPI` spec
     /// and returns zero for invalid or empty input.
     #[test]
     fn test_count_api_endpoints() {

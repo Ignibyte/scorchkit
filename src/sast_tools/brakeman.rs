@@ -14,7 +14,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Ruby on Rails SAST via brakeman.
 #[derive(Debug)]
@@ -46,12 +45,9 @@ impl CodeModule for BrakemanModule {
 
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
-        let output = subprocess::run_tool_lenient(
-            "brakeman",
-            &["-f", "json", "-q", &path_str],
-            Duration::from_secs(180),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient("brakeman", &["-f", "json", "-q", &path_str], Duration::from_mins(3))
+            .await?;
         Ok(parse_brakeman_output(&output.stdout))
     }
 }

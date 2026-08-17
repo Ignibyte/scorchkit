@@ -1,7 +1,7 @@
 //! Agent configuration for autonomous pentest operations.
 //!
 //! Defines safety constraints, authorized targets, and operational
-//! parameters for `ScorchKit` Agent SDK integrations.
+//! parameters for `ScorchKit` agent integrations.
 
 use serde::{Deserialize, Serialize};
 
@@ -9,14 +9,16 @@ use serde::{Deserialize, Serialize};
 ///
 /// Controls what the agent is allowed to scan, how deep to go,
 /// and what safety constraints apply. Serialized to JSON for
-/// consumption by Claude Agent SDK clients.
+/// consumption by MCP-capable agent hosts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
-    /// Authorized target patterns (exact domains, wildcards, CIDRs).
-    /// The agent must refuse to scan anything not matching these patterns.
+    /// Target patterns declared to the agent host (exact domains, wildcards, CIDRs).
+    /// This is a preflight hint, not authorization. The engine's engagement
+    /// policy is the authoritative, fail-closed enforcement boundary.
     pub authorized_targets: Vec<String>,
-    /// Maximum scan depth: "quick" (recon only), "standard" (all built-in),
-    /// "thorough" (all modules including external tools).
+    /// Maximum scan depth: `quick`, `standard`, `thorough`, or `pentest`.
+    /// Restricted credential and exploit modules require the `pentest`
+    /// profile plus explicit engine engagement grants.
     #[serde(default = "default_depth")]
     pub max_depth: String,
     /// Whether to require project persistence for audit trails.
@@ -54,9 +56,9 @@ impl Default for AgentConfig {
         Self {
             authorized_targets: Vec::new(),
             max_depth: default_depth(),
-            require_project: true,
-            enable_analysis: true,
-            max_concurrent_scans: 1,
+            require_project: default_true(),
+            enable_analysis: default_true(),
+            max_concurrent_scans: default_max_scans(),
             scan_delay_seconds: 0,
             project_name: None,
             database_url: None,
@@ -122,5 +124,29 @@ mod tests {
         assert_eq!(config.max_concurrent_scans, 1);
         assert_eq!(config.scan_delay_seconds, 0);
         assert!(config.project_name.is_none());
+    }
+
+    #[test]
+    fn omitted_json_fields_use_the_documented_defaults() {
+        let config: AgentConfig = serde_json::from_str(r#"{"authorized_targets":[]}"#)
+            .expect("minimal agent config should deserialize");
+
+        assert_eq!(config.max_depth, "standard");
+        assert!(config.require_project);
+        assert!(config.enable_analysis);
+        assert_eq!(config.max_concurrent_scans, 1);
+    }
+
+    #[test]
+    fn database_url_builder_preserves_the_existing_config() {
+        let config = AgentConfig::new(vec!["owned.example".to_string()])
+            .with_depth("quick")
+            .with_project("assessment")
+            .with_database_url("postgresql://localhost/scorchkit");
+
+        assert_eq!(config.authorized_targets, ["owned.example"]);
+        assert_eq!(config.max_depth, "quick");
+        assert_eq!(config.project_name.as_deref(), Some("assessment"));
+        assert_eq!(config.database_url.as_deref(), Some("postgresql://localhost/scorchkit"));
     }
 }

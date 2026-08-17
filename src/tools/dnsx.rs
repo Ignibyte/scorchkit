@@ -13,7 +13,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Fast DNS resolution and record queries via `DNSx`.
 #[derive(Debug)]
@@ -48,12 +47,9 @@ impl ScanModule for DnsxModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let domain = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
 
-        let output = subprocess::run_tool(
-            "dnsx",
-            &["-silent", "-resp", "-d", domain],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool("dnsx", &["-silent", "-resp", "-d", domain], Duration::from_mins(2))
+            .await?;
 
         Ok(parse_dnsx_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -96,7 +92,7 @@ fn parse_dnsx_output(stdout: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Verify DNSx plain-text output parsing into consolidated finding.
+    /// Verify `DNSx` plain-text output parsing into consolidated finding.
     #[test]
     fn test_parse_dnsx_output() {
         let output = "example.com [93.184.216.34]\n\

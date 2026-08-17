@@ -137,7 +137,7 @@ pub fn resolve_subscription_id(
 /// # Errors
 ///
 /// Returns [`ScorchError::Config`] if authentication fails.
-pub async fn build_azure_client() -> Result<(reqwest::Client, String)> {
+async fn build_azure_client() -> Result<(reqwest::Client, String)> {
     let credential = DefaultAzureCredential::new()
         .map_err(|e| ScorchError::Config(format!("Azure auth failed: {e}")))?;
 
@@ -155,7 +155,7 @@ pub async fn build_azure_client() -> Result<(reqwest::Client, String)> {
 /// Order is lexicographic by module id: `azure-keyvault`,
 /// `azure-nsg`, `azure-rbac`, `azure-storage`.
 #[must_use]
-pub fn register_azure_modules() -> Vec<Box<dyn CloudModule>> {
+fn register_azure_modules() -> Vec<Box<dyn CloudModule>> {
     vec![
         Box::new(keyvault::AzureKeyVaultCloudModule),
         Box::new(nsg::AzureNsgCloudModule),
@@ -196,5 +196,14 @@ mod tests {
             ..Default::default()
         };
         assert!(resolve_subscription_id(&CloudTarget::All, Some(&creds)).is_ok());
+
+        let assignment = AzureRoleAssignment {
+            principal_id: "fixture-principal".into(),
+            role_name: "Reader".into(),
+            scope: "/subscriptions/sub-abc".into(),
+        };
+        assert_eq!(assignment.principal_id, "fixture-principal");
+        assert_eq!(assignment.role_name, "Reader");
+        assert_eq!(assignment.scope, "/subscriptions/sub-abc");
     }
 }

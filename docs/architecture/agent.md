@@ -1,117 +1,90 @@
-# Agent SDK Support
+# Agent integration
 
-The `agent` module (`src/agent/`) provides configuration, system prompts, and manifest generation for integrating ScorchKit with the Claude Agent SDK. It does not run agents directly -- it produces the configuration that Agent SDK clients (Python/TypeScript) consume.
+ScorchKit treats an agent as a reasoning host around a deterministic security engine. Codex is the
+preferred host, but the MCP protocol, manifest, engagement policy, evidence, and repository workflow
+are vendor-neutral.
 
-## Files
+## Boundary
 
-```
-agent/
-  mod.rs         Manifest generation and module declarations
-  config.rs      AgentConfig struct and builder
-  prompt.rs      AGENT_SYSTEM_PROMPT constant (PTES methodology)
-```
+An agent may propose targets, profiles, modules, priorities, explanations, and remediation. It cannot
+grant itself scope or effects. Every effectful MCP, CLI, autonomous-runner, project, and schedule path
+constructs the policy-gated `Engine` from the configured `Engagement`.
 
-## AgentConfig (`config.rs`)
+The `authorized_targets` field in `AgentConfig` is retained as a declared-target hint for host
+compatibility. It is not authorization. Project target registration is also inventory, not
+authorization. The engine checks the canonical target, capability, and effect class again.
 
-Controls what the agent is allowed to scan, how deep to go, and what safety constraints apply.
+## Source layout
 
-```rust
-pub struct AgentConfig {
-    pub authorized_targets: Vec<String>,   // Exact domains, wildcards, CIDRs
-    pub max_depth: String,                 // "quick", "standard", "thorough"
-    pub require_project: bool,             // Require project persistence (default: true)
-    pub enable_analysis: bool,             // Enable AI analysis after scanning (default: true)
-    pub max_concurrent_scans: usize,       // Max parallel scans (default: 1)
-    pub scan_delay_seconds: u64,           // Rate limiting delay (default: 0)
-    pub project_name: Option<String>,      // Project name (auto-generated if None)
-    pub database_url: Option<String>,      // Database URL for persistence
-}
+```text
+src/agent/
+  config.rs   host-facing operational hints
+  prompt.rs   host-neutral PTES workflow instructions
+  runner.rs   local recon → plan → scan → analyze → report adapter
+  mod.rs      JSON manifest generation
 ```
 
-**Builder pattern:**
-```rust
-let config = AgentConfig::new(vec!["example.com".to_string()])
-    .with_depth("thorough")
-    .with_project("my-assessment")
-    .with_database_url("postgres://...");
-```
+## Manifest
 
-`AgentConfig::default()` creates a config with no authorized targets, `"standard"` depth, project persistence required, analysis enabled, and single-scan concurrency.
-
-## System Prompt (`prompt.rs`)
-
-`AGENT_SYSTEM_PROMPT` is a `&'static str` constant encoding the PTES (Penetration Testing Execution Standard) methodology as structured instructions for Claude. It defines seven phases:
-
-1. **Pre-Engagement** -- Create project, register targets, confirm scope
-2. **Intelligence Gathering** -- Passive/active recon, tech stack analysis
-3. **Threat Modeling** -- AI-guided scan planning, high-value target identification
-4. **Vulnerability Analysis** -- Execute scans with recommended profiles
-5. **Analysis & Correlation** -- Summarize, prioritize, correlate findings into attack chains
-6. **Reporting** -- Remediation steps, executive metrics
-7. **Remediation Support** -- Actionable fix prioritization by risk
-
-The prompt includes built-in safety constraints:
-- Rate limiting between scan operations
-- Scope enforcement against `authorized_targets`
-- Detection and analysis only -- no exploitation
-- Evidence preservation via project persistence
-- Immediate escalation for critical findings (RCE, SQLi, auth bypass)
-
-## Manifest Generation (`mod.rs`)
-
-```rust
-pub fn generate_manifest(config: &AgentConfig) -> String
-```
-
-Produces a JSON manifest containing everything an Agent SDK client needs:
+`generate_manifest(&AgentConfig)` returns JSON for an MCP-capable host. It names Codex as preferred,
+declares stdio MCP startup, embeds the host-neutral prompt, and states that
+`engine_engagement_policy` is the authorization source.
 
 ```json
 {
-    "name": "scorchkit-agent",
-    "version": "<crate version>",
-    "description": "Autonomous penetration testing agent powered by ScorchKit",
-    "mcp_server": {
-        "command": "scorchkit",
-        "args": ["serve"],
-        "transport": "stdio"
-    },
-    "system_prompt": "<PTES methodology prompt>",
-    "agent_config": { ... },
-    "capabilities": {
-        "tools": true,
-        "resources": true,
-        "prompts": true
-    },
-    "safety": {
-        "authorized_targets": [...],
-        "max_depth": "standard",
-        "require_project": true,
-        "scope_enforcement": "strict",
-        "exploitation": "disabled",
-        "rate_limiting": false
-    }
+  "host": {
+    "preferred": "codex",
+    "interface": "mcp",
+    "vendor_lock_in": false
+  },
+  "mcp_server": {
+    "command": "scorchkit",
+    "args": ["serve"],
+    "transport": "stdio"
+  },
+  "safety": {
+    "authorization_source": "engine_engagement_policy",
+    "scope_enforcement": "fail_closed",
+    "exploitation": "requires_explicit_engagement_grant"
+  }
 }
 ```
 
-The `mcp_server` block tells the Agent SDK client how to spawn ScorchKit's MCP server (`scorchkit serve` over stdio transport). The `safety` block enforces constraints at both the prompt level and the manifest level.
+The manifest does not contain the serialized engagement and does not create a grant. The server
+loads that grant from `AppConfig` when it starts.
 
-## Integration
+## `AgentConfig`
 
-Agent SDK clients consume the manifest to set up an autonomous pentest session:
+`AgentConfig` controls host behavior such as declared targets, maximum requested profile, project
+preference, analysis preference, concurrency, delay, and database location. Its default depth is
+`standard`, but a standard scan still fails unless the engine engagement grants the target,
+`DastScan`, and `intrusive` effect.
 
-```python
-# Python Agent SDK example
-from claude_agent_sdk import Agent
-import json
+```rust
+use scorchkit::agent::config::AgentConfig;
+use scorchkit::agent::generate_manifest;
 
-# Generate manifest from ScorchKit
-manifest = json.loads(subprocess.check_output(["scorchkit", "agent-manifest",
-    "--target", "example.com", "--depth", "thorough"]))
-
-agent = Agent(
-    mcp_servers=[manifest["mcp_server"]],
-    system_prompt=manifest["system_prompt"],
-)
+let hints = AgentConfig::new(vec!["owned.example".to_string()])
+    .with_depth("quick")
+    .with_project("authorized-assessment");
+let manifest = generate_manifest(&hints);
 ```
 
-The agent then follows the PTES methodology using ScorchKit's MCP tools, with scope enforcement and safety constraints applied at every step.
+## Local autonomous adapter
+
+`agent::runner::run_autonomous` is an in-process convenience path. It runs quick reconnaissance,
+optional provider planning, the authorized profile, optional analysis, reporting, and optional
+project persistence. It uses the same engine and provider configuration as the CLI. AI failure is
+non-fatal and falls back to the selected deterministic profile.
+
+## MCP transport
+
+The supported transport is local stdio. ScorchKit does not ship remote MCP transport. A future remote
+transport must bind an authenticated principal to an engagement and define host validation and TLS
+termination before it can execute scans.
+
+## Development host
+
+Codex discovers `.agents/skills/scorchkit-pipeline/SKILL.md` for repository changes. That skill is a
+thin adapter to `bin/pipeline.sh`; it does not own phase state. Claude and other agents follow
+`AGENTS.md`, `CONSTITUTION.md`, `SECURITY.md`, and the same scripts.

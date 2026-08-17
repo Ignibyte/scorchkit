@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Advanced subdomain enumeration via OWASP Amass.
 #[derive(Debug)]
@@ -40,12 +39,13 @@ impl ScanModule for AmassModule {
             reason: "no domain for subdomain enumeration".to_string(),
         })?;
 
-        let output = subprocess::run_tool(
-            "amass",
-            &["enum", "-passive", "-d", domain, "-json", "/dev/stdout", "-timeout", "5"],
-            Duration::from_secs(360),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "amass",
+                &["enum", "-passive", "-d", domain, "-json", "/dev/stdout", "-timeout", "5"],
+                Duration::from_mins(6),
+            )
+            .await?;
 
         Ok(parse_amass_output(&output.stdout, ctx.target.url.as_str()))
     }
@@ -90,7 +90,7 @@ fn parse_amass_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for Amass JSON-lines output parser.
+    // Tests for Amass JSON-lines output parser.
 
     /// Verify that `parse_amass_output` correctly aggregates subdomains
     /// from Amass JSON-lines output into a consolidated finding.

@@ -9,7 +9,12 @@
 // Core types
 pub use crate::engine::error::{Result, ScorchError};
 pub use crate::engine::finding::Finding;
+pub use crate::engine::policy::{
+    AuthorizationDecision, Capability, DenialReason, EffectClass, Engagement, EngagementPolicy,
+    PolicyTarget, PolicyViolation,
+};
 pub use crate::engine::scan_result::ScanResult;
+pub use crate::engine::scope::ScopeRule;
 pub use crate::engine::severity::Severity;
 pub use crate::engine::target::Target;
 
@@ -37,6 +42,7 @@ pub use crate::engine::service_fingerprint::ServiceFingerprint;
 
 // TLS enumeration primitives (WORK-143) — published regardless of the
 // infra feature because they're useful for any TLS-aware scanner.
+#[cfg(feature = "infra")]
 pub use crate::engine::tls_enum::{CipherSuiteId, CipherWeakness, ProbeOutcome, TlsVersionId};
 
 // API spec shared-data primitive (WORK-108) — published by tools like
@@ -98,14 +104,14 @@ mod tests {
     fn test_prelude_imports() {
         use super::*;
 
-        // Verify types are in scope by referencing them
-        let _severity = Severity::High;
-        let _category = ModuleCategory::Recon;
-        let _code_category = CodeCategory::Sast;
+        let severity: Severity = Severity::High;
+        let category: ModuleCategory = ModuleCategory::Recon;
+        let code_category: CodeCategory = CodeCategory::Sast;
+        let result: Result<()> = Ok(());
 
-        // Verify Result alias works
-        fn _example() -> Result<()> {
-            Ok(())
-        }
+        assert_eq!(severity, Severity::High);
+        assert_eq!(category, ModuleCategory::Recon);
+        assert_eq!(code_category, CodeCategory::Sast);
+        assert!(result.is_ok());
     }
 }

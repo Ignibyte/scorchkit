@@ -42,7 +42,7 @@
   - **Three different argv layouts** (one per provider). Mitigation: branch in `build_scoutsuite_argv` by provider; per-provider golden-byte tests.
   - **GCP requires `--service-account PATH`.** No path → can't run GCP. Mitigation: skip GCP silently in `All` mode when path absent (`debug!` log); reject explicit `Project(_)` without path with remediation.
   - **Azure `--cli` mode requires `az login`** by the operator. Documented; not enforceable from scorchkit.
-  - **Scoutsuite output dir layout** `<dir>/scoutsuite-results/scoutsuite-results.json` is fragile to upstream schema breakage. Mitigation: graceful-degrade — missing/unparseable file emits zero findings (matches `sast_tools::scoutsuite` precedent).
+  - **Scoutsuite output dir layout** `<dir>/scoutsuite-results/scoutsuite-results.json` is fragile to upstream schema breakage. Mitigation: graceful-degrade — missing/unparsable file emits zero findings (matches `sast_tools::scoutsuite` precedent).
   - **Per-scan timeout.** WORK-151 used 15 min for Prowler. Multi-provider Scout could exceed that. Decision: 30-min total wall-clock cap; per-provider 15-min sub-timeout via `run_tool_lenient`.
   - **OCSF parser extraction trigger evaporates.** WORK-151 design noted "extraction unlocks when Scoutsuite (WORK-152) materializes as the second OCSF consumer." **Scoutsuite emits its own JSON, not OCSF**, so this trigger never fires. The `tools::prowler` ↔ `cloud::prowler` duplication remains permanently deferred — that's OK, ~80 lines of tightly-coupled JSON parsing isn't worth abstracting into a generic finding-builder closure.
 - **Acceptance Criteria:**

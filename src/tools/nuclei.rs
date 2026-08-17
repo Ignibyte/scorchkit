@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Template-based vulnerability scanning via nuclei.
 #[derive(Debug)]
@@ -42,20 +41,21 @@ impl ScanModule for NucleiModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.url.as_str();
 
-        let output = subprocess::run_tool(
-            "nuclei",
-            &[
-                "-u",
-                target,
-                "-jsonl",
-                "-silent",
-                "-severity",
-                "critical,high,medium,low",
-                "-no-color",
-            ],
-            Duration::from_secs(600),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "nuclei",
+                &[
+                    "-u",
+                    target,
+                    "-jsonl",
+                    "-silent",
+                    "-severity",
+                    "critical,high,medium,low",
+                    "-no-color",
+                ],
+                Duration::from_mins(10),
+            )
+            .await?;
 
         Ok(parse_nuclei_output(&output.stdout, target))
     }
@@ -180,7 +180,7 @@ fn map_nuclei_tags_to_owasp(tags: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    /// Tests for nuclei JSON-lines output parser.
+    // Tests for nuclei JSON-lines output parser.
 
     /// Verify that `parse_nuclei_output` correctly extracts findings from
     /// JSON-lines output including severity, template ID, and CWE.

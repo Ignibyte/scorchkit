@@ -2,10 +2,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::config::AppConfig;
+use crate::runner::subprocess::{SystemToolExecutor, ToolExecutor, ToolInvocation, ToolOutput};
 
+use super::error::Result;
 use super::events::EventBus;
+use super::policy::{AuthorizationDecision, Capability, EffectClass, PolicyTarget};
 use super::shared_data::SharedData;
 
 /// Known manifest filenames and their associated languages.
@@ -43,12 +47,21 @@ pub struct CodeContext {
     pub shared_data: Arc<SharedData>,
     /// In-process event bus for scan lifecycle events.
     pub events: EventBus,
+    /// External-process boundary used by tool-backed code modules.
+    tool_executor: Arc<dyn ToolExecutor>,
+    /// Opaque proof that the context was created by the policy-gated engine.
+    authorization: Vec<AuthorizationDecision>,
 }
 
 impl CodeContext {
     /// Create a new code context, auto-detecting language and manifests.
     #[must_use]
-    pub fn new(path: PathBuf, language: Option<String>, config: Arc<AppConfig>) -> Self {
+    pub(crate) fn new(
+        path: PathBuf,
+        language: Option<String>,
+        config: Arc<AppConfig>,
+        authorization: Vec<AuthorizationDecision>,
+    ) -> Self {
         let manifests = discover_manifests(&path);
         let detected_language = language.or_else(|| detect_language(&path));
         Self {
@@ -58,7 +71,74 @@ impl CodeContext {
             config,
             shared_data: Arc::new(SharedData::new()),
             events: EventBus::default(),
+            tool_executor: Arc::new(SystemToolExecutor),
+            authorization,
         }
+    }
+
+    /// Replace the production process executor, primarily for contract tests.
+    #[must_use]
+    pub fn with_tool_executor(mut self, tool_executor: Arc<dyn ToolExecutor>) -> Self {
+        self.tool_executor = tool_executor;
+        self
+    }
+
+    /// Execute an external tool and require a successful exit status.
+    ///
+    /// # Errors
+    ///
+    /// Returns executor errors for resolution, spawn, exit, timeout, or output limits.
+    pub async fn run_tool(
+        &self,
+        tool_name: &str,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Result<ToolOutput> {
+        self.require_tool_authorization()?;
+        self.tool_executor.execute(ToolInvocation::strict(tool_name, args, timeout)).await
+    }
+
+    /// Execute an external tool while accepting normal non-zero finding exits.
+    ///
+    /// # Errors
+    ///
+    /// Returns executor errors for resolution, spawn, timeout, or output limits.
+    pub async fn run_tool_lenient(
+        &self,
+        tool_name: &str,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Result<ToolOutput> {
+        self.require_tool_authorization()?;
+        self.tool_executor.execute(ToolInvocation::lenient(tool_name, args, timeout)).await
+    }
+
+    /// Execute an authorized external tool with owned standard input.
+    pub(crate) async fn run_tool_with_stdin(
+        &self,
+        tool_name: &str,
+        stdin: &[u8],
+        timeout: Duration,
+    ) -> Result<ToolOutput> {
+        self.require_tool_authorization()?;
+        self.tool_executor
+            .execute(ToolInvocation::strict(tool_name, &[], timeout).with_stdin(stdin))
+            .await
+    }
+
+    fn require_tool_authorization(&self) -> Result<()> {
+        if cfg!(test) && self.authorization.is_empty() {
+            return Ok(());
+        }
+        let target = PolicyTarget::Code(self.path.clone());
+        if self.authorization.iter().any(|decision| {
+            decision.grants_exactly(&target, Capability::ExternalTool, EffectClass::Passive)
+        }) {
+            return Ok(());
+        }
+        Err(crate::engine::error::ScorchError::Config(format!(
+            "code tool denied: context has no ExternalTool/Passive grant for {target}"
+        )))
     }
 }
 
@@ -92,7 +172,9 @@ pub fn discover_manifests(path: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::policy::{AuthorizationDecision, DenialReason};
     use std::fs;
+    use uuid::Uuid;
 
     /// Verify `Cargo.toml` is detected as Rust.
     #[test]
@@ -128,6 +210,42 @@ mod tests {
         fs::write(dir.path().join("Cargo.lock"), "")?;
         let manifests = discover_manifests(dir.path());
         assert_eq!(manifests.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn code_tool_authorization_requires_an_exact_grant() -> std::io::Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().canonicalize()?;
+        let target = PolicyTarget::Code(path.clone());
+        let grant = AuthorizationDecision {
+            engagement_id: Uuid::nil(),
+            target: target.clone(),
+            capability: Capability::ExternalTool,
+            effect: EffectClass::Passive,
+            allowed: true,
+            matched_scope: None,
+            denial: None,
+        };
+        let allowed =
+            CodeContext::new(path.clone(), None, Arc::new(AppConfig::default()), vec![grant]);
+        assert!(allowed.require_tool_authorization().is_ok());
+
+        let denied = CodeContext::new(
+            path,
+            None,
+            Arc::new(AppConfig::default()),
+            vec![AuthorizationDecision {
+                engagement_id: Uuid::nil(),
+                target,
+                capability: Capability::CodeScan,
+                effect: EffectClass::Passive,
+                allowed: false,
+                matched_scope: None,
+                denial: Some(DenialReason::CapabilityNotGranted),
+            }],
+        );
+        assert!(denied.require_tool_authorization().is_err());
         Ok(())
     }
 }

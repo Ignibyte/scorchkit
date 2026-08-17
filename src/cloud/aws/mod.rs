@@ -107,8 +107,8 @@ pub struct TrailStatus {
     pub kms_key_id: Option<String>,
     /// Whether log file validation is enabled.
     pub log_file_validation: bool,
-    /// Whether the trail is currently logging.
-    pub is_logging: bool,
+    /// Whether the trail is currently logging; `None` when status could not be read.
+    pub is_logging: Option<bool>,
 }
 
 /// Sensitive ports that should never be open to 0.0.0.0/0.
@@ -141,7 +141,7 @@ pub const SENSITIVE_PORTS: &[(u16, &str)] = &[
 ///
 /// Returns [`ScorchError::Config`] if the target is not an AWS
 /// target.
-pub async fn build_aws_sdk_config(
+async fn build_aws_sdk_config(
     target: &CloudTarget,
     creds: Option<&CloudCredentials>,
 ) -> Result<SdkConfig> {
@@ -188,11 +188,11 @@ fn validate_aws_target(target: &CloudTarget) -> Result<()> {
 /// Order is lexicographic by module id: `aws-cloudtrail`,
 /// `aws-iam`, `aws-s3`, `aws-sg`.
 #[must_use]
-pub fn register_aws_modules() -> Vec<Box<dyn CloudModule>> {
+fn register_aws_modules() -> Vec<Box<dyn CloudModule>> {
     vec![
-        Box::new(cloudtrail::CloudTrailCloudModule),
+        Box::new(cloudtrail::CloudTrailCloudModule::default()),
         Box::new(iam::IamCloudModule),
-        Box::new(s3::S3CloudModule),
+        Box::new(s3::S3CloudModule::default()),
         Box::new(sg::SecurityGroupCloudModule),
     ]
 }

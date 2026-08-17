@@ -1,217 +1,160 @@
 # ScorchKit
 
-A Rust-based web application security testing toolkit and orchestrator. DAST + SAST + Infra in one binary, with Claude AI integration for intelligent analysis of findings.
+ScorchKit is an agent-neutral security testing engine written in Rust. It runs deterministic DAST,
+SAST, infrastructure, and cloud checks behind one engagement policy, then preserves findings and
+evidence for an agent or human to analyze. Codex is the preferred agent host. The scanning core does
+not depend on an agent vendor, and a Claude CLI compatibility adapter remains available.
 
-- **DAST** — 41 web-app modules covering the OWASP Top 10 (built-in scanners + 21 external tool wrappers).
-- **SAST** — code scanning via the `code` subcommand (built-in + tool wrappers).
-- **Infra** (v2.0, `--features infra`) — host/network probes for port scan, service fingerprinting, **CVE correlation against NVD or OSV**, **TLS hygiene** (SMTPS/LDAPS/IMAPS/POP3S + STARTTLS on SMTP/IMAP/POP3), and **DNS hygiene** (wildcard, DNSSEC, CAA, NS).
-- **Unified `assess`** — DAST + SAST + Infra in one command via `scorchkit assess --url ... --code ... --infra ...`.
+ScorchKit is a testing tool, not an authorization system. Only scan systems you own or have explicit
+permission to test. A project target, prompt, or agent approval does not replace an engagement grant.
 
-## Install
+## Current capability census
+
+| Family | Registered modules | Notes |
+|---|---:|---|
+| DAST and recon | 91 | 45 built-in modules and 46 tool adapters, including one long-lived Interactsh adapter |
+| SAST | 22 | 1 native dependency analyzer and 21 tool adapters |
+| Infrastructure | Up to 5 | 4 core probes plus optional CVE correlation |
+| Cloud | 5 | Bounded external-tool adapters; native provider SDK modules are quarantined and Pacu is not registered |
+| Maximum | 123 | All production registries, including optional CVE correlation |
+
+The authoritative catalogs are [the module matrix](docs/guide/module-matrix.md) and the source
+registries under `src/recon`, `src/scanner`, `src/tools`, `src/sast_tools`, `src/infra`, and
+`src/cloud`.
+
+## Supported hosts
+
+ScorchKit currently supports Unix process semantics on Linux and macOS. Windows builds are rejected
+until the external-process owner has a Windows Job Object backend with the same descendant cleanup
+guarantees.
+
+## Build
 
 ```bash
 git clone https://github.com/chadpeppers/scorchkit.git
 cd scorchkit
-cargo build --release
-# Binary at ./target/release/scorchkit
+cargo build --release --all-features
 ```
 
-## Quick Start
+The binary is `target/release/scorchkit`. PostgreSQL is required for project, schedule, and MCP
+persistence features. Direct stateless scans do not need a database.
+
+## Safe first scan
+
+`init <target>` validates the URL, performs a bounded DNS lookup, pins the current addresses, and
+writes `scorchkit.toml` with a quick-profile engagement. It sends no HTTP request to the target.
+ScorchKit discovers `scorchkit.toml` automatically before the legacy `config.toml` name.
 
 ```bash
-# Scan a target
-scorchkit run https://example.com
+scorchkit init https://owned.example
+scorchkit run https://owned.example --profile quick
+```
 
-# Quick scan (4 modules: headers, tech, SSL, misconfig)
-scorchkit run https://example.com --profile quick
+Without `[engagement]`, every scan family fails closed before creating its effectful resources.
+Running `scorchkit init` without a target still writes a default `config.toml`, but that file contains
+no authorization and cannot start a scan until an engagement is added.
 
-# Thorough scan (all modules including external tools)
-scorchkit run https://example.com --profile thorough
+## Profiles and grants
 
-# Scan with AI analysis
-scorchkit run https://example.com --analyze
+| Profile | Selection | Required effect |
+|---|---|---|
+| `quick` | `headers`, `tech`, `ssl`, `misconfig` | `active-safe` |
+| `standard` | All built-in DAST modules | `intrusive` |
+| `thorough` | Built-ins and non-restricted external tools | `intrusive` plus `external-tool` capability |
+| `pentest` | All modules, including `commix`, `hydra`, `nxc`, and `smbmap` | Explicit intrusive, credential-test, credential-use, and exploit grants |
 
-# Scan through Burp Suite proxy
-scorchkit run https://example.com --proxy http://127.0.0.1:8080
+Broader profiles are never inferred from installed tools. Expand the engagement deliberately and
+review the resulting scope before using them.
 
-# Recon only
-scorchkit recon https://example.com
+Common commands:
 
-# Specific modules
-scorchkit run https://example.com --modules headers,ssl,misconfig
-
-# Check what tools are installed
+```bash
 scorchkit doctor
+scorchkit modules --check-tools
+scorchkit code ./src
+scorchkit infra 192.0.2.10
+scorchkit assess --url https://owned.example --code ./src --infra 192.0.2.10
+scorchkit diff baseline.json current.json
 ```
 
-## Modules (41)
+Feature-specific commands require the corresponding Cargo feature. Run `scorchkit --help` for the
+compiled binary's exact command surface.
 
-### Built-in Recon (6)
+## AI analysis
 
-| Module | ID | Description | Docs |
-|--------|----|-------------|------|
-| HTTP Security Headers | `headers` | HSTS, CSP, X-Frame-Options, etc. (15 checks) | [docs/modules/headers.md](docs/modules/headers.md) |
-| Technology Fingerprinting | `tech` | Server, framework, CMS detection (90+ signatures) | [docs/modules/tech.md](docs/modules/tech.md) |
-| Directory & File Discovery | `discovery` | Sensitive paths, admin panels, backups (28 probes) | [docs/modules/discovery.md](docs/modules/discovery.md) |
-| Subdomain Enumeration | `subdomain` | DNS brute-force (57 prefixes) | [docs/modules/subdomain.md](docs/modules/subdomain.md) |
-| Web Crawler | `crawler` | Link following, form/parameter/JS route discovery | [docs/modules/crawler.md](docs/modules/crawler.md) |
-| WAF Detection | `waf` | Cloudflare, Sucuri, ModSecurity, etc. (27 signatures) | [docs/modules/waf.md](docs/modules/waf.md) |
-
-### Built-in Scanners (15)
-
-| Module | ID | OWASP | Description | Docs |
-|--------|----|-------|-------------|------|
-| TLS/SSL Analysis | `ssl` | A02 | Certificate validation, expiry, weak algorithms | [docs/modules/ssl.md](docs/modules/ssl.md) |
-| Security Misconfiguration | `misconfig` | A05 | CORS, cookies, error pages, HTTP methods | [docs/modules/misconfig.md](docs/modules/misconfig.md) |
-| CSRF Detection | `csrf` | A05 | Missing CSRF tokens on POST forms | [docs/modules/csrf.md](docs/modules/csrf.md) |
-| SQL Injection | `injection` | A03 | Error-based + blind SQLi (10 payloads, 30 error patterns) | [docs/modules/injection.md](docs/modules/injection.md) |
-| Command Injection | `cmdi` | A03 | OS command injection (7 payloads) | [docs/modules/cmdi.md](docs/modules/cmdi.md) |
-| Reflected XSS | `xss` | A03 | Canary injection + 6 XSS payloads | [docs/modules/xss.md](docs/modules/xss.md) |
-| SSRF Detection | `ssrf` | A10 | Internal URL injection (10 payloads inc. cloud metadata) | [docs/modules/ssrf.md](docs/modules/ssrf.md) |
-| XXE Detection | `xxe` | A05 | XML external entity injection | [docs/modules/xxe.md](docs/modules/xxe.md) |
-| IDOR Detection | `idor` | A01 | ID manipulation in params and path segments | [docs/modules/idor.md](docs/modules/idor.md) |
-| JWT Analysis | `jwt` | A02 | alg:none, weak signing, sensitive claims, expiry | [docs/modules/jwt.md](docs/modules/jwt.md) |
-| Open Redirect | `redirect` | A01 | Redirect parameter injection (17 param names) | [docs/modules/redirect.md](docs/modules/redirect.md) |
-| Sensitive Data Exposure | `sensitive` | A02 | API keys, secrets, PII, source maps (15 patterns) | [docs/modules/sensitive.md](docs/modules/sensitive.md) |
-| API Schema Discovery | `api-schema` | A05 | OpenAPI/Swagger + GraphQL introspection | [docs/modules/api-schema.md](docs/modules/api-schema.md) |
-| Rate Limit Testing | `ratelimit` | A07 | Brute-force protection on login endpoints | [docs/modules/ratelimit.md](docs/modules/ratelimit.md) |
-
-### External Tool Wrappers (21)
-
-Install any tool and it automatically activates. Missing tools are skipped gracefully. Run `scorchkit doctor` to see what's installed.
-
-| Module | Tool | Category | Docs |
-|--------|------|----------|------|
-| `nmap` | nmap | Port scanning | [docs/tools/nmap.md](docs/tools/nmap.md) |
-| `nuclei` | Nuclei | Template vuln scanning | [docs/tools/nuclei.md](docs/tools/nuclei.md) |
-| `nikto` | Nikto | Web server scanning | [docs/tools/nikto.md](docs/tools/nikto.md) |
-| `sqlmap` | SQLMap | SQL injection | [docs/tools/sqlmap.md](docs/tools/sqlmap.md) |
-| `feroxbuster` | Feroxbuster | Directory brute-force | [docs/tools/feroxbuster.md](docs/tools/feroxbuster.md) |
-| `sslyze` | SSLyze | TLS/SSL analysis | [docs/tools/sslyze.md](docs/tools/sslyze.md) |
-| `zap` | OWASP ZAP | Web app scanner | [docs/tools/zap.md](docs/tools/zap.md) |
-| `ffuf` | ffuf | Web fuzzer | [docs/tools/ffuf.md](docs/tools/ffuf.md) |
-| `metasploit` | Metasploit | Exploit validation | [docs/tools/metasploit.md](docs/tools/metasploit.md) |
-| `wafw00f` | wafw00f | WAF detection | [docs/tools/wafw00f.md](docs/tools/wafw00f.md) |
-| `testssl` | testssl.sh | TLS testing | [docs/tools/testssl.md](docs/tools/testssl.md) |
-| `wpscan` | WPScan | WordPress scanning | [docs/tools/wpscan.md](docs/tools/wpscan.md) |
-| `amass` | Amass | Subdomain enumeration | [docs/tools/amass.md](docs/tools/amass.md) |
-| `subfinder` | Subfinder | Subdomain discovery | [docs/tools/subfinder.md](docs/tools/subfinder.md) |
-| `dalfox` | Dalfox | XSS scanning | [docs/tools/dalfox.md](docs/tools/dalfox.md) |
-| `hydra` | Hydra | Credential testing | [docs/tools/hydra.md](docs/tools/hydra.md) |
-| `httpx` | httpx | HTTP probing | [docs/tools/httpx.md](docs/tools/httpx.md) |
-| `theharvester` | theHarvester | OSINT | [docs/tools/theharvester.md](docs/tools/theharvester.md) |
-| `arjun` | Arjun | Parameter discovery | [docs/tools/arjun.md](docs/tools/arjun.md) |
-| `cewl` | CeWL | Wordlist generation | [docs/tools/cewl.md](docs/tools/cewl.md) |
-| `droopescan` | Droopescan | CMS scanning | [docs/tools/droopescan.md](docs/tools/droopescan.md) |
-
-### Infrastructure scanning (v2.0, `--features infra`)
-
-Probes hosts, IPs, and CIDR ranges. Same `Finding` / report pipeline as DAST. Run with `scorchkit infra <target>` or include in a unified scan via `scorchkit assess --infra <target>`.
-
-| Module | Category | Description | Docs |
-|--------|----------|-------------|------|
-| `tcp_probe` | PortScan | Privilege-free TCP-connect reachability against a configurable port list | — |
-| `nmap` (infra) | PortScan + Fingerprint | `nmap -sV` with shared service-fingerprint publication for downstream CVE correlation | — |
-| `cve_match` | CveMatch | Correlate detected service fingerprints against a `CveLookup` backend (NVD or OSV) | [docs/modules/cve-nvd.md](docs/modules/cve-nvd.md) · [docs/modules/cve-osv.md](docs/modules/cve-osv.md) |
-| `tls_infra` | TlsInfra | TLS handshake + cert analysis on SMTPS/LDAPS/IMAPS/POP3S + STARTTLS on SMTP (25/587), IMAP (143), POP3 (110) | [docs/modules/tls-infra.md](docs/modules/tls-infra.md) |
-| `dns_infra` | Dns | Wildcard A/AAAA detection, DNSSEC presence (DNSKEY), CAA record presence, NS enumeration | [docs/modules/dns-infra.md](docs/modules/dns-infra.md) |
-
-CVE backends are config-driven via `[cve]` in `config.toml`:
+AI is optional and separate from scanner evidence. If the configured host is unavailable,
+deterministic scanning and reporting continue without it. Codex is the default adapter:
 
 ```toml
-[cve]
-backend = "nvd"   # or "osv" or "mock" or "disabled"
-
-[cve.nvd]
-api_key = "..."   # optional; or set SCORCHKIT_NVD_API_KEY
+[ai]
+enabled = true
+provider = "codex"
+# binary = "codex"
+# model = "your-approved-model"
+auto_analyze = false
 ```
 
-## AI Analysis
-
-Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI.
+The Codex adapter runs non-interactively with no approval prompts, a read-only sandbox, an ephemeral
+session, and prompts on standard input. Set `provider = "claude"` for the compatibility adapter.
+Legacy `claude_binary` configuration is still read and selects that adapter, but new configuration
+should use `provider` and `binary`.
 
 ```bash
-scorchkit run https://example.com --analyze              # Scan + AI summary
-scorchkit analyze report.json                            # Analyze saved report
-scorchkit analyze report.json --focus summary            # Executive summary
-scorchkit analyze report.json --focus prioritize         # Risk ranking + attack chains
-scorchkit analyze report.json --focus remediate          # Tech-specific fix instructions
-scorchkit analyze report.json --focus filter             # False positive identification
+scorchkit run https://owned.example --profile quick --analyze
+scorchkit analyze report.json --focus prioritize
 ```
 
-## Output Formats
+## Network and integration boundaries
+
+- HTTP requests use one policy-bound client that checks the requested URL, every redirect,
+  hostname, and every resolved IPv4 or IPv6 address before connection.
+- Scheduled scans persist the exact engagement snapshot used at creation. A missing or changed
+  snapshot denies execution.
+- Project registration is inventory only. A project scan still requires a matching engagement.
+- NVD and OSV backends require grants for their provider endpoint and existing cache directory.
+- Native AWS, GCP, and Azure SDK modules remain outside the production registry until provider
+  authentication and service requests use ScorchKit's policy-owned transport.
+- External processes have bounded time and output and are owned as Unix process groups so timeout,
+  cancellation, error, and drop clean up descendants.
+- Webhook configuration is accepted for file compatibility, but outbound webhook delivery is
+  disabled until it can use the same policy-owned network boundary.
+- Remote MCP transport is not supported. The current server uses local stdio transport.
+
+See [SECURITY.md](SECURITY.md) for the enforced boundary and current limitations.
+
+## Development workflow
+
+Repository changes use a spec-driven, agent-neutral pipeline:
+
+```text
+create → plan → design → implement → inspect → validate → complete → delivery
+```
+
+`bin/pipeline.sh` owns phase state. `bin/gate.sh` owns the delivery verdict. A green DIFF or FULL
+gate writes a receipt bound to the exact worktree, and the Git hook rejects missing or stale
+receipts. Codex discovers the repository adapter at `.agents/skills/scorchkit-pipeline`; other agents
+and humans use the same scripts and files.
 
 ```bash
-scorchkit run https://example.com --output terminal      # Colored terminal (default)
-scorchkit run https://example.com --output json           # JSON report
-scorchkit run https://example.com --output html           # Self-contained HTML report
-scorchkit run https://example.com --output sarif          # SARIF for CI/CD (GitHub, Azure DevOps)
+bash bin/pipeline.sh doctor
+bash bin/pipeline.sh status
+bash bin/gate.sh --fast
+bash bin/gate.sh --diff
 ```
 
-## Scan Comparison
-
-```bash
-scorchkit diff baseline.json current.json                # Show new, resolved, unchanged findings
-```
-
-## Authenticated Scanning
-
-```toml
-# config.toml
-[auth]
-bearer_token = "eyJ..."
-# OR
-cookies = "session=abc123; csrftoken=xyz"
-# OR
-username = "admin"
-password = "password"
-# OR
-custom_header = "X-API-Key"
-custom_header_value = "your-key"
-```
-
-## Proxy Support (Burp Suite / ZAP)
-
-```bash
-scorchkit run https://example.com --proxy http://127.0.0.1:8080
-```
-
-Or in `config.toml`:
-```toml
-[scan]
-proxy = "http://127.0.0.1:8080"
-```
-
-## Scope Control
-
-```bash
-scorchkit run https://example.com --scope "*.example.com" --exclude "/logout"
-```
-
-## Configuration
-
-```bash
-scorchkit init                    # Generate default config.toml
-scorchkit doctor                  # Check external tool installation
-scorchkit modules --check-tools   # List modules with tool status
-```
-
-## Shell Completions
-
-```bash
-scorchkit completions bash > ~/.local/share/bash-completion/completions/scorchkit
-scorchkit completions zsh > ~/.zfunc/_scorchkit
-scorchkit completions fish > ~/.config/fish/completions/scorchkit.fish
-```
+Read [CONSTITUTION.md](CONSTITUTION.md), [AGENTS.md](AGENTS.md), and the
+[roadmap](docs/planning/ROADMAP.md) before changing code or scan behavior.
 
 ## Documentation
 
-- [Architecture Overview](docs/architecture/overview.md)
-- [Module Development Guide](docs/architecture/modules.md)
-- [External Tools Checklist](docs/tools-checklist.md)
-- [Individual Module Docs](docs/modules/)
-- [Individual Tool Docs](docs/tools/)
+- [Getting started](docs/guide/getting-started.md)
+- [Architecture overview](docs/architecture/overview.md)
+- [Agent integration](docs/architecture/agent.md)
+- [AI adapters](docs/architecture/ai.md)
+- [Module development](docs/architecture/modules.md)
+- [External tool inventory](docs/tools-checklist.md)
+- [Tutorials](docs/tutorials/README.md)
 
 ## License
 
-MIT - see [LICENSE](LICENSE)
+MIT. See [LICENSE](LICENSE).

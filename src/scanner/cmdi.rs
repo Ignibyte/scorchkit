@@ -130,7 +130,7 @@ const CMDI_PAYLOADS: &[(&str, &str)] = &[
 mod tests {
     use super::*;
 
-    /// Unit tests for the command injection module's payload constant data integrity.
+    // Unit tests for the command injection module's payload constant data integrity.
 
     /// Verify that `CMDI_PAYLOADS` is non-empty and contains a reasonable number of payloads.
     #[test]

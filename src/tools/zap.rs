@@ -7,7 +7,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// OWASP ZAP automated scanning via CLI.
 #[derive(Debug)]
@@ -37,12 +36,13 @@ impl ScanModule for ZapModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let target = ctx.target.url.as_str();
 
-        let output = subprocess::run_tool(
-            "zap-cli",
-            &["quick-scan", "--self-contained", "--spider", "-r", "-o", "json", target],
-            Duration::from_secs(600),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "zap-cli",
+                &["quick-scan", "--self-contained", "--spider", "-r", "-o", "json", target],
+                Duration::from_mins(10),
+            )
+            .await?;
 
         Ok(parse_zap_output(&output.stdout, target))
     }
@@ -99,7 +99,7 @@ fn parse_zap_output(output: &str, target_url: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
 
-    /// Tests for OWASP ZAP JSON output parser.
+    // Tests for OWASP ZAP JSON output parser.
 
     /// Verify that `parse_zap_output` correctly extracts alerts with severity
     /// mapping and CWE extraction from ZAP JSON output.

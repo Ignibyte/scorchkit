@@ -53,7 +53,7 @@ impl ScanModule for SslModule {
         let url = ctx.target.url.as_str();
         let mut findings = Vec::new();
 
-        match probe_tls(domain, ctx.target.port, TlsMode::Implicit).await {
+        match probe_tls(ctx.network_policy(), domain, ctx.target.port, TlsMode::Implicit).await {
             Ok(cert_info) => {
                 findings.extend(check_certificate(&cert_info, "ssl", domain, url));
             }
@@ -80,3 +80,30 @@ impl ScanModule for SslModule {
 // DAST path here and the infra `TlsInfraModule` share one
 // implementation. See that module for [`CertInfo`], [`probe_tls`],
 // [`check_certificate`], and the STARTTLS preamble machinery.
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::engine::target::Target;
+
+    #[tokio::test]
+    async fn plain_http_produces_the_cleartext_transport_finding_without_network_io() {
+        let target = Target::parse("http://127.0.0.1:4567").expect("loopback target");
+        let context = ScanContext::new(
+            target,
+            Arc::new(AppConfig::default()),
+            reqwest::Client::new(),
+            Vec::new(),
+        );
+
+        let findings = SslModule.run(&context).await.expect("run TLS module");
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].title, "No TLS/SSL Encryption");
+        assert_eq!(findings[0].severity, Severity::High);
+        assert_eq!(findings[0].cwe_id, Some(319));
+    }
+}

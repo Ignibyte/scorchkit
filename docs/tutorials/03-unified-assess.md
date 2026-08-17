@@ -1,105 +1,105 @@
-# 03 — Unified `assess` (DAST + SAST + Infra in one command)
+# 03 — Unified assessment
 
-**Goal:** scan a service from three angles in a single pass — web app, source code, and infrastructure host — and read the merged report.
+**Goal:** run the authorized DAST, SAST, infrastructure, and optional cloud families through one
+command and produce one report.
 
-**Time:** ~30 minutes (bulk is the scan itself).
+**Time:** depends on the selected profile and target size.
 
-**You'll need:** ScorchKit built with `--features infra`. Three things you control about one service:
-
-- A **URL** you can hit (web-app entrypoint)
-- The **source code** for that service on disk
-- An **infra target** — IP or hostname of the box it runs on
-
----
-
-## 1. Why use `assess` at all?
-
-You can run `sk run`, `sk code`, and `sk infra` separately and concatenate the reports. `assess` is the convenience: one command, three orchestrators in parallel via `tokio::join!`, results merged into a single `ScanResult`. Same `[scope]`, `[auth]`, `[ai]`, `[report]` config across all three — no duplicate setup.
-
-Best for: assessment days, security-review checkpoints, "I want one report I can hand to the team."
-
-## 2. Define the target
-
-For this tutorial, imagine a hypothetical service:
-
-| | Value |
-|---|-------|
-| URL | `https://api.your-service.com` |
-| Source code | `~/src/your-service-api` |
-| Infra host | `api.your-service.com` |
-
-(For a hands-on dry run, use `https://httpbin.org`, the ScorchKit repo itself for `--code`, and `scanme.nmap.org` for `--infra`. The findings won't be related but the workflow proves out.)
-
-## 3. The single command
+Build with the families you need:
 
 ```bash
-sk assess \
-    --url   https://api.your-service.com \
-    --code  ~/src/your-service-api \
-    --infra api.your-service.com
+cargo build --release --features infra,cloud
 ```
 
-The three orchestrators kick off concurrently. Failures in any one domain log a warning and skip to the next — partial results still come back. Output is the standard terminal report with findings from all three families merged and sorted by severity.
+## 1. Authorize each family
+
+`assess` does not turn one target grant into another. The active engagement must contain:
+
+- the web hostname and each permitted resolved address for DAST;
+- a canonical `path_prefix` for the source tree;
+- the exact hostname, address, endpoint, or CIDR for infrastructure work;
+- an exact cloud resource rule when `--cloud` is present;
+- the capability and exact effect required by the selected profile.
+
+Start with targeted web initialization, then review and extend the generated policy only to match
+your written authorization:
+
+```bash
+scorchkit init https://owned.example
+```
+
+For a quick web, code, and infrastructure assessment, the policy normally needs `dast-scan`,
+`code-scan`, `infra-scan`, and `external-tool`; `passive` and `active-safe` effects; and scope rules
+for all three target forms. A cloud family also needs `cloud-scan`, `credential-use`, and a `cloud`
+scope rule. ScorchKit canonicalizes code paths and rechecks network addresses before effects.
+
+## 2. Run the assessment
+
+```bash
+scorchkit --output json assess \
+  --url https://owned.example \
+  --code /absolute/path/to/owned-source \
+  --infra 192.0.2.10 \
+  --profile quick
+```
+
+Every requested family receives the same profile. The families run concurrently, then their
+findings merge into one `ScanResult`. A failed family does not erase successful family results. If
+all requested families fail, the command returns the first error.
+
+Omit a family you do not intend to run:
+
+```bash
+scorchkit assess --code /absolute/path/to/owned-source --profile quick
+```
+
+At least one of `--url`, `--code`, `--infra`, or `--cloud` is required.
+
+## 3. Add cloud posture
+
+Cloud support currently registers five policy-gated tool adapters. The native AWS, GCP, and Azure
+SDK implementations are quarantined until their transports enforce ScorchKit's endpoint and DNS
+policy.
+
+```bash
+scorchkit assess \
+  --code /absolute/path/to/owned-source \
+  --cloud aws:123456789012 \
+  --profile quick
+```
+
+The cloud target, credentials, and external tools need their own passive grants. Installed tools and
+ambient credentials do not expand engagement scope.
 
 ## 4. Add CVE correlation
 
-If you've configured `[cve]` (see [tutorial 02](02-cve-correlation.md)), `assess` picks it up automatically — `Engine::infra_scan` consults `build_cve_lookup` whether it's invoked directly or via `assess`.
+When `[cve]` selects NVD, OSV, or a composite backend, infrastructure execution injects the CVE
+matcher. The provider endpoint, every resolved address, and the existing cache directory require
+separate passive infrastructure grants. See [CVE correlation](02-cve-correlation.md).
+
+## 5. Read and compare reports
+
+The global `--output` option applies to unified assessments. JSON is useful for deterministic
+filtering:
 
 ```bash
-sk assess --url https://api.your-service.com --code ~/src/your-service-api --infra api.your-service.com -c scorchkit.toml
+jq '.findings[] | select(.severity == "Critical" or .severity == "High")' reports/*.json
+scorchkit diff reports/baseline.json reports/current.json
 ```
 
-## 5. Save and analyse
+AI analysis is optional and labeled separately from scanner evidence:
 
 ```bash
-sk assess --url ... --code ... --infra ... -o json
-sk analyze scorchkit-report.json -f summary
-sk analyze scorchkit-report.json -f prioritize
+scorchkit analyze reports/current.json --focus prioritize
 ```
 
-`analyze` runs Claude over the merged report. `summary` produces an executive overview; `prioritize` ranks findings by exploitability and (when enabled) suggests attack chains across the three families.
+Codex is the default configured AI adapter. Claude remains an optional compatibility adapter.
 
-## 6. Per-domain skipping
+## Troubleshooting
 
-Need to skip one domain? Just omit its flag:
-
-```bash
-sk assess --url https://api.your-service.com --infra api.your-service.com
-# No --code -> SAST orchestrator skipped, DAST + Infra still run
-```
-
-At least one of the three is required. All three optional would error with `assess requires at least one of --url, --code, or --infra`.
-
-## 7. Reading the merged report
-
-The terminal output groups findings by severity, not by family. Every finding carries a `module_id`; the fastest way to slice by family is to emit JSON and filter with `jq`:
-
-```bash
-sk assess --url ... --code ... --infra ... -o json
-
-# Just SAST findings
-jq '[.findings[] | select(.module_id | IN("semgrep","gitleaks","bandit","gosec"))]' scorchkit-report.json
-
-# Just infra findings
-jq '[.findings[] | select(.module_id | IN("tcp_probe","nmap","cve_match","tls_infra","dns_infra"))]' scorchkit-report.json
-
-# Exclude recon noise to focus on DAST scanner findings
-jq '[.findings[] | select(.module_id | IN("headers","tech","discovery","subdomain","crawler") | not)]' scorchkit-report.json
-```
-
-`sk analyze` itself has a `filter` focus mode (`-f filter`) but no per-module include/exclude flags at the CLI layer — it's a Claude-mediated triage of the whole report. Use `jq` when you want deterministic module-level filtering.
-
-## 8. Where to go next
-
-- **[04 — Claude Code workflow](04-claude-code-workflow.md)** — same `assess` flow but conversational, with AI in the loop end-to-end
-- **[08 — CI/CD integration](08-ci-cd-integration.md)** — run `assess` on every PR, gate the build on critical findings
-
----
-
-## Things that go wrong
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| One domain returns no findings even though you expect some | The domain's orchestrator failed silently — check stderr for `assess: domain failed: ...` warnings | Re-run with `RUST_LOG=debug` for the failing domain to see the underlying error |
-| The merged report is huge | Three families produce a lot of Info findings | Emit JSON and filter with `jq '.findings[] \| select(.severity != "Info")'`; or run `sk analyze report.json -f filter` for a Claude-mediated triage |
-| `code` scan takes forever | A SAST tool is hanging on a deep repo (often Semgrep on a monorepo) | Run `sk code ... --profile quick` separately beforehand to confirm SAST completes, then re-run `assess` with `--profile quick` (applies to each orchestrator) |
+| Symptom | Check |
+|---|---|
+| One family is denied | Its target form, capability, or exact effect is missing from the engagement. |
+| `--cloud` is rejected | Rebuild with the `cloud` feature and add a separate cloud target grant. |
+| CVE construction fails | Authorize the provider endpoint, its addresses, and an existing cache directory. |
+| Report is empty | Check `modules_skipped` and tool availability; an empty result is not proof that a target is safe. |

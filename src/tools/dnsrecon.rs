@@ -14,7 +14,6 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Comprehensive DNS enumeration via dnsrecon.
 #[derive(Debug)]
@@ -49,12 +48,13 @@ impl ScanModule for DnsreconModule {
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let domain = ctx.target.domain.as_deref().unwrap_or(ctx.target.url.as_str());
 
-        let output = subprocess::run_tool(
-            "dnsrecon",
-            &["-d", domain, "-t", "std", "--json", "-"],
-            Duration::from_secs(180),
-        )
-        .await?;
+        let output = ctx
+            .run_tool(
+                "dnsrecon",
+                &["-d", domain, "-t", "std", "--json", "-"],
+                Duration::from_mins(3),
+            )
+            .await?;
 
         Ok(parse_dnsrecon_output(&output.stdout, ctx.target.url.as_str()))
     }

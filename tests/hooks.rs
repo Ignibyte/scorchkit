@@ -1,6 +1,6 @@
 //! Integration tests for the hook configuration system.
 
-/// Verify HookConfig deserializes from TOML correctly.
+/// Verify `HookConfig` deserializes from TOML correctly.
 #[test]
 fn test_hook_config_deserialize() {
     let toml_str = r#"
@@ -20,7 +20,7 @@ fn test_hook_config_deserialize() {
     assert!(!config.hooks.fail_open);
 }
 
-/// Verify default HookConfig has no hooks and sensible defaults.
+/// Verify default `HookConfig` has no hooks and sensible defaults.
 #[test]
 fn test_hook_config_default() {
     let config = scorchkit::config::HookConfig::default();

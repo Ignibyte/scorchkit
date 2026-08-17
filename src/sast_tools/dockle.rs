@@ -15,7 +15,6 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use crate::runner::subprocess;
 
 /// Container image linter via dockle.
 #[derive(Debug)]
@@ -50,12 +49,9 @@ impl CodeModule for DockleModule {
         // dockle takes an image reference; for SAST we treat the
         // path as the image tag (operators wire this via CI: build
         // image, then `scorchkit code <image-tag>`).
-        let output = subprocess::run_tool_lenient(
-            "dockle",
-            &["--format", "json", &path_str],
-            Duration::from_secs(120),
-        )
-        .await?;
+        let output = ctx
+            .run_tool_lenient("dockle", &["--format", "json", &path_str], Duration::from_mins(2))
+            .await?;
         Ok(parse_dockle_output(&output.stdout))
     }
 }

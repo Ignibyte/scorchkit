@@ -181,13 +181,6 @@ mod tests {
     //! redaction contract, and env-merge semantics.
 
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    /// Process-global mutex guarding `std::env::set_var` paths.
-    fn env_mutex() -> &'static Mutex<()> {
-        static M: OnceLock<Mutex<()>> = OnceLock::new();
-        M.get_or_init(|| Mutex::new(()))
-    }
 
     /// Clear every cloud-credential env var the tests manipulate.
     fn clear_env() {
@@ -247,7 +240,8 @@ mod tests {
 
     #[test]
     fn test_cloud_credentials_from_config_with_env_wins_non_empty() {
-        let _guard = env_mutex().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard =
+            crate::TEST_ENVIRONMENT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         clear_env();
         // JUSTIFICATION: test-only environment mutation.
         std::env::set_var(ENV_AWS_PROFILE, "env-prod");
@@ -267,7 +261,8 @@ mod tests {
 
     #[test]
     fn test_cloud_credentials_from_config_with_env_empty_treated_as_unset() {
-        let _guard = env_mutex().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard =
+            crate::TEST_ENVIRONMENT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         clear_env();
         std::env::set_var(ENV_AWS_PROFILE, "");
 
