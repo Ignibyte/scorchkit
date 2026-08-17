@@ -1,10 +1,11 @@
 //! Tests for AI scan planning types and validation logic.
 //!
 //! Verifies serde round-trip correctness for plan types,
-//! plan validation against registered modules, module catalog
-//! generation, and plan response parsing.
+//! plan validation against registered modules and typed module catalog
+//! generation.
 
-use scorchkit::ai::response::{parse_plan_response, try_extract};
+use scorchkit::ai::contracts::{AiContractResponse, AiModuleInput, AiTask, AI_CONTRACT_SCHEMA};
+use scorchkit::ai::response::try_extract;
 use scorchkit::ai::types::{validate_plan, ModuleRecommendation, ScanPlan, SkippedModule};
 
 /// Verify `ScanPlan` round-trips through JSON serialization.
@@ -200,16 +201,12 @@ fn test_validate_plan_mixed() {
 #[test]
 fn test_module_catalog_contains_all() {
     let modules = scorchkit::runner::orchestrator::all_modules();
-    let catalog = scorchkit::ai::prompts::build_module_catalog(&modules);
-    let parsed: Vec<serde_json::Value> = serde_json::from_str(&catalog).unwrap_or_default();
+    let catalog = AiModuleInput::collect(&modules);
 
     // Every module ID should appear in the catalog
     for module in &modules {
         let id = module.id();
-        assert!(
-            parsed.iter().any(|entry| entry["id"].as_str() == Some(id)),
-            "module '{id}' missing from catalog"
-        );
+        assert!(catalog.iter().any(|entry| entry.id == id), "module '{id}' missing from catalog");
     }
 }
 
@@ -217,66 +214,43 @@ fn test_module_catalog_contains_all() {
 #[test]
 fn test_module_catalog_format() {
     let modules = scorchkit::runner::orchestrator::all_modules();
-    let catalog = scorchkit::ai::prompts::build_module_catalog(&modules);
-    let parsed: Vec<serde_json::Value> = serde_json::from_str(&catalog).unwrap_or_default();
+    let catalog = AiModuleInput::collect(&modules);
 
-    assert!(!parsed.is_empty(), "catalog should not be empty");
+    assert!(!catalog.is_empty(), "catalog should not be empty");
 
-    for entry in &parsed {
-        assert!(entry["id"].is_string(), "entry missing 'id'");
-        assert!(entry["name"].is_string(), "entry missing 'name'");
-        assert!(entry["description"].is_string(), "entry missing 'description'");
-        assert!(entry["category"].is_string(), "entry missing 'category'");
-        assert!(
-            entry["requires_external_tool"].is_boolean(),
-            "entry missing 'requires_external_tool'"
-        );
+    for entry in &catalog {
+        assert!(!entry.id.is_empty(), "entry missing 'id'");
+        assert!(!entry.name.is_empty(), "entry missing 'name'");
+        assert!(!entry.description.is_empty(), "entry missing 'description'");
+        assert!(matches!(entry.category.as_str(), "recon" | "scanner"));
     }
 }
 
-/// Verify `parse_plan_response` extracts structured plan from Claude JSON envelope.
+/// Verify the versioned response envelope round-trips a typed plan.
 #[test]
-fn test_parse_plan_response_structured() {
-    let plan_json = r#"{
-        "target": "https://example.com",
-        "recommendations": [
-            {
-                "module_id": "ssl",
-                "priority": 1,
-                "rationale": "TLS check",
-                "category": "scanner"
-            }
-        ],
-        "skipped_modules": [],
-        "overall_strategy": "Focus on TLS",
-        "estimated_scan_time": "2 minutes"
-    }"#;
-    let envelope = serde_json::json!({
-        "type": "result",
-        "result": plan_json,
-        "cost_usd": 0.03,
-    });
-
-    let result = parse_plan_response(&envelope.to_string(), "https://example.com");
-
-    assert_eq!(result.recommendations.len(), 1);
-    assert_eq!(result.recommendations[0].module_id, "ssl");
-    assert_eq!(result.overall_strategy, "Focus on TLS");
-}
-
-/// Verify `parse_plan_response` returns empty plan for unparsable content.
-#[test]
-fn test_parse_plan_response_fallback() {
-    let envelope = serde_json::json!({
-        "type": "result",
-        "result": "This is not JSON at all."
-    });
-
-    let result = parse_plan_response(&envelope.to_string(), "https://fallback.com");
-
-    assert!(result.recommendations.is_empty());
-    assert_eq!(result.target, "https://fallback.com");
-    assert!(result.overall_strategy.contains("failed"));
+fn test_versioned_plan_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let response = AiContractResponse {
+        schema: AI_CONTRACT_SCHEMA.to_string(),
+        task: AiTask::Plan,
+        payload: ScanPlan {
+            target: "https://example.com".to_string(),
+            recommendations: vec![ModuleRecommendation {
+                module_id: "ssl".to_string(),
+                priority: 1,
+                rationale: "TLS check".to_string(),
+                category: "scanner".to_string(),
+            }],
+            skipped_modules: Vec::new(),
+            overall_strategy: "Focus on TLS".to_string(),
+            estimated_scan_time: Some("2 minutes".to_string()),
+        },
+    };
+    let encoded = serde_json::to_string(&response)?;
+    let decoded: AiContractResponse<ScanPlan> = serde_json::from_str(&encoded)?;
+    assert_eq!(decoded.schema, AI_CONTRACT_SCHEMA);
+    assert_eq!(decoded.task, AiTask::Plan);
+    assert_eq!(decoded.payload.recommendations[0].module_id, "ssl");
+    Ok(())
 }
 
 /// Verify `try_extract` can parse a `ScanPlan` from raw JSON.

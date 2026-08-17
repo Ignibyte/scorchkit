@@ -5,6 +5,11 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Typed AI provider contracts (TICKET-004 / SK-030)** — Replaced raw system/user generation with
+  provider-neutral planning, analysis, correlation, and remediation methods. Added required
+  `scorchkit.ai/v1` task envelopes, exact schema/task validation, typed errors, shared Codex and
+  Claude fixtures, typed planner and analyst dispatch, and deterministic correlation/remediation
+  fallback when AI is disabled, unavailable, or malformed.
 - **Durable scan job lifecycle (TICKET-003 / SK-029)** — Added provider-neutral queued, running,
   cancelling, terminal, interruption, and successor-attempt contracts; bounded reliable
   module-progress persistence; shared cancellation; ownership leases and repeated recovery;

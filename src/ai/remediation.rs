@@ -6,6 +6,9 @@
 
 use std::fmt::Write;
 
+use crate::ai::contracts::{AiProviderResponse, AiTask, RemediationRequest};
+use crate::ai::provider::AiProvider;
+use crate::ai::types::RemediationAnalysis;
 use crate::engine::finding::Finding;
 use crate::engine::risk_score::compute_risk_score;
 
@@ -56,28 +59,33 @@ pub fn build_remediation_walk(findings: &[Finding]) -> Vec<RemediationStep> {
         .collect()
 }
 
-/// Build a prompt for an AI provider to generate detailed remediation guidance.
-#[must_use]
-pub fn build_remediation_prompt(findings: &[Finding]) -> (String, String) {
-    let system = "You are a senior security engineer providing step-by-step remediation \
-        guidance. For each finding, provide: (1) specific fix steps, (2) code examples \
-        where applicable, (3) verification steps to confirm the fix, (4) estimated \
-        effort (quick/medium/significant). Prioritize by risk. Output JSON array of \
-        {\"finding\": \"...\", \"steps\": [\"...\"], \"verification\": \"...\", \
-        \"effort\": \"quick|medium|significant\"}"
-        .to_string();
+/// Provider guidance or the deterministic local fallback.
+#[derive(Debug, Clone)]
+pub enum RemediationOutcome {
+    /// Valid typed provider guidance with labeled metadata.
+    Provider(AiProviderResponse<RemediationAnalysis>),
+    /// Risk-ordered scanner guidance used when AI cannot run or decode.
+    Deterministic(Vec<RemediationStep>),
+}
 
-    let mut user = String::from("Generate remediation guidance for these findings:\n\n");
-    let walk = build_remediation_walk(findings);
-    for step in &walk {
-        let _ = writeln!(
-            user,
-            "{}. [Risk: {:.0}] {} — {}",
-            step.step, step.risk_score, step.finding_title, step.guidance
-        );
+/// Request typed provider remediation with a deterministic fallback.
+///
+/// Callers that use a process-backed provider must authorize its external-tool
+/// effect before calling this function.
+pub async fn remediate_with_provider(
+    provider: &dyn AiProvider,
+    findings: &[Finding],
+) -> RemediationOutcome {
+    if provider.is_available() {
+        let request = RemediationRequest::new(findings);
+        match provider.remediate(&request).await {
+            Ok(response) if response.validate_envelope(AiTask::Remediate).is_ok() => {
+                return RemediationOutcome::Provider(response);
+            }
+            Ok(_) | Err(_) => {}
+        }
     }
-
-    (system, user)
+    RemediationOutcome::Deterministic(build_remediation_walk(findings))
 }
 
 /// Format a remediation walk as readable text.
@@ -117,8 +125,88 @@ fn estimate_effort(finding: &Finding) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+
     use super::*;
+    use crate::ai::contracts::{
+        AiProviderError, AiProviderMetadata, AiTask, AnalysisRequest, CorrelationRequest,
+        PlanRequest, AI_CONTRACT_SCHEMA,
+    };
+    use crate::ai::types::{RemediationStep as TypedRemediationStep, ScanPlan, StructuredAnalysis};
+    use crate::engine::correlation::AttackChain;
     use crate::engine::severity::Severity;
+
+    #[derive(Debug)]
+    struct RemediationProvider {
+        available: bool,
+        response: Result<AiProviderResponse<RemediationAnalysis>, AiProviderError>,
+    }
+
+    #[async_trait]
+    impl AiProvider for RemediationProvider {
+        fn id(&self) -> &'static str {
+            "remediation-fixture"
+        }
+
+        fn name(&self) -> &'static str {
+            "Remediation fixture"
+        }
+
+        fn is_available(&self) -> bool {
+            self.available
+        }
+
+        async fn plan(
+            &self,
+            _request: &PlanRequest,
+        ) -> Result<AiProviderResponse<ScanPlan>, AiProviderError> {
+            Err(AiProviderError::Disabled)
+        }
+
+        async fn analyze(
+            &self,
+            _request: &AnalysisRequest,
+        ) -> Result<AiProviderResponse<StructuredAnalysis>, AiProviderError> {
+            Err(AiProviderError::Disabled)
+        }
+
+        async fn correlate(
+            &self,
+            _request: &CorrelationRequest,
+        ) -> Result<AiProviderResponse<Vec<AttackChain>>, AiProviderError> {
+            Err(AiProviderError::Disabled)
+        }
+
+        async fn remediate(
+            &self,
+            _request: &RemediationRequest,
+        ) -> Result<AiProviderResponse<RemediationAnalysis>, AiProviderError> {
+            self.response.clone()
+        }
+    }
+
+    fn provider_response() -> AiProviderResponse<RemediationAnalysis> {
+        AiProviderResponse {
+            schema: AI_CONTRACT_SCHEMA,
+            task: AiTask::Remediate,
+            payload: RemediationAnalysis {
+                remediations: vec![TypedRemediationStep {
+                    finding_index: 1,
+                    title: "XSS".to_string(),
+                    severity: "high".to_string(),
+                    fix_description: "Encode untrusted output".to_string(),
+                    code_example: None,
+                    effort: crate::ai::types::EffortLevel::Low,
+                    priority: 1,
+                    verification_steps: vec!["Run the XSS regression".to_string()],
+                }],
+                quick_wins: vec![1],
+                total_estimated_effort: "two hours".to_string(),
+            },
+            metadata: AiProviderMetadata::default(),
+            raw_response: "fixture".to_string(),
+        }
+    }
 
     fn finding(module_id: &str, title: &str, severity: Severity) -> Finding {
         Finding::new(module_id, severity, title, "desc", "https://example.com")
@@ -164,12 +252,45 @@ mod tests {
         assert!(text.contains("Fix this issue"));
     }
 
-    /// Prompt includes all findings.
-    #[test]
-    fn test_build_remediation_prompt() {
+    #[tokio::test]
+    async fn typed_provider_guidance_wins_when_valid() {
         let findings = vec![finding("xss", "XSS", Severity::High)];
-        let (system, user) = build_remediation_prompt(&findings);
-        assert!(system.contains("remediation"));
-        assert!(user.contains("XSS"));
+        let provider = RemediationProvider { available: true, response: Ok(provider_response()) };
+        let outcome = remediate_with_provider(&provider, &findings).await;
+        match outcome {
+            RemediationOutcome::Provider(response) => {
+                assert_eq!(response.payload.remediations[0].title, "XSS");
+            }
+            RemediationOutcome::Deterministic(_) => panic!("valid provider response was ignored"),
+        }
+    }
+
+    #[tokio::test]
+    async fn unavailable_or_failed_provider_uses_deterministic_walk() {
+        let findings = vec![finding("xss", "XSS", Severity::High)];
+        for provider in [
+            RemediationProvider { available: false, response: Ok(provider_response()) },
+            RemediationProvider {
+                available: true,
+                response: Err(AiProviderError::MalformedResponse { task: AiTask::Remediate }),
+            },
+            RemediationProvider {
+                available: true,
+                response: Ok(AiProviderResponse {
+                    schema: "scorchkit.ai/v0",
+                    ..provider_response()
+                }),
+            },
+        ] {
+            match remediate_with_provider(&provider, &findings).await {
+                RemediationOutcome::Deterministic(steps) => {
+                    assert_eq!(steps.len(), 1);
+                    assert_eq!(steps[0].finding_title, "XSS");
+                }
+                RemediationOutcome::Provider(_) => {
+                    panic!("fallback branch returned provider guidance")
+                }
+            }
+        }
     }
 }

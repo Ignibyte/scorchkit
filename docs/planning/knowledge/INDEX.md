@@ -45,6 +45,8 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-exact-failure-source-001` | When fail-closed branches share a status, assert the selected error or state rather than failure status alone. | `AAR-003-scan-job-lifecycle` |
 | `PR-scorchkit-focused-evidence-generic-001` | Discover approved focused evidence from ticket metadata and verify its raw outcomes, timeouts, input transitions, and receipt-bound digest without ticket-number branches. | `AAR-003-scan-job-lifecycle` |
 | `PR-scorchkit-clippy-before-mutation-seal-001` | Run strict all-target Clippy after mutation assertions and before sealing the current-tree mutation hash. | `AAR-003-scan-job-lifecycle` |
+| `PR-scorchkit-provider-consumption-validation-001` | Revalidate public provider envelopes and request-bound invariants where workflows consume them, regardless of adapter validation. | `AAR-004-typed-ai-provider-contracts` |
+| `PR-scorchkit-green-baseline-reuse-001` | Reuse a completed green DIFF/FULL mutation result only when raw outcomes prove zero misses and the exact mutation-input hash is unchanged. | `AAR-004-typed-ai-provider-contracts` |
 
 ## Register
 
@@ -72,3 +74,5 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-resume-fork-001` | integrity bug | `AAR-003-scan-job-lifecycle` |
 | `BF-scorchkit-ambiguous-failure-source-001` | test gap | `AAR-003-scan-job-lifecycle` |
 | `BF-scorchkit-focused-evidence-ticket-coupling-001` | process failure | `AAR-003-scan-job-lifecycle` |
+| `BF-scorchkit-provider-envelope-bypass-001` | contract bug | `AAR-004-typed-ai-provider-contracts` |
+| `BF-scorchkit-empty-survivor-proof-gap-001` | process failure | `AAR-004-typed-ai-provider-contracts` |

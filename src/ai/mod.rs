@@ -1,4 +1,5 @@
 pub mod analyst;
+pub mod contracts;
 pub mod correlator;
 pub mod planner;
 pub mod prompts;

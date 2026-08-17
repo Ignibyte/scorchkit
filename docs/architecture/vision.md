@@ -38,7 +38,8 @@ Codex / Claude compatibility / other hosts / humans / CI
 | Compatibility | Claude adapter retained outside authorization and workflow policy |
 | Local agent protocol | MCP over stdio |
 | Remote protocol | Unsupported until authenticated principal binding and TLS policy exist |
-| Persistence | PostgreSQL today; storage trait and stateless MCP are planned |
+| Persistence | Provider-neutral job store with in-memory and PostgreSQL adapters; stateless MCP supported |
+| Reasoning contracts | Typed `scorchkit.ai/v1` planning, analysis, correlation, and remediation tasks |
 | Scanner evidence | Preserved independently from agent-generated interpretation |
 | Supported OS | Linux and macOS until Windows Job Object process ownership is implemented |
 
@@ -50,7 +51,7 @@ The detailed dependency graph and executable exit evidence live in
 1. finish the policy and quality baseline;
 2. unify execution, cancellation, and jobs;
 3. abstract storage and make scan-only MCP stateless;
-4. add typed provider-neutral reasoning contracts and the Codex plugin;
+4. add typed provider-neutral reasoning contracts, then package the Codex plugin;
 5. extract crates only after contracts make movement behavior-preserving;
 6. consolidate scanners and version evidence/report schemas;
 7. add authenticated remote operation and release hardening;

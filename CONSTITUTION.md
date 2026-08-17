@@ -137,6 +137,11 @@ A FOCUSED-REPAIR receipt is valid only when all of these conditions hold:
 - A completed DIFF or FULL result remains preserved as the broad baseline.
 - The focused evidence contains the raw initial inventory and outcomes, the complete survivor
   recheck inventory and outcomes, and a summary reconstructed by the verifier.
+- When a completed DIFF or FULL baseline already has zero survivors and at least 95% MSI, its sealed
+  raw inventory and outcomes may replace a vacuous survivor recheck for post-validation and
+  post-archive delivery. The verifier must require zero misses, recompute the score and every
+  outcome list, and bind the unchanged mutation-input hash; any mutation-input change revokes this
+  path and requires a new scoped run.
 - The verifier proves the survivor set and recheck set are identical, the final viable score is at
   least 95%, and the mutation-relevant Rust, tests, manifests, configuration, examples, migrations,
   and rules match the hash sealed after the focused run.

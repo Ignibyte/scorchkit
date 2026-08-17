@@ -1,190 +1,183 @@
-//! AI-assisted attack-chain correlation (WORK-137).
+//! Typed provider augmentation for deterministic attack-chain correlation.
 //!
-//! Layers provider-neutral model reasoning on top of the rule-based
-//! [`crate::engine::correlation`] engine. When AI is available, feeds
-//! findings to an AI provider with structured prompts for attack-chain
-//! analysis. Falls back gracefully to rule-based output when AI
-//! is disabled or unavailable.
+//! The rule engine remains authoritative and always runs. A valid typed AI
+//! response may add chains, but provider failure cannot remove rule results or
+//! change scan success.
 
+use crate::ai::contracts::{AiTask, CorrelationRequest};
+use crate::ai::provider::AiProvider;
 use crate::engine::correlation::{correlate, AttackChain};
 use crate::engine::finding::Finding;
 
-/// Build the prompt for an AI provider to analyze findings and identify attack chains.
+/// Correlate findings with deterministic rules and optional typed AI augmentation.
 ///
-/// Returns a system prompt + user prompt pair suitable for the
-/// an AI provider adapter.
-#[must_use]
-pub fn build_correlation_prompt(findings: &[Finding]) -> (String, String) {
-    let system = "You are a senior penetration tester analyzing security scan results. \
-        Identify attack chains — sequences of findings that combine to create \
-        exploit paths more severe than any individual finding. For each chain, \
-        explain the attack narrative, list the contributing findings, and rate \
-        the combined severity. Focus on cross-domain chains (DAST + SAST + Infra + Cloud). \
-        Output JSON: [{\"name\": \"...\", \"severity\": \"critical|high|medium|low\", \
-        \"description\": \"...\", \"steps\": [{\"module_id\": \"...\", \"title\": \"...\", \
-        \"role\": \"...\"}], \"remediation_priority\": \"immediate|high|medium|low\"}]"
-        .to_string();
-
-    let mut user = String::from("Analyze these security findings for attack chains:\n\n");
-    for (i, f) in findings.iter().enumerate() {
-        use std::fmt::Write;
-        let _ = writeln!(
-            user,
-            "{}. [{}] {} (module: {}, target: {})",
-            i + 1,
-            f.severity,
-            f.title,
-            f.module_id,
-            f.affected_target,
-        );
-    }
-    user.push_str("\nIdentify all compound attack paths. Return JSON array.");
-
-    (system, user)
-}
-
-/// Parse a provider response into attack chains.
-///
-/// Falls back to empty vec on parse failure — the caller should
-/// merge with rule-based results.
-#[must_use]
-pub fn parse_correlation_response(response: &str) -> Vec<AttackChain> {
-    // Try to extract JSON from the response (a provider may wrap it in markdown).
-    let json_str = extract_json_array(response);
-    serde_json::from_str(json_str).unwrap_or_default()
-}
-
-/// Correlate findings using both rule-based and AI-driven analysis.
-///
-/// When `ai_response` is `Some`, merges AI-identified chains with
-/// rule-based chains (deduplicating by name). When `None`, returns
-/// only rule-based chains.
-#[must_use]
-pub fn correlate_with_ai(findings: &[Finding], ai_response: Option<&str>) -> Vec<AttackChain> {
+/// Callers that use a process-backed provider must authorize its external-tool
+/// effect before calling this function. An unavailable or failed provider is a
+/// no-op over the deterministic rule result.
+pub async fn correlate_with_provider(
+    provider: &dyn AiProvider,
+    findings: &[Finding],
+) -> Vec<AttackChain> {
     let mut chains = correlate(findings);
+    if !provider.is_available() {
+        return chains;
+    }
 
-    if let Some(response) = ai_response {
-        let ai_chains = parse_correlation_response(response);
-        for ai_chain in ai_chains {
-            if !chains.iter().any(|c| c.name == ai_chain.name) {
-                chains.push(ai_chain);
+    let request = CorrelationRequest::new(findings);
+    match provider.correlate(&request).await {
+        Ok(response) if response.validate_envelope(AiTask::Correlate).is_ok() => {
+            for candidate in response.payload {
+                if !chains.iter().any(|chain| chain.name == candidate.name) {
+                    chains.push(candidate);
+                }
             }
         }
+        Ok(_) | Err(_) => {}
     }
-
     chains
-}
-
-/// Extract a JSON array from a response that may contain markdown fences.
-fn extract_json_array(text: &str) -> &str {
-    // Try to find ```json ... ``` block
-    if let Some(start) = text.find("```json") {
-        let content_start = start + 7;
-        if let Some(end) = text[content_start..].find("```") {
-            return text[content_start..content_start + end].trim();
-        }
-    }
-    // Try to find bare ``` ... ``` block
-    if let Some(start) = text.find("```") {
-        let content_start = start + 3;
-        if let Some(end) = text[content_start..].find("```") {
-            return text[content_start..content_start + end].trim();
-        }
-    }
-    // Try the raw text
-    text.trim()
 }
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+
     use super::*;
+    use crate::ai::contracts::{
+        AiProviderError, AiProviderMetadata, AiProviderResponse, AiTask, AnalysisRequest,
+        PlanRequest, RemediationRequest, AI_CONTRACT_SCHEMA,
+    };
+    use crate::ai::types::{RemediationAnalysis, ScanPlan, StructuredAnalysis};
+    use crate::engine::correlation::ChainStep;
     use crate::engine::severity::Severity;
+
+    #[derive(Debug)]
+    struct CorrelationProvider {
+        available: bool,
+        response: Result<AiProviderResponse<Vec<AttackChain>>, AiProviderError>,
+    }
+
+    #[async_trait]
+    impl AiProvider for CorrelationProvider {
+        fn id(&self) -> &'static str {
+            "correlation-fixture"
+        }
+
+        fn name(&self) -> &'static str {
+            "Correlation fixture"
+        }
+
+        fn is_available(&self) -> bool {
+            self.available
+        }
+
+        async fn plan(
+            &self,
+            _request: &PlanRequest,
+        ) -> Result<AiProviderResponse<ScanPlan>, AiProviderError> {
+            Err(AiProviderError::Disabled)
+        }
+
+        async fn analyze(
+            &self,
+            _request: &AnalysisRequest,
+        ) -> Result<AiProviderResponse<StructuredAnalysis>, AiProviderError> {
+            Err(AiProviderError::Disabled)
+        }
+
+        async fn correlate(
+            &self,
+            _request: &CorrelationRequest,
+        ) -> Result<AiProviderResponse<Vec<AttackChain>>, AiProviderError> {
+            self.response.clone()
+        }
+
+        async fn remediate(
+            &self,
+            _request: &RemediationRequest,
+        ) -> Result<AiProviderResponse<RemediationAnalysis>, AiProviderError> {
+            Err(AiProviderError::Disabled)
+        }
+    }
 
     fn finding(module_id: &str, title: &str, severity: Severity) -> Finding {
         Finding::new(module_id, severity, title, "desc", "https://example.com")
     }
 
-    /// Prompt includes all findings.
-    #[test]
-    fn test_build_correlation_prompt() {
-        let findings = vec![
+    fn ai_chain(name: &str) -> AttackChain {
+        AttackChain {
+            name: name.to_string(),
+            severity: Severity::High,
+            description: "AI fixture".to_string(),
+            steps: vec![ChainStep {
+                module_id: "xss".to_string(),
+                title: "Reflected XSS".to_string(),
+                role: "entry".to_string(),
+            }],
+            remediation_priority: "high".to_string(),
+        }
+    }
+
+    fn response(chains: Vec<AttackChain>) -> AiProviderResponse<Vec<AttackChain>> {
+        AiProviderResponse {
+            schema: AI_CONTRACT_SCHEMA,
+            task: AiTask::Correlate,
+            payload: chains,
+            metadata: AiProviderMetadata::default(),
+            raw_response: "fixture".to_string(),
+        }
+    }
+
+    fn findings() -> Vec<Finding> {
+        vec![
             finding("xss", "Reflected XSS", Severity::High),
             finding("headers", "Missing CSP", Severity::Medium),
-        ];
-        let (system, user) = build_correlation_prompt(&findings);
-        assert!(system.contains("attack chains"));
-        assert!(user.contains("Reflected XSS"));
-        assert!(user.contains("Missing CSP"));
+        ]
     }
 
-    /// Parse valid JSON response.
-    #[test]
-    fn test_parse_correlation_response() {
-        let response = r#"[{"name": "Test Chain", "severity": "high", "description": "A test", "steps": [{"module_id": "xss", "title": "XSS", "role": "entry"}], "remediation_priority": "high"}]"#;
-        let chains = parse_correlation_response(response);
-        assert_eq!(chains.len(), 1);
-        assert_eq!(chains[0].name, "Test Chain");
+    #[tokio::test]
+    async fn typed_provider_adds_unique_chains_and_preserves_rule_results() {
+        let provider = CorrelationProvider {
+            available: true,
+            response: Ok(response(vec![ai_chain("AI-Discovered Chain")])),
+        };
+        let chains = correlate_with_provider(&provider, &findings()).await;
+        assert!(chains.iter().any(|chain| chain.name.contains("Session Hijacking")));
+        assert!(chains.iter().any(|chain| chain.name == "AI-Discovered Chain"));
     }
 
-    /// Parse response with markdown fences.
-    #[test]
-    fn test_parse_correlation_response_markdown() {
-        let response = "Here's my analysis:\n```json\n[{\"name\": \"Fenced\", \"severity\": \"critical\", \"description\": \"test\", \"steps\": [], \"remediation_priority\": \"immediate\"}]\n```\n";
-        let chains = parse_correlation_response(response);
-        assert_eq!(chains.len(), 1);
-        assert_eq!(chains[0].name, "Fenced");
+    #[tokio::test]
+    async fn typed_provider_duplicate_is_not_appended() {
+        let duplicate = "Session Hijacking via XSS + Weak CSP";
+        let provider = CorrelationProvider {
+            available: true,
+            response: Ok(response(vec![ai_chain(duplicate)])),
+        };
+        let chains = correlate_with_provider(&provider, &findings()).await;
+        assert_eq!(chains.iter().filter(|chain| chain.name == duplicate).count(), 1);
     }
 
-    #[test]
-    fn test_parse_correlation_response_bare_markdown_fence() {
-        let response = "Analysis:\n```\n[{\"name\": \"Bare Fence\", \"severity\": \"medium\", \"description\": \"test\", \"steps\": [], \"remediation_priority\": \"medium\"}]\n```\nDone.";
-        let chains = parse_correlation_response(response);
-        assert_eq!(chains.len(), 1);
-        assert_eq!(chains[0].name, "Bare Fence");
-    }
-
-    /// Invalid response → empty vec (graceful fallback).
-    #[test]
-    fn test_parse_correlation_response_invalid() {
-        assert!(parse_correlation_response("not json").is_empty());
-        assert!(parse_correlation_response("").is_empty());
-    }
-
-    /// `correlate_with_ai` merges AI + rule-based chains.
-    #[test]
-    fn test_correlate_with_ai_merges() {
-        let findings = vec![
-            finding("xss", "Reflected XSS", Severity::High),
-            finding("headers", "Missing CSP", Severity::Medium),
-        ];
-        let ai_response = r#"[{"name": "AI-Discovered Chain", "severity": "high", "description": "AI found this", "steps": [], "remediation_priority": "high"}]"#;
-        let chains = correlate_with_ai(&findings, Some(ai_response));
-        // Should have rule-based chain + AI chain
-        assert!(chains.iter().any(|c| c.name.contains("Session Hijacking")));
-        assert!(chains.iter().any(|c| c.name.contains("AI-Discovered")));
-    }
-
-    /// `correlate_with_ai` without AI response = rule-based only.
-    #[test]
-    fn test_correlate_with_ai_fallback() {
-        let findings = vec![
-            finding("xss", "Reflected XSS", Severity::High),
-            finding("headers", "Missing CSP", Severity::Medium),
-        ];
-        let chains = correlate_with_ai(&findings, None);
-        assert!(chains.iter().any(|c| c.name.contains("Session Hijacking")));
-    }
-
-    /// AI duplicates are deduped by name.
-    #[test]
-    fn test_correlate_with_ai_dedup() {
-        let findings = vec![
-            finding("xss", "Reflected XSS", Severity::High),
-            finding("headers", "Missing CSP", Severity::Medium),
-        ];
-        let ai_response = r#"[{"name": "Session Hijacking via XSS + Weak CSP", "severity": "high", "description": "same as rule", "steps": [], "remediation_priority": "high"}]"#;
-        let chains = correlate_with_ai(&findings, Some(ai_response));
-        let session_count = chains.iter().filter(|c| c.name.contains("Session Hijacking")).count();
-        assert_eq!(session_count, 1, "duplicate should be deduped");
+    #[tokio::test]
+    async fn unavailable_or_failed_provider_returns_exact_rule_fallback() {
+        for provider in [
+            CorrelationProvider {
+                available: false,
+                response: Ok(response(vec![ai_chain("must not appear")])),
+            },
+            CorrelationProvider {
+                available: true,
+                response: Err(AiProviderError::MalformedResponse { task: AiTask::Correlate }),
+            },
+            CorrelationProvider {
+                available: true,
+                response: Ok(AiProviderResponse {
+                    task: AiTask::Plan,
+                    ..response(vec![ai_chain("wrong-task")])
+                }),
+            },
+        ] {
+            let chains = correlate_with_provider(&provider, &findings()).await;
+            assert_eq!(chains.len(), 1);
+            assert!(chains[0].name.contains("Session Hijacking"));
+        }
     }
 }

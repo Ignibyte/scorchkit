@@ -99,6 +99,10 @@ session, and prompts on standard input. Set `provider = "claude"` for the compat
 Legacy `claude_binary` configuration is still read and selects that adapter, but new configuration
 should use `provider` and `binary`.
 
+Planning, analysis, correlation, and remediation use the same typed `scorchkit.ai/v1` request and
+response contract for both adapters. Invalid or mismatched provider output is rejected. AI failure
+does not alter deterministic scan evidence, rule-based correlation, or local remediation guidance.
+
 ```bash
 scorchkit run https://owned.example --profile quick --analyze
 scorchkit analyze report.json --focus prioritize

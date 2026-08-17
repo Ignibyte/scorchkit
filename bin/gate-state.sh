@@ -88,6 +88,9 @@ scorchkit_focused_evidence_verifier() {
         focused_repaired_functions)
             printf '%s\n' "$SCORCHKIT_PROJECT_ROOT/bin/focused-mutation-evidence.sh"
             ;;
+        sealed_green_diff)
+            printf '%s\n' "$SCORCHKIT_PROJECT_ROOT/bin/sealed-mutation-baseline.sh"
+            ;;
         focused_changed_files)
             [ "$(jq -r '.ticket // empty' "$evidence_dir/summary.json")" = "TICKET-002" ] \
                 || return 1

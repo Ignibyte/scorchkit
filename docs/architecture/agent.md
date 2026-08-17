@@ -75,7 +75,8 @@ let manifest = generate_manifest(&hints);
 `agent::runner::run_autonomous` is an in-process convenience path. It runs quick reconnaissance,
 optional provider planning, the authorized profile, optional analysis, reporting, and optional
 project persistence. It uses the same engine and provider configuration as the CLI. AI failure is
-non-fatal and falls back to the selected deterministic profile.
+non-fatal and falls back to the selected deterministic profile. Provider planning and analysis use
+the versioned `scorchkit.ai/v1` task contract. Agent prompts cannot bypass that typed boundary.
 
 ## MCP transport
 
