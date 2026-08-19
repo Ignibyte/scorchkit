@@ -9,7 +9,9 @@ report/
   mod.rs         Module declarations
   terminal.rs    Colored terminal output (implemented)
   json.rs        JSON file output (implemented)
-  html.rs        HTML report generation (future)
+  html.rs        Self-contained HTML report (implemented)
+  pdf.rs         Print-oriented assessment report (implemented)
+  sarif.rs       SARIF 2.1.0 output (implemented)
 ```
 
 ## Terminal Report (`terminal.rs`)
@@ -43,7 +45,8 @@ pub fn print_report(result: &ScanResult)
   #1  [HIGH] Missing HSTS Header
   Description text...
   Target: https://example.com/
-  Evidence: Header value...       ← yellow (if present)
+  Evidence: Header value...       ← yellow (if present, already redacted)
+  Agent analysis [provider/model]  ← separately labeled (if attached)
   Fix: Add header...              ← green (if present)
   A05:2021  CWE-319               ← dimmed (if present)
 
@@ -135,15 +138,22 @@ Reports are saved as `scorchkit-{scan_id}.json` in the configured `output_dir` (
 }
 ```
 
-Optional fields (`evidence`, `remediation`, `owasp_category`, `cwe_id`) are omitted from JSON when `None` (via `skip_serializing_if`).
+Optional compatibility fields (`evidence`, `remediation`, `owasp_category`, `cwe_id`) are omitted
+when absent. Every finding also carries its canonical `scorchkit.finding/v2` companion with typed
+location, scanner provenance, stable identity, correlation keys, redacted evidence records, and
+separately labeled agent analysis. Legacy report JSON without that companion is upgraded when read.
 
-## Planned: HTML Report (`html.rs`)
+## SARIF report (`sarif.rs`)
 
-Will generate a self-contained HTML file with:
+SARIF uses typed source/runtime/package/artifact locations and writes the stable finding identity to
+`partialFingerprints.scorchkitFinding/v2`. Redacted evidence, scanner provenance, correlation keys,
+and labeled agent analysis are placed in namespaced result properties. Evidence content is never a
+fingerprint.
+
+## HTML and PDF reports
+
+The human-readable reports generate:
 - Styled finding cards with severity color coding
 - Summary chart (findings by severity)
-- Expandable evidence sections
-- Table of contents with anchor links
+- Redacted evidence and separately labeled agent-analysis sections
 - Print-friendly CSS
-
-Implementation approach: embedded HTML template string or `minijinja` templating.

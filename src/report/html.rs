@@ -32,6 +32,24 @@ fn render_findings_html(result: &ScanResult) -> String {
         let remediation = f.remediation.as_deref().unwrap_or("");
         let owasp = f.owasp_category.as_deref().unwrap_or("");
         let cwe = f.cwe_id.map_or(String::new(), |c| format!("CWE-{c}"));
+        let agent_analysis_html = f
+            .canonical_appsec()
+            .agent_analysis
+            .iter()
+            .fold(String::new(), |mut output, analysis| {
+                let model = analysis
+                    .model
+                    .as_deref()
+                    .map_or_else(String::new, |model| format!("/{model}"));
+                let _ = write!(
+                    output,
+                    "<div class=\"agent-analysis\"><strong>Agent analysis [{}{}]:</strong> {}</div>",
+                    html_escape(&analysis.provider),
+                    html_escape(&model),
+                    html_escape(&analysis.summary)
+                );
+                output
+            });
         // JUSTIFICATION: confidence is 0.0–1.0, well within u8 range
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let confidence_pct = (f.confidence * 100.0) as u8;
@@ -49,6 +67,7 @@ fn render_findings_html(result: &ScanResult) -> String {
   <div class="finding-meta">
     <div><strong>Target:</strong> {target}</div>
     {evidence_html}
+    {agent_analysis_html}
     {remediation_html}
     <div class="tags">{owasp} {cwe}</div>
   </div>
@@ -68,6 +87,7 @@ fn render_findings_html(result: &ScanResult) -> String {
                     html_escape(evidence)
                 )
             },
+            agent_analysis_html = agent_analysis_html,
             remediation_html = if remediation.is_empty() {
                 String::new()
             } else {
@@ -128,6 +148,7 @@ fn render_html(result: &ScanResult) -> String {
   .finding-meta div {{ margin-bottom: 0.25rem; }}
   .finding-meta code {{ background: #1f2937; padding: 2px 6px; border-radius: 3px; font-size: 0.85rem; word-break: break-all; }}
   .remediation {{ color: #3fb950; }}
+  .agent-analysis {{ color: #d2a8ff; border-left: 2px solid #8957e5; padding-left: 0.5rem; }}
   .tags {{ color: #8b949e; font-size: 0.85rem; margin-top: 0.5rem; }}
   .footer {{ margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #30363d; color: #8b949e; font-size: 0.85rem; }}
   @media print {{ body {{ background: #fff; color: #000; }} .finding {{ border-color: #ddd; background: #fff; }} }}
@@ -186,5 +207,56 @@ fn format_duration(
         format!("{secs}s")
     } else {
         format!("{}m {}s", secs / 60, secs % 60)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use super::*;
+    use crate::engine::finding::Finding;
+    use crate::engine::observation::AgentAnalysisRecord;
+    use crate::engine::severity::Severity;
+    use crate::engine::target::Target;
+
+    #[test]
+    fn html_report_renders_findings_and_document_shell() {
+        let now = Utc::now();
+        let finding = Finding::new(
+            "semgrep",
+            Severity::High,
+            "Unsafe <eval>",
+            "User input reaches eval",
+            "src/app.py:42",
+        )
+        .with_evidence("result = eval(user_input)")
+        .with_agent_analysis(AgentAnalysisRecord::new(
+            "codex-security",
+            Some("trusted-security".to_string()),
+            "Validated source-to-sink path",
+            Vec::new(),
+            now,
+        ));
+        let result = ScanResult::new(
+            "html-test".to_string(),
+            Target::parse("https://example.com").expect("valid target"),
+            now,
+            vec![finding],
+            vec!["semgrep".to_string()],
+            Vec::new(),
+        );
+
+        let findings = render_findings_html(&result);
+        assert!(findings.contains("Unsafe &lt;eval&gt;"));
+        assert!(findings.contains("result = eval(user_input)"));
+        assert!(findings.contains("Agent analysis [codex-security/trusted-security]"));
+
+        let document = render_html(&result);
+        assert!(document.starts_with("<!DOCTYPE html>"));
+        assert!(document.contains("ScorchKit Security Report"));
+        assert!(document.contains("Unsafe &lt;eval&gt;"));
+        assert!(document.contains("Scan ID: html-test"));
+        assert!(document.ends_with("</html>"));
     }
 }

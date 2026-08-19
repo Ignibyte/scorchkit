@@ -5,6 +5,14 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Versioned application-security evidence (TICKET-010 / SK-035)** — Added the provider-neutral
+  `scorchkit.finding/v2` observation contract with typed source, runtime, package, artifact, and
+  legacy locations. It records scanner provenance, deterministic finding and evidence identities,
+  explicit correlation keys, and separately labeled agent analysis. Compatibility migration stays
+  behind the existing `Finding` facade. HTTP evidence now redacts sensitive headers, query values,
+  and keyed bodies before persistence or serialization. Semgrep and Nuclei emit enriched source and
+  runtime observations. PostgreSQL appends distinct evidence and analysis records transactionally.
+  JSON, SARIF, HTML, PDF, and terminal reports consume the same canonical record.
 - **Executable delivery-hook enforcement (TICKET-009)** — Restored the canonical pre-commit hook's
   executable Git mode, made pipeline diagnostics fail closed for missing, untracked, symlinked,
   non-executable-index, and non-executable-checkout hooks, and added a real Git commit fixture that

@@ -29,6 +29,7 @@ pub mod infra_module;
 pub mod infra_target;
 pub mod module_trait;
 pub mod network_credentials;
+pub mod observation;
 pub mod oob;
 pub mod policy;
 pub(crate) mod policy_http;

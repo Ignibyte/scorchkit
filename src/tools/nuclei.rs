@@ -7,7 +7,10 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
-use scorchkit_core::AdapterParseOutcome;
+use scorchkit_core::{
+    AdapterParseOutcome, HttpEvidence, HttpParameterIdentity, ObservationLocation,
+    ScannerProvenance,
+};
 
 /// Template-based vulnerability scanning via nuclei.
 #[derive(Debug)]
@@ -152,6 +155,11 @@ fn parse_nuclei_record(
         }
     }
 
+    let route = url::Url::parse(matched_at).ok().map(|url| url.path().to_string());
+    let parameter = record
+        .get("parameter")
+        .and_then(serde_json::Value::as_str)
+        .map(|name| HttpParameterIdentity::new(name, "unknown"));
     let mut finding = Finding::new(
         "nuclei",
         severity,
@@ -159,7 +167,9 @@ fn parse_nuclei_record(
         description,
         matched_at,
     )
+    .with_location(ObservationLocation::Runtime { uri: matched_at.to_string(), route, parameter })
     .with_evidence(evidence_parts.join(" | "));
+    finding = attach_nuclei_context(finding, record, template_id, matched_at);
     if let Some(tags) = info.get("tags").and_then(serde_json::Value::as_str) {
         if let Some(owasp) = map_nuclei_tags_to_owasp(tags) {
             finding = finding.with_owasp(owasp);
@@ -187,6 +197,43 @@ fn parse_nuclei_record(
         }
     }
     Ok(finding.with_confidence(0.8))
+}
+
+fn attach_nuclei_context(
+    mut finding: Finding,
+    record: &serde_json::Map<String, serde_json::Value>,
+    template_id: &str,
+    matched_at: &str,
+) -> Finding {
+    let rule_digest =
+        record.get("template-digest").and_then(serde_json::Value::as_str).map(str::to_string);
+    let mut provenance =
+        ScannerProvenance::new("nuclei", finding.timestamp).with_rule(template_id, rule_digest);
+    if let Some(version) = record.get("nuclei-version").and_then(serde_json::Value::as_str) {
+        provenance = provenance.with_version(version);
+    }
+    if let Some(template_path) = record.get("template-path").and_then(serde_json::Value::as_str) {
+        provenance = provenance.with_config(template_path);
+    }
+    finding = finding.with_provenance(provenance);
+
+    let Some(request) = record.get("request").and_then(serde_json::Value::as_str) else {
+        return finding;
+    };
+    let method = request.split_whitespace().next().unwrap_or("UNKNOWN");
+    let response = record.get("response").and_then(serde_json::Value::as_str);
+    let status_code = response
+        .and_then(|response| response.split_whitespace().nth(1))
+        .and_then(|status| status.parse::<u16>().ok())
+        .unwrap_or_default();
+    let mut http = HttpEvidence::new(method, matched_at, status_code).with_request_body(request);
+    if let Some(response) = response {
+        http = http.with_response_body(response);
+    }
+    if let Some(persona) = record.get("auth-persona").and_then(serde_json::Value::as_str) {
+        http = http.with_authentication_persona(persona);
+    }
+    finding.with_http_evidence(http)
 }
 
 /// Map nuclei tags to OWASP categories.
@@ -299,5 +346,34 @@ mod tests {
             .as_deref()
             .is_some_and(|value| { value.contains("Extracted: proof-token") }));
         assert_eq!(finding.remediation.as_deref(), Some("See: https://example.com/advisory"));
+    }
+
+    #[test]
+    fn nuclei_record_preserves_runtime_provenance_and_redacted_http_evidence() {
+        let record = serde_json::json!({
+            "template-id": "login-probe",
+            "template-digest": "sha256:abc",
+            "template-path": "http/login-probe.yaml",
+            "nuclei-version": "3.4.0",
+            "info": {"name": "Login probe", "severity": "medium"},
+            "matched-at": "https://example.com/login?access_token=secret",
+            "parameter": "password",
+            "auth-persona": "standard-user",
+            "request": "POST /login HTTP/1.1\r\nAuthorization: Bearer secret\r\n\r\npassword=secret",
+            "response": "HTTP/1.1 401 Unauthorized\r\nSet-Cookie: session=secret"
+        });
+        let finding = parse_nuclei_record(&record, "https://example.com").expect("valid record");
+        assert!(matches!(
+            finding.appsec.location,
+            ObservationLocation::Runtime { ref route, ref parameter, .. }
+                if route.as_deref() == Some("/login")
+                    && parameter.as_ref().is_some_and(|value| value.name == "password")
+        ));
+        assert_eq!(finding.appsec.provenance.scanner_version.as_deref(), Some("3.4.0"));
+        assert_eq!(finding.appsec.provenance.rule_digest.as_deref(), Some("sha256:abc"));
+        let json = serde_json::to_string(&finding).expect("serialize finding");
+        assert!(!json.contains("Bearer secret"));
+        assert!(!json.contains("password=secret"));
+        assert!(json.contains("standard-user"));
     }
 }

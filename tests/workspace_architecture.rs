@@ -93,6 +93,10 @@ fn compatibility_facade_reexports_the_package_owned_type_identities() {
         std::any::TypeId::of::<scorchkit_core::Finding>()
     );
     assert_eq!(
+        std::any::TypeId::of::<scorchkit::engine::observation::FindingRecordV2>(),
+        std::any::TypeId::of::<scorchkit_core::FindingRecordV2>()
+    );
+    assert_eq!(
         std::any::TypeId::of::<scorchkit::Engagement>(),
         std::any::TypeId::of::<scorchkit_policy::Engagement>()
     );

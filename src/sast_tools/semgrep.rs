@@ -12,7 +12,7 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
-use scorchkit_core::AdapterParseOutcome;
+use scorchkit_core::{AdapterParseOutcome, ObservationLocation, ScannerProvenance, SourceRegion};
 
 /// Multi-language static analysis via Semgrep.
 #[derive(Debug)]
@@ -97,6 +97,8 @@ fn parse_semgrep_output_v1(stdout: &str) -> AdapterParseOutcome<Vec<Finding>> {
     }
 
     let mut findings = Vec::with_capacity(results.len());
+    let scanner_version = root["version"].as_str();
+    let target_revision = root["git_meta"]["commit"].as_str();
     for (index, result) in results.iter().enumerate() {
         let Some(check_id) = result["check_id"].as_str() else {
             return AdapterParseOutcome::malformed(format!("result {} has no check_id", index + 1));
@@ -118,6 +120,9 @@ fn parse_semgrep_output_v1(stdout: &str) -> AdapterParseOutcome<Vec<Finding>> {
         };
         let severity_str = result["extra"]["severity"].as_str().unwrap_or("INFO");
         let lines = result["extra"]["lines"].as_str().unwrap_or("");
+        let start_column = result["start"]["col"].as_u64();
+        let end_line = result["end"]["line"].as_u64();
+        let end_column = result["end"]["col"].as_u64();
 
         let affected = format!("{path}:{line}");
 
@@ -128,7 +133,23 @@ fn parse_semgrep_output_v1(stdout: &str) -> AdapterParseOutcome<Vec<Finding>> {
             message,
             &affected,
         )
+        .with_location(ObservationLocation::Source {
+            path: path.to_string(),
+            region: Some(SourceRegion::new(line).with_bounds(start_column, end_line, end_column)),
+        })
         .with_confidence(0.8);
+
+        let rule_digest = result["extra"]["fingerprint"].as_str().map(str::to_string);
+        let mut provenance = ScannerProvenance::new("semgrep", finding.timestamp)
+            .with_rule(check_id, rule_digest)
+            .with_config("auto");
+        if let Some(version) = scanner_version {
+            provenance = provenance.with_version(version);
+        }
+        if let Some(revision) = target_revision {
+            provenance = provenance.with_target_revision(revision);
+        }
+        finding = finding.with_provenance(provenance);
 
         if !lines.is_empty() {
             finding = finding.with_evidence(lines);
@@ -196,6 +217,18 @@ mod tests {
         assert_eq!(findings[0].severity, Severity::High);
         assert_eq!(findings[0].cwe_id, Some(95));
         assert!(findings[0].evidence.as_ref().is_some_and(|e| e.contains("eval")));
+        assert!(matches!(
+            findings[0].appsec.location,
+            ObservationLocation::Source {
+                ref path,
+                region: Some(SourceRegion { start_line: 42, start_column: Some(5), .. })
+            } if path == "app/views.py"
+        ));
+        assert_eq!(
+            findings[0].appsec.provenance.rule_id.as_deref(),
+            Some("python.lang.security.audit.eval-detected")
+        );
+        assert_eq!(findings[0].appsec.provenance.config_identity.as_deref(), Some("auto"));
     }
 
     /// Verify empty or missing results produce no findings.

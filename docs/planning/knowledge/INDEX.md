@@ -66,6 +66,11 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-credential-use-separate-grant-001` | Require a separate exact credential-use grant before an external adapter can inherit or receive credentials, even when its scan and subprocess effects are already allowed. | `AAR-008-appsec-registry-adapters` |
 | `PR-scorchkit-parser-outcome-integrity-001` | Distinguish no records, valid findings, malformed records, and scanner-reported failure; never convert partial output into a clean result. | `AAR-008-appsec-registry-adapters` |
 | `PR-scorchkit-scoped-tool-artifacts-001` | Give each external-tool run scoped owned artifacts and make descriptor ownership match cleanup behavior. | `AAR-008-appsec-registry-adapters` |
+| `PR-scorchkit-canonical-evidence-identity-001` | Recursively canonicalize unordered structured evidence and length-prefix every identity component before hashing. | `AAR-010-appsec-evidence-v2` |
+| `PR-scorchkit-identity-schema-label-parity-001` | Version and persist record schemas and identity algorithms separately, with exact storage round-trip assertions for both labels. | `AAR-010-appsec-evidence-v2` |
+| `PR-scorchkit-public-evidence-revalidation-001` | Reapply redaction and normalization whenever public compatibility evidence crosses serialization, finding, report, or persistence boundaries. | `AAR-010-appsec-evidence-v2` |
+| `PR-scorchkit-finding-observation-transaction-001` | Serialize equivalent finding identities and append distinct evidence/analysis inside one transaction guarded by the identity lock. | `AAR-010-appsec-evidence-v2` |
+| `PR-scorchkit-mutation-branch-directness-001` | Kill a repaired mutation with an assertion on the immediate branch contract before relying on downstream round trips. | `AAR-010-appsec-evidence-v2` |
 
 ## Register
 
@@ -114,3 +119,8 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-linux-portability-validation-003` | portability bug | `AAR-009-precommit-hook-enforcement` |
 | `BF-scorchkit-empty-diff-mutation-artifacts-004` | verification bug | `AAR-009-precommit-hook-enforcement` |
 | `BF-scorchkit-parallel-readiness-races-005` | test reliability bug | `AAR-009-precommit-hook-enforcement` |
+| `BF-scorchkit-evidence-map-identity-nondeterminism-001` | evidence-integrity bug | `AAR-010-appsec-evidence-v2` |
+| `BF-scorchkit-identity-schema-label-drift-001` | persistence-contract bug | `AAR-010-appsec-evidence-v2` |
+| `BF-scorchkit-correlation-delimiter-collision-001` | identity-integrity bug | `AAR-010-appsec-evidence-v2` |
+| `BF-scorchkit-public-evidence-redaction-bypass-001` | secret-handling bug | `AAR-010-appsec-evidence-v2` |
+| `BF-scorchkit-mutation-incidental-normalization-001` | test-gap bug | `AAR-010-appsec-evidence-v2` |

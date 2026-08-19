@@ -19,15 +19,27 @@ PostgreSQL via `sqlx` (async, runtime queries with `FromRow` derives) behind a `
 projects (id, name, description, settings JSONB, created_at, updated_at)
     └── project_targets (id, project_id FK, url UNIQUE(project_id,url), label)
     └── scan_records (id, project_id FK, target_url, profile, started_at, completed_at, modules_run TEXT[], modules_skipped TEXT[], summary JSONB)
-        └── tracked_findings (id, scan_id FK, project_id FK, fingerprint, module_id, severity, title, description, affected_target, evidence, remediation, owasp_category, cwe_id, raw_finding JSONB, first_seen, last_seen, seen_count, status)
+        └── tracked_findings (id, scan_id FK, project_id FK, stable_identity, identity_schema, correlation_keys JSONB, compatibility fields, raw_finding JSONB, lifecycle fields)
+            ├── finding_evidence (scan_id FK, evidence_identity, evidence_schema, raw_evidence JSONB, collected_at)
+            └── finding_agent_analysis (analysis_identity, analysis_schema, raw_analysis JSONB, created_at)
 
 scan_jobs (id, root_job_id, parent_job_id, attempt, state, revision, owner_id, lease_expires_at, document JSONB, timestamps)
     └── scan_job_audit_events (job_id, revision, state, occurred_at, event JSONB)
 ```
 
-## Finding Deduplication
+## Finding identity and evidence preservation
 
-Fingerprint = SHA-256(module_id | title | affected_target). Deliberately excludes evidence and timestamp so the same vulnerability found on different scans maps to the same tracked finding. `affected_target` is included so XSS on `/login` and XSS on `/register` track separately.
+The canonical `scorchkit.finding/v2` identity uses a standards/correlation/rule weakness key plus a
+typed location. Evidence, descriptions, confidence, timestamps, and agent interpretation are
+excluded. Equivalent cross-scanner observations can therefore converge without using raw evidence
+as identity, while different locations remain separate. The old fingerprint remains only to migrate
+existing rows on first observation.
+
+Finding upsert, evidence insertion, and labeled analysis insertion share a transaction guarded by a
+project/finding advisory lock. Scanner evidence is unique per finding, scan, and evidence identity:
+repeat saves within one scan deduplicate, while later scans and different evidence remain available.
+Agent analysis has its own child table and cannot overwrite or masquerade as scanner evidence. See
+`docs/architecture/application-security-evidence.md`.
 
 ## Vulnerability Lifecycle
 
@@ -46,11 +58,11 @@ src/storage/
   models.rs     — compatibility re-exports
   projects.rs   — CRUD + target management
   scans.rs      — save/get/list scan records
-  findings.rs   — save with dedup, status lifecycle, query by severity/status/scan
+  findings.rs   — stable-identity upsert, append-preserved evidence/analysis, lifecycle queries
   jobs.rs       — provider-neutral job store adapter with transactional revision audit
   migrate.rs    — run embedded migrations
 migrations/
-  001_initial.sql … 008_scan_job_successor_uniqueness.sql
+  001_initial.sql … 009_appsec_evidence_v2.sql
 ```
 
 Scan job domain types, `JobStore`, and the in-memory store live in `scorchkit-executor::job`. The

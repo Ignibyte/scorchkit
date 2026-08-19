@@ -8,6 +8,7 @@
 //! without `weasyprint` installed. The PDF conversion is a thin subprocess
 //! wrapper that pipes HTML to `weasyprint - output.pdf`.
 
+use std::fmt::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -192,6 +193,23 @@ fn render_findings(findings: &[crate::engine::finding::Finding]) -> String {
             let remediation = f.remediation.as_deref().unwrap_or("");
             let owasp = f.owasp_category.as_deref().unwrap_or("—");
             let cwe = f.cwe_id.map_or_else(|| "—".to_string(), |c| format!("CWE-{c}"));
+            let analysis_rows = f.canonical_appsec().agent_analysis.iter().fold(
+                String::new(),
+                |mut output, analysis| {
+                    let model = analysis
+                        .model
+                        .as_deref()
+                        .map_or_else(String::new, |model| format!("/{model}"));
+                    let _ = write!(
+                        output,
+                        "<tr><th>Agent analysis [{}{}]</th><td>{}</td></tr>",
+                        html_escape(&analysis.provider),
+                        html_escape(&model),
+                        html_escape(&analysis.summary)
+                    );
+                    output
+                },
+            );
             let sev = f.severity.to_string().to_uppercase();
             let sev_class = f.severity.to_string();
             // JUSTIFICATION: confidence is 0.0–1.0, result fits in u8
@@ -212,6 +230,7 @@ fn render_findings(findings: &[crate::engine::finding::Finding]) -> String {
       <tr><th>OWASP Category</th><td>{owasp}</td></tr>
       <tr><th>CWE</th><td>{cwe}</td></tr>
       {evidence_row}
+      {analysis_rows}
     </table>
     {remediation_box}
   </div>"#,
@@ -232,6 +251,7 @@ fn render_findings(findings: &[crate::engine::finding::Finding]) -> String {
                         html_escape(evidence)
                     )
                 },
+                analysis_rows = analysis_rows,
                 remediation_box = if remediation.is_empty() {
                     String::new()
                 } else {

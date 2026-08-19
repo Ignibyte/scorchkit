@@ -13,6 +13,7 @@
 #[cfg(feature = "storage")]
 mod storage_tests {
     use scorchkit::engine::finding::Finding;
+    use scorchkit::engine::observation::AgentAnalysisRecord;
     use scorchkit::engine::severity::Severity;
     use scorchkit::storage;
     use scorchkit::storage::models::VulnStatus;
@@ -590,6 +591,10 @@ mod storage_tests {
 
         // 7. Update status
         let xss_finding = all.iter().find(|f| f.module_id == "xss").expect("xss finding");
+        let xss_evidence = storage::findings::list_evidence(&pool, xss_finding.id)
+            .await
+            .expect("list XSS evidence");
+        assert_eq!(xss_evidence.len(), 2, "each scan retains its evidence observation");
         storage::findings::update_finding_status(
             &pool,
             xss_finding.id,
@@ -604,6 +609,86 @@ mod storage_tests {
         assert_eq!(stored_scans.len(), 2);
 
         // 9. Cleanup
+        storage::projects::delete_project(&pool, project.id).await.expect("cleanup");
+    }
+
+    /// Equivalent cross-scanner observations converge while distinct evidence and agent analysis
+    /// remain append-preserved child records.
+    #[tokio::test]
+    async fn appsec_v2_cross_scanner_identity_preserves_distinct_evidence() {
+        let Some(pool) = test_pool().await else {
+            eprintln!("SKIP: DATABASE_URL not set");
+            return;
+        };
+        let project = create_test_project(&pool).await;
+        let now = chrono::Utc::now();
+        let scan = storage::scans::save_scan(
+            &pool,
+            project.id,
+            "src/app.py",
+            "code",
+            now,
+            Some(now),
+            &["semgrep".to_string(), "codeql".to_string()],
+            &[],
+            &serde_json::json!({}),
+        )
+        .await
+        .expect("save scan");
+
+        let semgrep = Finding::new(
+            "semgrep",
+            Severity::High,
+            "python.lang.security.audit.eval-detected",
+            "Dynamic evaluation of untrusted input",
+            "src/app.py:42",
+        )
+        .with_cwe(95)
+        .with_evidence("result = eval(user_input)")
+        .with_agent_analysis(AgentAnalysisRecord::new(
+            "codex-security",
+            Some("trusted-security".to_string()),
+            "Validated user input reaching eval",
+            Vec::new(),
+            now,
+        ));
+        let codeql = Finding::new(
+            "codeql",
+            Severity::High,
+            "Code injection",
+            "User-controlled data reaches dynamic evaluation",
+            "src/app.py:42",
+        )
+        .with_cwe(95)
+        .with_evidence("flow: request.args -> eval");
+
+        assert_eq!(
+            storage::findings::save_findings(&pool, project.id, scan.id, &[semgrep])
+                .await
+                .expect("save Semgrep finding"),
+            1
+        );
+        assert_eq!(
+            storage::findings::save_findings(&pool, project.id, scan.id, &[codeql])
+                .await
+                .expect("save CodeQL finding"),
+            0
+        );
+
+        let findings =
+            storage::findings::list_findings(&pool, project.id).await.expect("list findings");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].identity_schema, "scorchkit.finding-identity/v1");
+        let evidence =
+            storage::findings::list_evidence(&pool, findings[0].id).await.expect("list evidence");
+        assert_eq!(evidence.len(), 2);
+        assert_ne!(evidence[0].evidence_identity, evidence[1].evidence_identity);
+        let analysis = storage::findings::list_agent_analysis(&pool, findings[0].id)
+            .await
+            .expect("list analysis");
+        assert_eq!(analysis.len(), 1);
+        assert_eq!(analysis[0].analysis_schema, "scorchkit.agent-analysis/v1");
+
         storage::projects::delete_project(&pool, project.id).await.expect("cleanup");
     }
 }

@@ -83,8 +83,14 @@ pub struct TrackedFinding {
     pub scan_id: Uuid,
     /// The project this finding belongs to.
     pub project_id: Uuid,
-    /// Stable dedup hash: SHA-256(module_id || title || `affected_target`).
+    /// Compatibility fingerprint retained for legacy row migration.
     pub fingerprint: String,
+    /// Versioned identity schema.
+    pub identity_schema: String,
+    /// Stable application-security identity used for deduplication.
+    pub stable_identity: String,
+    /// Explicit cross-scanner correlation keys.
+    pub correlation_keys: serde_json::Value,
     /// Which module produced this finding.
     pub module_id: String,
     /// Severity level as string (critical, high, medium, low, info).
@@ -119,6 +125,46 @@ pub struct TrackedFinding {
     pub status_note: Option<String>,
     /// Timestamp of initial detection.
     pub found_at: DateTime<Utc>,
+}
+
+/// Append-preserved scanner evidence associated with a tracked finding.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct FindingEvidence {
+    /// Unique storage identifier.
+    pub id: Uuid,
+    /// Parent tracked finding.
+    pub tracked_finding_id: Uuid,
+    /// Scan that supplied this evidence.
+    pub scan_id: Uuid,
+    /// Deterministic evidence identity.
+    pub evidence_identity: String,
+    /// Versioned evidence schema.
+    pub evidence_schema: String,
+    /// Full typed, redacted evidence record.
+    pub raw_evidence: serde_json::Value,
+    /// Scanner collection time.
+    pub collected_at: DateTime<Utc>,
+    /// Storage insertion time.
+    pub created_at: DateTime<Utc>,
+}
+
+/// Append-preserved, explicitly labeled agent analysis.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct StoredAgentAnalysis {
+    /// Unique storage identifier.
+    pub id: Uuid,
+    /// Parent tracked finding.
+    pub tracked_finding_id: Uuid,
+    /// Deterministic analysis identity.
+    pub analysis_identity: String,
+    /// Versioned analysis schema.
+    pub analysis_schema: String,
+    /// Full labeled analysis record.
+    pub raw_analysis: serde_json::Value,
+    /// Analysis production time.
+    pub created_at: DateTime<Utc>,
+    /// Storage insertion time.
+    pub stored_at: DateTime<Utc>,
 }
 
 /// Vulnerability lifecycle status.
