@@ -519,8 +519,38 @@ pipeline_check() {
     echo "pipeline structure OK ($count active)"
 }
 
+commit_hook_problem() {
+    local entry entry_count hook_path index_mode
+    hook_path="$(git -C "$ROOT_DIR" config --get core.hooksPath 2>/dev/null || true)"
+    if [ "$hook_path" != ".githooks" ]; then
+        printf 'core.hooksPath is not .githooks; run git config core.hooksPath .githooks'
+        return 1
+    fi
+    if [ ! -f "$ROOT_DIR/.githooks/pre-commit" ] \
+        || [ -L "$ROOT_DIR/.githooks/pre-commit" ]; then
+        printf 'canonical .githooks/pre-commit is missing or is not a regular file'
+        return 1
+    fi
+    entry="$(git -C "$ROOT_DIR" ls-files -s -- .githooks/pre-commit 2>/dev/null)"
+    entry_count="$(printf '%s\n' "$entry" | awk 'NF { count++ } END { print count + 0 }')"
+    if [ "$entry_count" -ne 1 ]; then
+        printf 'canonical .githooks/pre-commit is not a single tracked index entry'
+        return 1
+    fi
+    index_mode="${entry%% *}"
+    if [ "$index_mode" != "100755" ]; then
+        printf 'canonical .githooks/pre-commit index mode is %s, expected 100755' "$index_mode"
+        return 1
+    fi
+    if [ ! -x "$ROOT_DIR/.githooks/pre-commit" ]; then
+        printf 'canonical .githooks/pre-commit is not executable in this checkout'
+        return 1
+    fi
+    return 0
+}
+
 doctor() {
-    local failures=0 tool hook_path
+    local failures=0 hook_problem tool
     for tool in cargo git jq shellcheck; do
         if command -v "$tool" >/dev/null 2>&1; then
             echo "$tool: OK"
@@ -530,11 +560,10 @@ doctor() {
         fi
     done
     pipeline_check || failures=1
-    hook_path="$(git -C "$ROOT_DIR" config --get core.hooksPath 2>/dev/null || true)"
-    if [ "$hook_path" = ".githooks" ]; then
-        echo "commit hook: wired"
+    if hook_problem="$(commit_hook_problem)"; then
+        echo "commit hook: ready"
     else
-        echo "commit hook: NOT WIRED (run git config core.hooksPath .githooks)"
+        echo "commit hook: NOT READY ($hook_problem)"
         failures=1
     fi
     if [ -n "${DATABASE_URL:-}" ] && command -v pg_isready >/dev/null 2>&1 \
@@ -559,7 +588,8 @@ receipt_status() {
 }
 
 selftest() {
-    local fixture tickets specs archive_spec_probe archive_ticket_probe active_link open_link
+    local active_link archive_spec_probe archive_ticket_probe doctor_output fixture open_link
+    local tickets specs
     fixture="$(mktemp -d /tmp/scorchkit-pipeline.XXXXXX)" || return 1
     PIPELINE_FIXTURE="$fixture"
     trap 'rm -rf "${PIPELINE_FIXTURE:-}"' EXIT
@@ -620,6 +650,67 @@ selftest() {
         echo "pipeline selftest failed: archive links were not rewritten" >&2
         return 1
     fi
+
+    git -C "$fixture" init -q || return 1
+    git -C "$fixture" config core.hooksPath .githooks
+    doctor_output="$fixture/doctor-output"
+    if SCORCHKIT_PIPELINE_ROOT="$fixture" bash "$SCRIPT_PATH" doctor \
+        > "$doctor_output" 2>&1; then
+        echo "pipeline selftest failed: doctor accepted a missing pre-commit hook" >&2
+        return 1
+    fi
+    grep -Fq 'canonical .githooks/pre-commit is missing' "$doctor_output" || {
+        echo "pipeline selftest failed: doctor did not identify the missing hook" >&2
+        return 1
+    }
+
+    mkdir -p "$fixture/.githooks"
+    cp "$SOURCE_ROOT/.githooks/pre-commit" "$fixture/.githooks/pre-commit" || return 1
+    chmod +x "$fixture/.githooks/pre-commit" || return 1
+    if SCORCHKIT_PIPELINE_ROOT="$fixture" bash "$SCRIPT_PATH" doctor \
+        > "$doctor_output" 2>&1; then
+        echo "pipeline selftest failed: doctor accepted an untracked pre-commit hook" >&2
+        return 1
+    fi
+    grep -Fq 'not a single tracked index entry' "$doctor_output" || {
+        echo "pipeline selftest failed: doctor did not identify the untracked hook" >&2
+        return 1
+    }
+
+    git -C "$fixture" add .githooks/pre-commit || return 1
+    git -C "$fixture" update-index --chmod=-x .githooks/pre-commit || return 1
+    if SCORCHKIT_PIPELINE_ROOT="$fixture" bash "$SCRIPT_PATH" doctor \
+        > "$doctor_output" 2>&1; then
+        echo "pipeline selftest failed: doctor accepted index mode 100644" >&2
+        return 1
+    fi
+    grep -Fq 'index mode is 100644, expected 100755' "$doctor_output" || {
+        echo "pipeline selftest failed: doctor did not identify the non-executable index mode" >&2
+        return 1
+    }
+
+    git -C "$fixture" update-index --chmod=+x .githooks/pre-commit || return 1
+    chmod -x "$fixture/.githooks/pre-commit" || return 1
+    if SCORCHKIT_PIPELINE_ROOT="$fixture" bash "$SCRIPT_PATH" doctor \
+        > "$doctor_output" 2>&1; then
+        echo "pipeline selftest failed: doctor accepted a non-executable checkout hook" >&2
+        return 1
+    fi
+    grep -Fq 'is not executable in this checkout' "$doctor_output" || {
+        echo "pipeline selftest failed: doctor did not identify the checkout mode" >&2
+        return 1
+    }
+
+    chmod +x "$fixture/.githooks/pre-commit" || return 1
+    SCORCHKIT_PIPELINE_ROOT="$fixture" bash "$SCRIPT_PATH" doctor \
+        > "$doctor_output" 2>&1 || {
+        echo "pipeline selftest failed: doctor rejected a ready pre-commit hook" >&2
+        return 1
+    }
+    grep -Fq 'commit hook: ready' "$doctor_output" || {
+        echo "pipeline selftest failed: doctor did not report the hook ready" >&2
+        return 1
+    }
     echo "pipeline selftest OK"
 }
 

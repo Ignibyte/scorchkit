@@ -5,6 +5,15 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Executable delivery-hook enforcement (TICKET-009)** — Restored the canonical pre-commit hook's
+  executable Git mode, made pipeline diagnostics fail closed for missing, untracked, symlinked,
+  non-executable-index, and non-executable-checkout hooks, and added a real Git commit fixture that
+  proves stale receipts are rejected and current receipts are accepted through normal hook
+  discovery. Advanced the locked transitive `h2` dependency to 0.4.16 after
+  `RUSTSEC-2026-0258` appeared during validation, and made successful empty DIFF mutation
+  selections produce explicit zero-mutant evidence without weakening failed or malformed results.
+  Hardened supported-host lifecycle and process-fixture readiness tests against parallel-load and
+  partial-file races without changing application behavior.
 - **Application-security adapter catalog (TICKET-008 / SK-034)** — Added the versioned
   `scorchkit.adapter/v1` descriptor across web, code, infrastructure, and cloud module families;
   application-only default catalogs for CLI, MCP, AI, agents, and named profiles; explicit retained

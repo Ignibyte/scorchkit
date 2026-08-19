@@ -1072,7 +1072,9 @@ mod tests {
     #[test]
     fn tool_path_resolution_returns_the_real_executable_and_rejects_missing_tools() {
         let shell = which_path("sh").expect("the supported host must provide sh");
-        assert!(shell.ends_with("/sh"), "unexpected sh path: {shell}");
+        let shell_path = std::path::Path::new(&shell);
+        assert!(shell_path.is_absolute(), "tool path was not absolute: {shell}");
+        assert!(shell_path.is_file(), "tool path was not a file: {shell}");
         assert_eq!(which_path("scorchkit-tool-that-does-not-exist-6f298d8d"), None);
     }
 

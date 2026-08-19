@@ -11,7 +11,7 @@ GATE_STATE_HELPER="${SCORCHKIT_GATE_STATE_HELPER:-$ROOT_DIR/bin/gate-state.sh}"
 . "$GATE_STATE_HELPER" || exit 2
 
 selftest() {
-    local fixture receipt receipt_backup receipt_tampered
+    local commit_output fixture receipt receipt_backup receipt_tampered
     fixture="$(mktemp -d /tmp/scorchkit-precommit.XXXXXX)" || return 1
     PRECOMMIT_FIXTURE="$fixture"
     trap 'rm -rf "${PRECOMMIT_FIXTURE:-}"' EXIT
@@ -64,7 +64,36 @@ selftest() {
         echo "pre-commit selftest failed: stale receipt was accepted" >&2
         return 1
     fi
-    echo "pre-commit receipt selftest OK"
+
+    mkdir -p "$fixture/.githooks" "$fixture/bin"
+    cp "$0" "$fixture/.githooks/pre-commit" || return 1
+    cp "$ROOT_DIR/bin/gate-state.sh" "$fixture/bin/gate-state.sh" || return 1
+    chmod +x "$fixture/.githooks/pre-commit" || return 1
+    git -C "$fixture" config core.hooksPath .githooks
+    git -C "$fixture" add probe.txt
+    cp "$receipt" "$fixture/.git/scorchkit-gate-receipt" || return 1
+    if commit_output="$(git -C "$fixture" commit -m stale-receipt 2>&1)"; then
+        echo "pre-commit selftest failed: Git accepted a stale delivery receipt" >&2
+        return 1
+    fi
+    if ! grep -Fq 'COMMIT BLOCKED: no current delivery-gate receipt matches this worktree' \
+        <<< "$commit_output"; then
+        echo "pre-commit selftest failed: Git did not invoke the ScorchKit hook" >&2
+        printf '%s\n' "$commit_output" >&2
+        return 1
+    fi
+
+    SCORCHKIT_PROJECT_ROOT="$fixture" \
+        SCORCHKIT_GATE_RECEIPT="$fixture/.git/scorchkit-gate-receipt" \
+        SCORCHKIT_GATE_MODE=diff \
+        bash -c '. "$1"; scorchkit_write_gate_receipt' _ "$fixture/bin/gate-state.sh" \
+        || return 1
+    if ! commit_output="$(git -C "$fixture" commit -m current-receipt 2>&1)"; then
+        echo "pre-commit selftest failed: Git rejected a current delivery receipt" >&2
+        printf '%s\n' "$commit_output" >&2
+        return 1
+    fi
+    echo "pre-commit receipt and Git invocation selftest OK"
 }
 
 if [ "${1:-}" = "--selftest" ]; then
@@ -85,4 +114,7 @@ if ! scorchkit_verify_gate_receipt; then
     exit 1
 fi
 
-[ "${1:-}" = "--verify-only" ] && echo "delivery receipt matches current worktree"
+if [ "${1:-}" = "--verify-only" ]; then
+    echo "delivery receipt matches current worktree"
+fi
+exit 0

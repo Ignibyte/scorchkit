@@ -289,7 +289,7 @@ verify_evidence() {
     local followup_actual_files=0 followup_actual_functions=0 followup_expected_functions
     local followup_functions followup_inventory
     local followup_missed=0
-    local followup_mutants followup_outcomes followup_selected=0 followup_score=0
+    local followup_mutants="" followup_outcomes="" followup_selected=0 followup_score=0
     local followup_timeout=0 followup_unviable=0 hypothetical_base snapshot_sha
     local summary_followup_caught=0 summary_followup_files=0 summary_followup_missed=0
     local summary_followup_selected=0 summary_followup_timeout=0 summary_followup_unviable=0

@@ -13,18 +13,19 @@ case "${1:---full}" in
     --diff | diff) MODE="diff" ;;
     --full | full) MODE="full" ;;
     --inspect | inspect) MODE="inspect" ;;
+    --selftest | selftest) MODE="selftest" ;;
     --shard | shard)
         MODE="shard"
         SHARD="${2:-}"
         ;;
     *)
-        echo "usage: bin/mutants.sh [--diff|--full|--inspect|--shard NUM/DEN]" >&2
+        echo "usage: bin/mutants.sh [--diff|--full|--inspect|--selftest|--shard NUM/DEN]" >&2
         exit 2
         ;;
 esac
 
 MUTATION_DATABASE_URL=""
-if [ "$MODE" != "inspect" ]; then
+if [ "$MODE" != "inspect" ] && [ "$MODE" != "selftest" ]; then
     MUTATION_DATABASE_URL="${SCORCHKIT_MUTATION_DATABASE_URL:-${DATABASE_URL:-}}"
     if [ -z "$MUTATION_DATABASE_URL" ]; then
         echo "database-backed mutation requires SCORCHKIT_MUTATION_DATABASE_URL or DATABASE_URL" >&2
@@ -53,8 +54,71 @@ need() {
     return 1
 }
 
-need cargo-mutants "cargo install cargo-mutants --locked" || exit 2
 need jq "brew install jq (macOS) or apt-get install jq (Linux)" || exit 2
+
+ensure_mutation_outcomes() {
+    local mode="$1"
+    local status="$2"
+    local out_dir="$3"
+    local outcomes="$out_dir/outcomes.json"
+
+    if [ -f "$outcomes" ] && jq -e '.outcomes | type == "array"' "$outcomes" >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ "$mode" != "diff" ] || [ "$status" -ne 0 ] || [ -e "$outcomes" ]; then
+        return 1
+    fi
+
+    # cargo-mutants exits successfully without creating an output directory when
+    # changed Rust lines contain no mutation-eligible production code (for example, a
+    # test-only edit). Preserve that successful empty result as explicit evidence.
+    mkdir -p "$out_dir" || return 1
+    jq -n '{success: true, total_mutants: 0, caught: 0, missed: 0, timeout: 0,
+        unviable: 0, outcomes: []}' > "$outcomes" || return 1
+    printf '[]\n' > "$out_dir/mutants.json" || return 1
+    : > "$out_dir/caught.txt"
+    : > "$out_dir/missed.txt"
+    : > "$out_dir/timeout.txt"
+    : > "$out_dir/unviable.txt"
+}
+
+mutation_outcomes_selftest() {
+    local selftest_root
+    selftest_root="$(mktemp -d "${TMPDIR:-/tmp}/scorchkit-mutants-selftest.XXXXXX")" || return 1
+
+    ensure_mutation_outcomes diff 0 "$selftest_root/empty" \
+        && jq -e '.success == true and .total_mutants == 0 and .outcomes == []' \
+            "$selftest_root/empty/outcomes.json" >/dev/null \
+        && [ -f "$selftest_root/empty/mutants.json" ] \
+        && [ -f "$selftest_root/empty/caught.txt" ] || {
+        rm -rf -- "$selftest_root"
+        echo "mutation outcomes selftest failed: successful empty diff was not normalized" >&2
+        return 1
+    }
+    if ensure_mutation_outcomes full 0 "$selftest_root/full" \
+        || ensure_mutation_outcomes diff 1 "$selftest_root/failed"; then
+        rm -rf -- "$selftest_root"
+        echo "mutation outcomes selftest failed: non-success result was normalized" >&2
+        return 1
+    fi
+    mkdir -p "$selftest_root/malformed"
+    printf '{"outcomes":"invalid"}\n' > "$selftest_root/malformed/outcomes.json"
+    if ensure_mutation_outcomes diff 0 "$selftest_root/malformed"; then
+        rm -rf -- "$selftest_root"
+        echo "mutation outcomes selftest failed: malformed result was normalized" >&2
+        return 1
+    fi
+
+    rm -rf -- "$selftest_root"
+    echo "mutation outcomes selftest OK"
+}
+
+if [ "$MODE" = "selftest" ]; then
+    mutation_outcomes_selftest
+    exit $?
+fi
+
+need cargo-mutants "cargo install cargo-mutants --locked" || exit 2
 
 JOBS="${SCORCHKIT_MUTATION_JOBS:-2}"
 if ! [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
@@ -250,7 +314,7 @@ esac
 
 OUT_DIR="$RESULT_PARENT/mutants.out"
 OUTCOMES="$OUT_DIR/outcomes.json"
-if [ ! -f "$OUTCOMES" ] || ! jq -e '.outcomes | type == "array"' "$OUTCOMES" >/dev/null 2>&1; then
+if ! ensure_mutation_outcomes "$MODE" "$MUTANTS_STATUS" "$OUT_DIR"; then
     echo "mutation run did not produce valid outcomes" >&2
     exit 1
 fi

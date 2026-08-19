@@ -41,6 +41,11 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-cancellation-whole-lifecycle-001` | Race cancellation across central work and adjacent async effects, then check it before publishing success. | `AAR-002-shared-job-executor` |
 | `PR-scorchkit-public-mode-dependency-contract-001` | Assert producer/consumer ordering through every public execution mode that owns a phase partition. | `AAR-002-shared-job-executor` |
 | `PR-scorchkit-ticket-diff-baseline-001` | Establish a canonical Git/receipt boundary before starting the next ticket that relies on diff mutation. | `AAR-002-shared-job-executor` |
+| `PR-scorchkit-git-hook-execution-contract-001` | Prove a repository hook through Git using its canonical checkout paths, and diagnose configured path, tracked mode, and checkout executability as separate readiness conditions. | `AAR-009-precommit-hook-enforcement` |
+| `PR-scorchkit-enforcement-two-arm-proof-002` | Every enforcement integration shall prove both a rejected invalid case and an accepted valid case through the production entry point. | `AAR-009-precommit-hook-enforcement` |
+| `PR-scorchkit-supported-host-semantic-assertions-003` | Cross-host tests shall assert executable and filesystem semantics, not a platform-specific symlink target name, and shell optionals read under `set -u` shall be initialized. | `AAR-009-precommit-hook-enforcement` |
+| `PR-scorchkit-empty-diff-mutation-evidence-004` | Normalize missing mutation outcomes only for a successful DIFF selection, persist explicit empty evidence, and reject full, failed, or malformed counterparts. | `AAR-009-precommit-hook-enforcement` |
+| `PR-scorchkit-exact-readiness-observation-005` | In parallel async and process fixtures, wait on the exact asserted condition with a bounded orthogonal budget; readiness files require complete valid content. | `AAR-009-precommit-hook-enforcement` |
 | `PR-scorchkit-store-invariants-falsification-001` | Enforce creation, replacement, transition, and lineage invariants inside every public store implementation and test direct callers against the shared contract. | `AAR-003-scan-job-lifecycle` |
 | `PR-scorchkit-exact-failure-source-001` | When fail-closed branches share a status, assert the selected error or state rather than failure status alone. | `AAR-003-scan-job-lifecycle` |
 | `PR-scorchkit-focused-evidence-generic-001` | Discover approved focused evidence from ticket metadata and verify its raw outcomes, timeouts, input transitions, and receipt-bound digest without ticket-number branches. | `AAR-003-scan-job-lifecycle` |
@@ -104,3 +109,8 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-ambient-credential-adapter-001` | authorization bug | `AAR-008-appsec-registry-adapters` |
 | `BF-scorchkit-parser-no-findings-conflation-001` | evidence-integrity bug | `AAR-008-appsec-registry-adapters` |
 | `BF-scorchkit-shared-tool-tempdir-001` | artifact-isolation bug | `AAR-008-appsec-registry-adapters` |
+| `BF-scorchkit-hook-wired-not-ready-001` | delivery-integrity bug | `AAR-009-precommit-hook-enforcement` |
+| `BF-scorchkit-hook-valid-receipt-rejected-002` | delivery-integrity bug | `AAR-009-precommit-hook-enforcement` |
+| `BF-scorchkit-linux-portability-validation-003` | portability bug | `AAR-009-precommit-hook-enforcement` |
+| `BF-scorchkit-empty-diff-mutation-artifacts-004` | verification bug | `AAR-009-precommit-hook-enforcement` |
+| `BF-scorchkit-parallel-readiness-races-005` | test reliability bug | `AAR-009-precommit-hook-enforcement` |

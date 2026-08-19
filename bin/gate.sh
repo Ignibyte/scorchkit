@@ -184,6 +184,7 @@ shellcheck_gate() {
     need shellcheck "brew install shellcheck" || return 1
     shellcheck -x bin/*.sh .githooks/* || return 1
     bash bin/feature-states.sh --selftest || return 1
+    bash bin/mutants.sh --selftest || return 1
     bash bin/focused-mutation-evidence.sh --selftest || return 1
     bash bin/sealed-mutation-baseline.sh --selftest || return 1
     bash bin/pipeline.sh selftest || return 1

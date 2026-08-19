@@ -924,10 +924,11 @@ sleep 60
     async fn wait_for_fixture_pid(path: &Path) -> rustix::process::Pid {
         for _ in 0..100 {
             if let Ok(raw) = std::fs::read_to_string(path) {
-                return rustix::process::Pid::from_raw(
-                    raw.parse::<i32>().expect("parse descendant PID"),
-                )
-                .expect("positive descendant PID");
+                if let Ok(raw_pid) = raw.trim().parse::<i32>() {
+                    if let Some(pid) = rustix::process::Pid::from_raw(raw_pid) {
+                        return pid;
+                    }
+                }
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }

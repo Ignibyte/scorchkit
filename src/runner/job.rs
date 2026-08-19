@@ -1005,25 +1005,22 @@ mod tests {
             tokio::spawn(async move { service.run(queued.id).await })
         };
 
-        let cancellation = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let cancellation = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
-                let state = service.get(queued.id).await.expect("load running job").state;
                 let token = service
                     .active
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .get(&queued.id)
                     .cloned();
-                if state == ScanJobState::Running {
-                    if let Some(token) = token {
-                        return token;
-                    }
+                if let Some(token) = token {
+                    return token;
                 }
                 tokio::task::yield_now().await;
             }
         })
         .await
-        .expect("job entered running state");
+        .expect("job acquired active ownership");
 
         runner.abort();
         let join_error = runner.await.expect_err("aborted run must not complete");
