@@ -261,6 +261,8 @@ impl AiFindingInput {
 /// Module descriptor supplied to the planning task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiModuleInput {
+    /// Versioned adapter-contract identity.
+    pub adapter_schema: String,
     /// Stable module identifier.
     pub id: String,
     /// Human-readable module name.
@@ -271,6 +273,20 @@ pub struct AiModuleInput {
     pub category: String,
     /// Whether the module starts an external tool.
     pub requires_external_tool: bool,
+    /// Application or compatibility domain served by the module.
+    pub security_domain: scorchkit_core::SecurityDomain,
+    /// Application lifecycle stage inspected by the module.
+    pub lifecycle_stage: scorchkit_core::LifecycleStage,
+    /// Target shapes accepted by the module.
+    pub target_kinds: Vec<scorchkit_core::AdapterTargetKind>,
+    /// Strongest effect declared by the adapter.
+    pub strongest_effect: crate::engine::policy::EffectClass,
+    /// Native output shape consumed by the adapter.
+    pub output_contract: scorchkit_core::AdapterOutputContract,
+    /// Provenance strategy used for reproducibility.
+    pub provenance: scorchkit_core::ProvenanceStrategy,
+    /// Ownership rule for adapter-created temporary artifacts.
+    pub temporary_artifacts: scorchkit_core::TemporaryArtifactPolicy,
 }
 
 impl AiModuleInput {
@@ -279,12 +295,23 @@ impl AiModuleInput {
     pub fn collect(modules: &[Box<dyn ScanModule>]) -> Vec<Self> {
         modules
             .iter()
-            .map(|module| Self {
-                id: module.id().to_string(),
-                name: module.name().to_string(),
-                description: module.description().to_string(),
-                category: module.category().to_string(),
-                requires_external_tool: module.requires_external_tool(),
+            .map(|module| {
+                let descriptor = module.descriptor();
+                Self {
+                    adapter_schema: descriptor.adapter.schema_version.to_string(),
+                    id: descriptor.id.to_string(),
+                    name: descriptor.name.to_string(),
+                    description: descriptor.description.to_string(),
+                    category: descriptor.category.to_string(),
+                    requires_external_tool: descriptor.requires_external_tool,
+                    security_domain: descriptor.adapter.security_domain,
+                    lifecycle_stage: descriptor.adapter.lifecycle_stage,
+                    target_kinds: descriptor.adapter.target_kinds.to_vec(),
+                    strongest_effect: descriptor.adapter.strongest_effect,
+                    output_contract: descriptor.adapter.output_contract,
+                    provenance: descriptor.adapter.provenance,
+                    temporary_artifacts: descriptor.adapter.temporary_artifacts,
+                }
             })
             .collect()
     }

@@ -45,6 +45,11 @@ pub trait CloudModule: Send + Sync {
     /// Return package-owned immutable module metadata.
     fn descriptor(&self) -> CloudModuleDescriptor<'_> {
         CloudModuleDescriptor {
+            adapter: crate::adapter_catalog::cloud_adapter_contract(
+                self.id(),
+                self.category(),
+                self.requires_external_tool(),
+            ),
             name: self.name(),
             id: self.id(),
             category: self.category(),

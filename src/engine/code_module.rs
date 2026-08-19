@@ -16,6 +16,11 @@ pub trait CodeModule: Send + Sync {
     /// Return package-owned immutable module metadata.
     fn descriptor(&self) -> CodeModuleDescriptor<'_> {
         CodeModuleDescriptor {
+            adapter: crate::adapter_catalog::code_adapter_contract(
+                self.id(),
+                self.category(),
+                self.requires_external_tool(),
+            ),
             name: self.name(),
             id: self.id(),
             category: self.category(),

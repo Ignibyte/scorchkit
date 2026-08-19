@@ -58,7 +58,8 @@ Parallel to `ScanModule`. Adds `languages()` method for language-aware filtering
 - `Sca` — software composition analysis (OSV-Scanner, Grype, cargo-audit, cargo-deny, Snyk-test, dep-audit)
 - `Secrets` — secret detection (Gitleaks)
 - `Iac` — infrastructure as code (Checkov, Hadolint, TFLint, KICS, Kubescape)
-- `Container` — container image / cloud-posture scanning (Grype, Dockle, ScoutSuite)
+- `Container` — container image analysis (Grype, Dockle) plus the explicit ScoutSuite
+  cloud-account compatibility adapter
 
 ### `Target::from_path()`
 
@@ -73,6 +74,10 @@ Constructs a `Target` with `file://` URL scheme from a filesystem path. This ena
 ## External SAST Tool Wrappers (`sast_tools/`)
 
 21 wrappers, registered in `sast_tools::register_modules()`.
+
+The default code catalog contains 20 of these wrappers plus the native dependency analyzer.
+`scoutsuite` remains registered but requires an explicit module-ID selection because it assesses a
+cloud account rather than application source or artifacts.
 
 | Tool | Category | Languages | Output Format | Exit Code |
 |------|----------|-----------|---------------|-----------|
@@ -127,8 +132,12 @@ Override with `--language <lang>`. Language-filtered modules (e.g. Bandit for py
 | Profile | Modules | Use Case |
 |---------|---------|----------|
 | quick | Secrets + SCA only | CI gate, fast checks |
-| standard | All SAST tools whose language matches | Comprehensive code analysis |
-| thorough | All SAST tools, unfiltered | Cross-language monorepo sweep |
+| standard | Application code modules whose language matches | Comprehensive code analysis |
+| thorough | Application code modules whose language matches | Same selection; reserved for later depth controls |
+
+All implicit code profiles exclude `scoutsuite`. An explicit `--modules scoutsuite` selection keeps
+the compatibility adapter available and still requires the normal code-path, credential, process,
+and effect authorization.
 
 ## Security: Evidence Redaction
 

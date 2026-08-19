@@ -54,6 +54,8 @@ impl ScanModule for SqlmapModule {
             .with_confidence(0.9)]);
         }
 
+        let output_dir = tempfile::tempdir()?;
+        let output_arg = format!("--output-dir={}", output_dir.path().display());
         let output = ctx
             .run_tool(
                 "sqlmap",
@@ -67,7 +69,7 @@ impl ScanModule for SqlmapModule {
                     "1",
                     "--forms",
                     "--crawl=2",
-                    "--output-dir=/tmp/scorchkit-sqlmap",
+                    &output_arg,
                 ],
                 Duration::from_mins(10),
             )
@@ -164,7 +166,21 @@ fn parse_sqlmap_output(output: &str, target_url: &str) -> Vec<Finding> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::config::AppConfig;
+    use crate::runner::subprocess::{ToolExecutor, ToolInvocation, ToolOutput};
+
+    #[derive(Debug)]
+    struct UnexpectedToolExecutor;
+
+    #[async_trait]
+    impl ToolExecutor for UnexpectedToolExecutor {
+        async fn execute(&self, invocation: ToolInvocation) -> Result<ToolOutput> {
+            panic!("unexpected tool execution: {}", invocation.program);
+        }
+    }
 
     // Tests for sqlmap console output parser.
 
@@ -198,5 +214,18 @@ back-end DBMS: MySQL >= 5.0\n\
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, Severity::Info);
         assert!(findings[0].title.contains("No Injection"));
+    }
+
+    #[tokio::test]
+    async fn query_without_an_assignment_skips_sqlmap_execution() {
+        let target = crate::engine::target::Target::parse("https://example.com/search?flag")
+            .expect("query-only target");
+        let client = reqwest::Client::new();
+        let context = ScanContext::new(target, Arc::new(AppConfig::default()), client, Vec::new())
+            .with_tool_executor(Arc::new(UnexpectedToolExecutor));
+
+        let findings = SqlmapModule.run(&context).await.expect("parameter guard result");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].title.contains("No Parameters to Test"));
     }
 }

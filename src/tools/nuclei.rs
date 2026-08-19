@@ -7,6 +7,7 @@ use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
 use crate::engine::severity::Severity;
+use scorchkit_core::AdapterParseOutcome;
 
 /// Template-based vulnerability scanning via nuclei.
 #[derive(Debug)]
@@ -57,15 +58,22 @@ impl ScanModule for NucleiModule {
             )
             .await?;
 
-        Ok(parse_nuclei_output(&output.stdout, target))
+        parse_nuclei_output_v1(&output.stdout, target).into_result("nuclei")
     }
 }
 
 /// Parse nuclei JSON-lines output into findings.
+#[cfg(test)]
 fn parse_nuclei_output(output: &str, target_url: &str) -> Vec<Finding> {
-    let mut findings = Vec::new();
+    parse_nuclei_output_v1(output, target_url).into_legacy()
+}
 
-    for line in output.lines() {
+fn parse_nuclei_output_v1(output: &str, target_url: &str) -> AdapterParseOutcome<Vec<Finding>> {
+    let mut findings = Vec::new();
+    let mut saw_record = false;
+
+    for (index, line) in output.lines().enumerate() {
+        saw_record = true;
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -73,77 +81,112 @@ fn parse_nuclei_output(output: &str, target_url: &str) -> Vec<Finding> {
 
         let json: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(error) => {
+                return AdapterParseOutcome::malformed(format!(
+                    "invalid JSONL record {}: {error}",
+                    index + 1
+                ));
+            }
         };
 
-        let template_id = json["template-id"].as_str().unwrap_or("unknown");
-        let name = json["info"]["name"].as_str().unwrap_or("Unknown Vulnerability");
-        let description = json["info"]["description"]
-            .as_str()
-            .unwrap_or("Vulnerability detected by nuclei template.");
-        let severity_str = json["info"]["severity"].as_str().unwrap_or("info");
-        let matched_at = json["matched-at"].as_str().unwrap_or(target_url);
-        let matcher_name = json["matcher-name"].as_str();
-        let extracted_results = json["extracted-results"].as_array();
-
-        let severity = match severity_str {
-            "critical" => Severity::Critical,
-            "high" => Severity::High,
-            "medium" => Severity::Medium,
-            "low" => Severity::Low,
-            _ => Severity::Info,
-        };
-
-        let mut evidence_parts = vec![format!("Template: {template_id}")];
-        if let Some(matcher) = matcher_name {
-            evidence_parts.push(format!("Matcher: {matcher}"));
-        }
-        if let Some(results) = extracted_results {
-            let extracted: Vec<&str> = results.iter().filter_map(|v| v.as_str()).take(3).collect();
-            if !extracted.is_empty() {
-                evidence_parts.push(format!("Extracted: {}", extracted.join(", ")));
+        match parse_nuclei_record(&json, target_url) {
+            Ok(finding) => findings.push(finding),
+            Err(reason) => {
+                return AdapterParseOutcome::malformed(format!(
+                    "JSONL record {} {reason}",
+                    index + 1
+                ));
             }
         }
-
-        let mut finding = Finding::new(
-            "nuclei",
-            severity,
-            format!("{name} [{template_id}]"),
-            description,
-            matched_at,
-        )
-        .with_evidence(evidence_parts.join(" | "));
-
-        // Map nuclei tags to OWASP categories
-        if let Some(tags) = json["info"]["tags"].as_str() {
-            if let Some(owasp) = map_nuclei_tags_to_owasp(tags) {
-                finding = finding.with_owasp(owasp);
-            }
-        }
-
-        // Add reference if available
-        if let Some(reference) = json["info"]["reference"].as_array() {
-            let refs: Vec<&str> = reference.iter().filter_map(|v| v.as_str()).take(2).collect();
-            if !refs.is_empty() {
-                finding = finding.with_remediation(format!("See: {}", refs.join(", ")));
-            }
-        }
-
-        // Extract CWE if present in classification
-        if let Some(cwe) = json["info"]["classification"]["cwe-id"].as_array() {
-            if let Some(first_cwe) = cwe.first().and_then(|v| v.as_str()) {
-                if let Some(id_str) = first_cwe.strip_prefix("CWE-") {
-                    if let Ok(id) = id_str.parse::<u32>() {
-                        finding = finding.with_cwe(id);
-                    }
-                }
-            }
-        }
-
-        findings.push(finding.with_confidence(0.8));
     }
 
-    findings
+    if !saw_record || findings.is_empty() {
+        AdapterParseOutcome::NoFindings
+    } else {
+        AdapterParseOutcome::Findings(findings)
+    }
+}
+
+fn parse_nuclei_record(
+    json: &serde_json::Value,
+    target_url: &str,
+) -> std::result::Result<Finding, &'static str> {
+    let Some(record) = json.as_object() else {
+        return Err("is not an object");
+    };
+    let Some(template_id) = record.get("template-id").and_then(serde_json::Value::as_str) else {
+        return Err("has no template-id");
+    };
+    let Some(info) = record.get("info").and_then(serde_json::Value::as_object) else {
+        return Err("has no info object");
+    };
+    let Some(name) = info.get("name").and_then(serde_json::Value::as_str) else {
+        return Err("has no info.name");
+    };
+    let Some(severity_name) = info.get("severity").and_then(serde_json::Value::as_str) else {
+        return Err("has no info.severity");
+    };
+    let severity = match severity_name {
+        "critical" => Severity::Critical,
+        "high" => Severity::High,
+        "medium" => Severity::Medium,
+        "low" => Severity::Low,
+        _ => Severity::Info,
+    };
+    let description = info
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Vulnerability detected by nuclei template.");
+    let matched_at =
+        record.get("matched-at").and_then(serde_json::Value::as_str).unwrap_or(target_url);
+
+    let mut evidence_parts = vec![format!("Template: {template_id}")];
+    if let Some(matcher) = record.get("matcher-name").and_then(serde_json::Value::as_str) {
+        evidence_parts.push(format!("Matcher: {matcher}"));
+    }
+    if let Some(results) = record.get("extracted-results").and_then(serde_json::Value::as_array) {
+        let extracted: Vec<&str> =
+            results.iter().filter_map(serde_json::Value::as_str).take(3).collect();
+        if !extracted.is_empty() {
+            evidence_parts.push(format!("Extracted: {}", extracted.join(", ")));
+        }
+    }
+
+    let mut finding = Finding::new(
+        "nuclei",
+        severity,
+        format!("{name} [{template_id}]"),
+        description,
+        matched_at,
+    )
+    .with_evidence(evidence_parts.join(" | "));
+    if let Some(tags) = info.get("tags").and_then(serde_json::Value::as_str) {
+        if let Some(owasp) = map_nuclei_tags_to_owasp(tags) {
+            finding = finding.with_owasp(owasp);
+        }
+    }
+    if let Some(references) = info.get("reference").and_then(serde_json::Value::as_array) {
+        let refs: Vec<&str> =
+            references.iter().filter_map(serde_json::Value::as_str).take(2).collect();
+        if !refs.is_empty() {
+            finding = finding.with_remediation(format!("See: {}", refs.join(", ")));
+        }
+    }
+    if let Some(cwe) = info
+        .get("classification")
+        .and_then(|value| value.get("cwe-id"))
+        .and_then(serde_json::Value::as_array)
+    {
+        if let Some(id) = cwe
+            .first()
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| value.strip_prefix("CWE-"))
+            .and_then(|value| value.parse::<u32>().ok())
+        {
+            finding = finding.with_cwe(id);
+        }
+    }
+    Ok(finding.with_confidence(0.8))
 }
 
 /// Map nuclei tags to OWASP categories.
@@ -201,5 +244,60 @@ mod tests {
     fn test_parse_nuclei_output_empty() {
         let findings = parse_nuclei_output("", "https://example.com");
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn malformed_nuclei_jsonl_is_not_reported_as_no_findings() {
+        for malformed in ["not json", "[]", r#"{"info": {}}"#] {
+            let outcome = parse_nuclei_output_v1(malformed, "https://example.com");
+            assert!(matches!(outcome, AdapterParseOutcome::Malformed { .. }));
+        }
+    }
+
+    #[test]
+    fn whitespace_records_are_an_explicit_no_findings_outcome() {
+        assert!(matches!(
+            parse_nuclei_output_v1("  \n\t", "https://example.com"),
+            AdapterParseOutcome::NoFindings
+        ));
+    }
+
+    #[test]
+    fn nuclei_severity_mapping_is_exact() {
+        for (name, expected) in [
+            ("critical", Severity::Critical),
+            ("high", Severity::High),
+            ("medium", Severity::Medium),
+            ("low", Severity::Low),
+            ("unknown", Severity::Info),
+        ] {
+            let record = serde_json::json!({
+                "template-id": "severity-probe",
+                "info": {"name": "Severity probe", "severity": name}
+            });
+            let finding = parse_nuclei_record(&record, "https://example.com")
+                .expect("valid severity fixture");
+            assert_eq!(finding.severity, expected, "severity {name}");
+        }
+    }
+
+    #[test]
+    fn nuclei_record_preserves_extracted_results_and_references() {
+        let record = serde_json::json!({
+            "template-id": "evidence-probe",
+            "info": {
+                "name": "Evidence probe",
+                "severity": "low",
+                "reference": ["https://example.com/advisory"]
+            },
+            "extracted-results": ["proof-token"]
+        });
+        let finding =
+            parse_nuclei_record(&record, "https://example.com").expect("valid evidence fixture");
+        assert!(finding
+            .evidence
+            .as_deref()
+            .is_some_and(|value| { value.contains("Extracted: proof-token") }));
+        assert_eq!(finding.remediation.as_deref(), Some("See: https://example.com/advisory"));
     }
 }

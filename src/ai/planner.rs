@@ -15,7 +15,7 @@ use crate::engine::error::{Result, ScorchError};
 use crate::engine::module_trait::ModuleCategory;
 use crate::engine::target::Target;
 use crate::facade::Engine;
-use crate::runner::orchestrator::{all_modules, Orchestrator};
+use crate::runner::orchestrator::{application_modules, Orchestrator};
 fn unknown_modules_for_warning(modules: &[String]) -> Option<&[String]> {
     (!modules.is_empty()).then_some(modules)
 }
@@ -63,12 +63,13 @@ impl ScanPlanner {
 
         let mut orchestrator = Orchestrator::new(ctx);
         orchestrator.register_default_modules();
+        orchestrator.apply_profile("quick");
         orchestrator.filter_by_category(ModuleCategory::Recon);
 
         let recon_result = orchestrator.run(true).await?;
 
         // Phase B: Build prompt and call the configured provider.
-        let modules = all_modules();
+        let modules = application_modules();
         let request = PlanRequest::new(
             target.url.as_str(),
             &recon_result.findings,

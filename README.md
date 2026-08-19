@@ -1,9 +1,11 @@
 # ScorchKit
 
-ScorchKit is an agent-neutral security testing engine written in Rust. It runs deterministic DAST,
-SAST, infrastructure, and cloud checks behind one engagement policy, then preserves findings and
-evidence for an agent or human to analyze. Codex is the preferred agent host. The scanning core does
-not depend on an agent vendor, and a Claude CLI compatibility adapter remains available.
+ScorchKit is an agent-neutral application-security testing engine written in Rust. It runs
+deterministic SAST, SCA, secret, artifact, web, and API checks behind one engagement policy, then
+preserves findings and evidence for an agent or human to analyze. Codex is the preferred agent host.
+The scanning core does not depend on an agent vendor, and a Claude CLI compatibility adapter remains
+available. General network, enterprise, and cloud-account scanners are explicit compatibility
+features rather than default product selections.
 
 ScorchKit is a testing tool, not an authorization system. Only scan systems you own or have explicit
 permission to test. A project target, prompt, or agent approval does not replace an engagement grant.
@@ -12,15 +14,15 @@ permission to test. A project target, prompt, or agent approval does not replace
 
 | Family | Registered modules | Notes |
 |---|---:|---|
-| DAST and recon | 91 | 45 built-in modules and 46 tool adapters, including one long-lived Interactsh adapter |
-| SAST | 22 | 1 native dependency analyzer and 21 tool adapters |
-| Infrastructure | Up to 5 | 4 core probes plus optional CVE correlation |
-| Cloud | 5 | Bounded external-tool adapters; native provider SDK modules are quarantined and Pacu is not registered |
+| DAST and recon | 91 | 69 application modules by default; 22 explicit compatibility modules |
+| SAST | 22 | 21 application modules by default; ScoutSuite is explicit cloud-account compatibility |
+| Infrastructure | Up to 5 | Explicit compatibility family: 4 core probes plus optional CVE correlation |
+| Cloud | 5 | Explicit compatibility family of bounded tool adapters; native provider SDK modules remain quarantined |
 | Maximum | 123 | All production registries, including optional CVE correlation |
 
-The authoritative catalogs are [the module matrix](docs/guide/module-matrix.md) and the source
-registries under `src/recon`, `src/scanner`, `src/tools`, `src/sast_tools`, `src/infra`, and
-`src/cloud`.
+The [application-security catalog](docs/architecture/application-security-catalog.md) explains the
+default and compatibility split. The source registries remain authoritative for the complete
+inventory.
 
 ## Workspace architecture
 
@@ -67,9 +69,9 @@ no authorization and cannot start a scan until an engagement is added.
 | Profile | Selection | Required effect |
 |---|---|---|
 | `quick` | `headers`, `tech`, `ssl`, `misconfig` | `active-safe` |
-| `standard` | All built-in DAST modules | `intrusive` |
-| `thorough` | Built-ins and non-restricted external tools | `intrusive` plus `external-tool` capability |
-| `pentest` | All modules, including `commix`, `hydra`, `nxc`, and `smbmap` | Explicit intrusive, credential-test, credential-use, and exploit grants |
+| `standard` | Built-in application DAST modules | `intrusive` |
+| `thorough` | Application modules except credential-test and exploit effects | `intrusive` plus `external-tool` capability |
+| `pentest` | All 69 application modules, including `commix` | Explicit intrusive, external-tool, and exploit grants |
 
 Broader profiles are never inferred from installed tools. Expand the engagement deliberately and
 review the resulting scope before using them.
@@ -79,6 +81,7 @@ Common commands:
 ```bash
 scorchkit doctor
 scorchkit modules --check-tools
+scorchkit modules --include-compatibility
 scorchkit code ./src
 scorchkit infra 192.0.2.10
 scorchkit assess --url https://owned.example --code ./src --infra 192.0.2.10
@@ -180,6 +183,7 @@ Read [CONSTITUTION.md](CONSTITUTION.md), [AGENTS.md](AGENTS.md), and the
 - [Getting started](docs/guide/getting-started.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [Cargo workspace boundaries](docs/architecture/workspace.md)
+- [Application-security adapter catalog](docs/architecture/application-security-catalog.md)
 - [Agent integration](docs/architecture/agent.md)
 - [Codex plugin](docs/guide/codex-plugin.md)
 - [AI adapters](docs/architecture/ai.md)

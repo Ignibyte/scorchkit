@@ -120,6 +120,7 @@ pub async fn run_autonomous(
     let ctx = engine.dast_context_for_target(target.clone(), "quick")?;
     let mut recon_orchestrator = Orchestrator::new(ctx);
     recon_orchestrator.register_default_modules();
+    recon_orchestrator.apply_profile("quick");
     recon_orchestrator.filter_by_category(ModuleCategory::Recon);
 
     let recon_result = recon_orchestrator.run(true).await?;

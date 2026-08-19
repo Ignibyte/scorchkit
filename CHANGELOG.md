@@ -5,6 +5,12 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Application-security adapter catalog (TICKET-008 / SK-034)** — Added the versioned
+  `scorchkit.adapter/v1` descriptor across web, code, infrastructure, and cloud module families;
+  application-only default catalogs for CLI, MCP, AI, agents, and named profiles; explicit retained
+  compatibility selection; descriptor-backed DAST effect classification; environment and working
+  directory fields on bounded tool invocations; and typed no-findings/findings/malformed outcomes
+  for the Nuclei and Semgrep parsers. Existing module IDs and finding serialization remain intact.
 - **Cargo workspace boundaries (TICKET-007 / SK-033)** — Extracted stable policy, domain,
   configuration, bounded executor, subprocess, scanner-family, persistence-model, MCP, CLI, and
   agent contracts into 13 internal packages. The root package remains the composition and

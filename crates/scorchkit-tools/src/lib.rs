@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -24,6 +25,15 @@ pub enum ExitPolicy {
     AllowNonZero,
 }
 
+/// Whether a child process inherits the parent environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvironmentPolicy {
+    /// Preserve the current process environment and apply declared overrides.
+    Inherit,
+    /// Clear the environment before applying declared values.
+    Clear,
+}
+
 /// Complete, owned description of one external tool execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolInvocation {
@@ -39,6 +49,12 @@ pub struct ToolInvocation {
     pub output_limit_bytes: usize,
     /// Optional bytes written to the child's standard input before EOF.
     pub stdin: Option<Vec<u8>>,
+    /// Parent-environment handling policy.
+    pub environment_policy: EnvironmentPolicy,
+    /// Explicit environment values applied after the inheritance policy.
+    pub environment: BTreeMap<String, String>,
+    /// Optional working directory for the child process.
+    pub working_directory: Option<PathBuf>,
 }
 
 impl ToolInvocation {
@@ -62,6 +78,9 @@ impl ToolInvocation {
             exit_policy,
             output_limit_bytes: DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
             stdin: None,
+            environment_policy: EnvironmentPolicy::Inherit,
+            environment: BTreeMap::new(),
+            working_directory: None,
         }
     }
 
@@ -76,6 +95,27 @@ impl ToolInvocation {
     #[must_use]
     pub fn with_stdin(mut self, stdin: impl Into<Vec<u8>>) -> Self {
         self.stdin = Some(stdin.into());
+        self
+    }
+
+    /// Clear the parent environment before applying declared values.
+    #[must_use]
+    pub const fn with_clean_environment(mut self) -> Self {
+        self.environment_policy = EnvironmentPolicy::Clear;
+        self
+    }
+
+    /// Add or replace one explicit child-process environment value.
+    #[must_use]
+    pub fn with_environment(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.environment.insert(name.into(), value.into());
+        self
+    }
+
+    /// Set the working directory used by the child process.
+    #[must_use]
+    pub fn with_working_directory(mut self, path: impl Into<PathBuf>) -> Self {
+        self.working_directory = Some(path.into());
         self
     }
 }
@@ -284,6 +324,13 @@ async fn execute_system(invocation: ToolInvocation) -> Result<ToolOutput> {
     let resolved_program = resolve_tool_path(&invocation.program)?;
     let started = Instant::now();
     let mut command = tokio::process::Command::new(&resolved_program);
+    if invocation.environment_policy == EnvironmentPolicy::Clear {
+        command.env_clear();
+    }
+    command.envs(&invocation.environment);
+    if let Some(working_directory) = &invocation.working_directory {
+        command.current_dir(working_directory);
+    }
     command
         .args(&invocation.args)
         .stdin(if invocation.stdin.is_some() { Stdio::piped() } else { Stdio::null() })
@@ -661,6 +708,31 @@ mod tests {
         assert_eq!(invocation.exit_policy, ExitPolicy::RequireSuccess);
         assert_eq!(invocation.output_limit_bytes, DEFAULT_TOOL_OUTPUT_LIMIT_BYTES);
         assert!(invocation.stdin.is_none());
+        assert_eq!(invocation.environment_policy, EnvironmentPolicy::Inherit);
+        assert!(invocation.environment.is_empty());
+        assert!(invocation.working_directory.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn invocation_applies_declared_environment_and_working_directory() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let invocation = ToolInvocation::strict(
+            "sh",
+            &["-c", "printf '%s|%s' \"$SCORCHKIT_INVOCATION_TEST\" \"$PWD\""],
+            Duration::from_secs(2),
+        )
+        .with_clean_environment()
+        .with_environment("SCORCHKIT_INVOCATION_TEST", "present")
+        .with_working_directory(directory.path());
+
+        let output = SystemToolExecutor
+            .execute(invocation)
+            .await
+            .unwrap_or_else(|error| panic!("configured invocation failed: {error}"));
+        let canonical_directory = directory.path().canonicalize().expect("canonical directory");
+        assert_eq!(output.stdout, format!("present|{}", canonical_directory.display()));
     }
 
     #[cfg(unix)]

@@ -244,3 +244,21 @@ pub(crate) fn tool_title(name: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_titles_preserve_every_name_component() {
+        assert_eq!(tool_title("scan_job_start"), "Scan Job Start");
+        assert_eq!(
+            tool_contract("scan_job_start")
+                .expect("scan job start contract")
+                .annotations()
+                .title
+                .as_deref(),
+            Some("Scan Job Start")
+        );
+    }
+}

@@ -6,6 +6,7 @@ description = "Stable web scanner-family contracts for ScorchKit"
 license = "MIT"
 
 [dependencies]
+scorchkit-core = { version = "=3.0.0", path = "../scorchkit-core" }
 serde = { version = "1", features = ["derive"] }
 
 [lints.rust]

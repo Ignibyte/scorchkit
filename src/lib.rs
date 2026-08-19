@@ -56,6 +56,7 @@ compile_error!(
      requires Unix process groups; add a kill-on-close job-object backend before enabling Windows"
 );
 
+pub mod adapter_catalog;
 pub mod agent;
 pub mod ai;
 pub mod cli;

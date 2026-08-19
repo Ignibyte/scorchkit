@@ -1,15 +1,19 @@
 # Module Reference
 
-ScorchKit ships **77 modules** organized into three categories:
+ScorchKit registers **91 web and DAST modules**. Implicit profiles use the 69-module
+application-security catalog; the other 22 network, enterprise, and cloud-account adapters require
+explicit compatibility selection.
 
 | Category | Count | Description |
 |----------|-------|-------------|
 | Recon | 10 built-in | Passive and active reconnaissance |
 | Scanner | 35 built-in | Vulnerability detection and security testing |
-| Tool Wrappers | 32 external | Orchestrate third-party security tools |
+| Tool wrappers | 46 external | Bounded third-party security tools |
 
-All modules implement the `ScanModule` trait and are registered in
-`src/runner/orchestrator.rs` via `all_modules()`.
+All modules implement the `ScanModule` trait. `all_modules()` retains the complete registry;
+`application_modules()` is the default product catalog. The source registry and `scorchkit modules`
+output are authoritative. This guide contains detailed entries for every built-in module and 32 of
+the 46 external wrappers; the remaining wrapper-specific guides are under `docs/tools/`.
 
 ---
 
@@ -21,7 +25,7 @@ All modules implement the `ScanModule` trait and are registered in
 - [Inter-Module Data Sharing](#inter-module-data-sharing)
 - [Recon Modules (10)](#recon-modules-10)
 - [Scanner Modules (35)](#scanner-modules-35)
-- [Tool Wrapper Modules (32)](#tool-wrapper-modules-32)
+- [Selected Tool Wrapper Modules (32)](#selected-tool-wrapper-modules-32)
 
 ---
 
@@ -39,10 +43,16 @@ scorchkit run https://target.com --modules headers,ssl,xss
 scorchkit run https://target.com --skip subdomain,crawler
 ```
 
-### List all modules
+### List the application catalog
 
 ```bash
 scorchkit modules --check-tools
+```
+
+List the complete compatibility inventory only when needed:
+
+```bash
+scorchkit modules --include-compatibility
 ```
 
 Module IDs are the short strings shown in the "Module ID" column of each
@@ -71,8 +81,7 @@ scorchkit run https://target.com --profile quick
 
 ### standard (default)
 
-Runs all built-in modules (recon + scanner). External tool wrappers are
-included but automatically skipped if the required tool is not installed.
+Runs built-in application modules. Compatibility modules and external wrappers are excluded.
 
 ```bash
 scorchkit run https://target.com --profile standard
@@ -80,12 +89,20 @@ scorchkit run https://target.com --profile standard
 
 ### thorough
 
-Same as standard -- runs all modules. The thorough profile keeps all
-registered modules including every external tool wrapper.
+Runs application modules except credential-testing and exploit-capable adapters. Missing external
+tools are skipped; network, enterprise, and cloud-account compatibility modules remain excluded.
 
 ```bash
 scorchkit run https://target.com --profile thorough
 ```
+
+### pentest
+
+Runs all 69 application modules, including Commix, when the engagement grants the required
+intrusive, external-tool, and exploit effects. It does not implicitly add compatibility modules.
+
+Use an explicit module ID or the `compatibility` template for compatibility selection. Selection
+does not grant network, credential, exploit, or process authority.
 
 ---
 
@@ -1028,7 +1045,7 @@ payloads, and algorithm confusion vulnerabilities.
 
 ---
 
-## Tool Wrapper Modules (32)
+## Selected Tool Wrapper Modules (32)
 
 Tool wrapper modules orchestrate external security tools. Each requires
 the named binary to be installed. If the tool is not found in `$PATH`,

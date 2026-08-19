@@ -63,10 +63,10 @@ fn completed_job_result(job: ScanJob) -> Result<String, String> {
 
 /// Public business logic methods — called by both `#[tool]` wrappers and tests.
 impl ScorchKitServer {
-    /// List all available scan modules as JSON.
+    /// List the default application-security scan catalog as JSON.
     #[must_use]
     pub fn do_list_modules(&self) -> String {
-        let modules = crate::runner::orchestrator::all_modules();
+        let modules = crate::runner::orchestrator::application_modules();
         let info: Vec<serde_json::Value> = modules
             .iter()
             .map(|m| {
@@ -77,6 +77,7 @@ impl ScorchKitServer {
                     "description": m.description(),
                     "requires_external_tool": m.requires_external_tool(),
                     "required_tool": m.required_tool(),
+                    "adapter": m.descriptor().adapter,
                 })
             })
             .collect();
@@ -294,10 +295,8 @@ impl ScorchKitServer {
 
         let mut orchestrator = Orchestrator::new(ctx);
         orchestrator.register_default_modules();
-        orchestrator.apply_profile(&params.profile);
-        if let Some(modules) = params.modules.as_deref() {
-            orchestrator.filter_by_ids(&comma_separated(modules));
-        }
+        let modules = params.modules.as_deref().map(comma_separated);
+        orchestrator.apply_selection(&params.profile, modules.as_deref());
         if let Some(skip) = params.skip.as_deref() {
             orchestrator.exclude_by_ids(&comma_separated(skip));
         }
@@ -957,10 +956,10 @@ impl ScorchKitServer {
         serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
     }
 
-    /// List all available SAST code scanning modules as JSON.
+    /// List the default application code-scanning catalog as JSON.
     #[must_use]
     pub fn do_list_code_modules(&self) -> String {
-        let modules = crate::runner::code_orchestrator::all_code_modules();
+        let modules = crate::runner::code_orchestrator::application_code_modules();
         let info: Vec<serde_json::Value> = modules
             .iter()
             .map(|m| {
@@ -972,6 +971,7 @@ impl ScorchKitServer {
                     "languages": m.languages(),
                     "requires_external_tool": m.requires_external_tool(),
                     "required_tool": m.required_tool(),
+                    "adapter": m.descriptor().adapter,
                 })
             })
             .collect();
@@ -1004,11 +1004,10 @@ impl ScorchKitServer {
             orchestrator.filter_by_language(lang);
         }
 
-        // Apply module include/exclude filters
-        if let Some(ref modules) = params.modules {
-            let ids: Vec<String> = modules.split(',').map(|s| s.trim().to_string()).collect();
-            orchestrator.filter_by_ids(&ids);
-        }
+        // Explicit module IDs may select the compatibility catalog; otherwise use the
+        // application-only standard profile.
+        let modules = params.modules.as_deref().map(comma_separated);
+        orchestrator.apply_selection("standard", modules.as_deref());
         if let Some(ref skip) = params.skip {
             let ids: Vec<String> = skip.split(',').map(|s| s.trim().to_string()).collect();
             orchestrator.exclude_by_ids(&ids);
@@ -1023,9 +1022,9 @@ impl ScorchKitServer {
 /// `#[tool_router]` — thin wrappers that delegate to `do_*` public methods.
 #[tool_router(vis = "pub(crate)")]
 impl ScorchKitServer {
-    #[tool(description = "List all available scan modules with their categories, descriptions, \
-        and external tool requirements. Use this first to understand what scanning capabilities \
-        are available. Returns JSON array. Use check_tools to verify external tool installation.")]
+    #[tool(description = "List the default application-security scan modules with their adapter \
+        contracts, categories, descriptions, and external tool requirements. Compatibility \
+        network, enterprise, and cloud modules are excluded. Returns a JSON array.")]
     async fn list_modules(&self, context: McpCallContext) -> McpToolCallResult {
         Self::mcp_tool_result(context, Ok(self.do_list_modules()))
     }
@@ -1040,10 +1039,11 @@ impl ScorchKitServer {
 
     #[tool(description = "Run a security scan against a target URL without project persistence. \
         Use for quick ad-hoc testing when you don't need to track results over time. Set \
-        profile to 'quick' for safe recon, 'standard' for built-ins, 'thorough' for \
-        non-restricted external tools, or 'pentest' for explicitly authorized credential/exploit \
-        modules. Use 'modules' to run only specific module IDs, or 'skip' to exclude specific \
-        ones. Prefer project_scan when you want results persisted and deduplicated. Returns \
+        profile to 'quick' for safe recon, 'standard' for built-in application checks, \
+        'thorough' for application tools except credential/exploit effects, or 'pentest' for all \
+        application modules with explicit effect grants. Compatibility modules require explicit \
+        IDs. Use 'skip' to exclude specific modules. Prefer project_scan when you want results \
+        persisted and deduplicated. Returns \
         JSON with findings array, summary statistics, and scan metadata.")]
     async fn scan(
         &self,
@@ -1163,9 +1163,11 @@ impl ScorchKitServer {
         to the database. Findings are deduplicated across scans — the same vulnerability found \
         again increments seen_count instead of creating a duplicate. This is the primary \
         scanning tool for tracked assessments. Use profile 'quick' for recon, 'standard' for \
-        built-in assessment, 'thorough' for a non-restricted deep dive, or 'pentest' only with \
-        explicit credential/exploit grants. Use modules for approved plan_scan recommendations \
-        and skip for exclusions. Returns JSON with scan ID, actual run/skipped module lists, finding \
+        built-in application checks, 'thorough' for application tools except credential/exploit \
+        effects, or 'pentest' for all application modules with explicit effect grants. \
+        Compatibility modules require explicit IDs. Use modules for approved plan_scan \
+        recommendations and skip for exclusions. Returns JSON with scan ID, actual run/skipped \
+        module lists, finding \
         counts (total, new, updated), and summary.")]
     async fn project_scan(
         &self,
@@ -1367,11 +1369,9 @@ impl ScorchKitServer {
     }
 
     #[tool(
-        description = "List all available SAST (Static Application Security Testing) code scanning \
-        modules with their categories, language support, and external tool requirements. Use this \
-        to understand what code scanning capabilities are available before calling scan_code. \
-        Returns JSON array with module id, name, category (sast/sca/secrets/iac/container), \
-        supported languages, and tool requirements."
+        description = "List the default application SAST, SCA, secret, IaC, and artifact scanning \
+        modules with adapter contracts, language support, and external tool requirements. Cloud \
+        account compatibility modules are excluded. Returns a JSON array."
     )]
     async fn list_code_modules(&self, context: McpCallContext) -> McpToolCallResult {
         Self::mcp_tool_result(context, Ok(self.do_list_code_modules()))

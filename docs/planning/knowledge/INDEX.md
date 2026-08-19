@@ -56,6 +56,11 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-facade-visibility-preservation-001` | Use explicit compatibility re-exports and negative visibility contracts when extraction crosses a private seam. | `AAR-007-workspace-crate-extraction` |
 | `PR-scorchkit-package-metadata-lockstep-001` | Pin internal package versions to the root and make published CLI/schema metadata explicit when derive behavior depends on package ownership. | `AAR-007-workspace-crate-extraction` |
 | `PR-scorchkit-move-aware-mutation-scope-001` | Inventory a move-heavy DIFF before execution; if it becomes broad, run only the owner-approved repaired functions and seal both the input hash and exact function inventory. | `AAR-007-workspace-crate-extraction` |
+| `PR-scorchkit-default-catalog-explicit-compatibility-001` | Keep implicit host and profile catalogs application-only; require exact IDs or a named compatibility surface for retained non-core adapters. | `AAR-008-appsec-registry-adapters` |
+| `PR-scorchkit-adapter-execution-descriptor-parity-001` | Assert every adapter descriptor's output, effect, provenance, and artifact claims against its concrete invocation and parser. | `AAR-008-appsec-registry-adapters` |
+| `PR-scorchkit-credential-use-separate-grant-001` | Require a separate exact credential-use grant before an external adapter can inherit or receive credentials, even when its scan and subprocess effects are already allowed. | `AAR-008-appsec-registry-adapters` |
+| `PR-scorchkit-parser-outcome-integrity-001` | Distinguish no records, valid findings, malformed records, and scanner-reported failure; never convert partial output into a clean result. | `AAR-008-appsec-registry-adapters` |
+| `PR-scorchkit-scoped-tool-artifacts-001` | Give each external-tool run scoped owned artifacts and make descriptor ownership match cleanup behavior. | `AAR-008-appsec-registry-adapters` |
 
 ## Register
 
@@ -94,3 +99,8 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-package-derived-metadata-drift-001` | compatibility bug | `AAR-007-workspace-crate-extraction` |
 | `BF-scorchkit-code-move-diff-inflation-001` | process failure | `AAR-007-workspace-crate-extraction` |
 | `BF-scorchkit-nextest-empty-workspace-suites-001` | verification-plan gap | `AAR-007-workspace-crate-extraction` |
+| `BF-scorchkit-adapter-output-contract-drift-001` | contract bug | `AAR-008-appsec-registry-adapters` |
+| `BF-scorchkit-explicit-profile-bypass-001` | authorization bug | `AAR-008-appsec-registry-adapters` |
+| `BF-scorchkit-ambient-credential-adapter-001` | authorization bug | `AAR-008-appsec-registry-adapters` |
+| `BF-scorchkit-parser-no-findings-conflation-001` | evidence-integrity bug | `AAR-008-appsec-registry-adapters` |
+| `BF-scorchkit-shared-tool-tempdir-001` | artifact-isolation bug | `AAR-008-appsec-registry-adapters` |

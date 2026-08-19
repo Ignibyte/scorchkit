@@ -1,5 +1,6 @@
 //! Stable vocabulary for local code and dependency analysis modules.
 
+use scorchkit_core::AdapterContractV1;
 use serde::{Deserialize, Serialize};
 
 /// Categories for static analysis modules.
@@ -33,6 +34,8 @@ impl std::fmt::Display for CodeCategory {
 /// Immutable metadata exposed by one code scanner module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct CodeModuleDescriptor<'a> {
+    /// Common versioned scanner-adapter contract.
+    pub adapter: AdapterContractV1<'a>,
     /// Human-readable module name.
     pub name: &'a str,
     /// Stable registry identifier.

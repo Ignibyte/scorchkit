@@ -33,6 +33,24 @@ pub fn all_code_modules() -> Vec<Box<dyn CodeModule>> {
     modules
 }
 
+/// Return code modules in the default application-security catalog.
+#[must_use]
+pub fn application_code_modules() -> Vec<Box<dyn CodeModule>> {
+    all_code_modules()
+        .into_iter()
+        .filter(|module| module.descriptor().adapter.is_application_security())
+        .collect()
+}
+
+/// Return code modules retained only for explicit compatibility use.
+#[must_use]
+pub fn compatibility_code_modules() -> Vec<Box<dyn CodeModule>> {
+    all_code_modules()
+        .into_iter()
+        .filter(|module| !module.descriptor().adapter.is_application_security())
+        .collect()
+}
+
 /// Orchestrates code module execution with concurrency control.
 pub struct CodeOrchestrator {
     /// Code scanning context.
@@ -76,6 +94,19 @@ impl CodeOrchestrator {
         self.modules.retain(|m| !ids.iter().any(|id| id == m.id()));
     }
 
+    /// Apply an implicit application profile or an explicit module-ID selection.
+    pub fn apply_selection(&mut self, profile: &str, explicit_ids: Option<&[String]>) {
+        if !matches!(profile, "quick" | "standard" | "thorough" | "pentest") {
+            self.modules.clear();
+            return;
+        }
+        if let Some(ids) = explicit_ids {
+            self.filter_by_ids(ids);
+        } else {
+            self.apply_profile(profile);
+        }
+    }
+
     /// Filter modules to those supporting the given language.
     ///
     /// Modules with an empty `languages()` list are considered language-agnostic
@@ -90,15 +121,18 @@ impl CodeOrchestrator {
     /// Apply a code scan profile.
     ///
     /// - `quick`: secrets + SCA only (Gitleaks + OSV-Scanner)
-    /// - `standard`: all modules (default)
-    /// - `thorough`: all modules
+    /// - `standard`: all application code modules (default)
+    /// - `thorough`: all application code modules
+    /// - `pentest`: all application code modules
     pub fn apply_profile(&mut self, profile: &str) {
-        match profile {
-            "quick" => self
-                .modules
-                .retain(|m| matches!(m.category(), CodeCategory::Secrets | CodeCategory::Sca)),
-            "standard" | "thorough" | "pentest" => {}
-            _ => self.modules.clear(),
+        if !matches!(profile, "quick" | "standard" | "thorough" | "pentest") {
+            self.modules.clear();
+            return;
+        }
+        self.modules.retain(|module| module.descriptor().adapter.is_application_security());
+        if profile == "quick" {
+            self.modules
+                .retain(|m| matches!(m.category(), CodeCategory::Secrets | CodeCategory::Sca));
         }
     }
 
@@ -500,6 +534,29 @@ mod tests {
                 "profile {profile}"
             );
         }
+    }
+
+    #[test]
+    fn code_compatibility_modules_require_explicit_selection() {
+        let root = tempfile::tempdir().expect("code fixture root");
+
+        let mut implicit = fixture(root.path());
+        implicit.register_default_modules();
+        implicit.apply_profile("standard");
+        assert!(!implicit.modules.iter().any(|module| module.id() == "scoutsuite"));
+
+        let mut explicit = fixture(root.path());
+        explicit.register_default_modules();
+        explicit.apply_selection("standard", Some(&["scoutsuite".to_string()]));
+        assert_eq!(
+            explicit.modules.iter().map(|module| module.id()).collect::<Vec<_>>(),
+            ["scoutsuite"]
+        );
+
+        let mut unknown = fixture(root.path());
+        unknown.register_default_modules();
+        unknown.apply_selection("unknown", Some(&["scoutsuite".to_string()]));
+        assert!(unknown.modules.is_empty());
     }
 
     #[tokio::test]

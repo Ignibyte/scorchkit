@@ -4477,6 +4477,7 @@ dependencies = [
 name = "scorchkit-cloud"
 version = "3.0.0"
 dependencies = [
+ "scorchkit-core",
  "serde",
 ]
 
@@ -4484,6 +4485,7 @@ dependencies = [
 name = "scorchkit-code"
 version = "3.0.0"
 dependencies = [
+ "scorchkit-core",
  "serde",
 ]
 
@@ -4538,6 +4540,7 @@ dependencies = [
 name = "scorchkit-infra"
 version = "3.0.0"
 dependencies = [
+ "scorchkit-core",
  "serde",
 ]
 
@@ -4590,6 +4593,7 @@ dependencies = [
 name = "scorchkit-web"
 version = "3.0.0"
 dependencies = [
+ "scorchkit-core",
  "serde",
 ]
 

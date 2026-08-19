@@ -113,6 +113,23 @@ impl CodeContext {
         self.tool_executor.execute(ToolInvocation::lenient(tool_name, args, timeout)).await
     }
 
+    /// Execute a passive code-family compatibility tool that consumes ambient credentials.
+    ///
+    /// # Errors
+    ///
+    /// Returns an authorization error unless the context carries exact external-tool and
+    /// credential-use grants for the canonical code target.
+    pub(crate) async fn run_credential_tool_lenient(
+        &self,
+        tool_name: &str,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Result<ToolOutput> {
+        self.require_tool_authorization()?;
+        self.require_credential_authorization()?;
+        self.tool_executor.execute(ToolInvocation::lenient(tool_name, args, timeout)).await
+    }
+
     /// Execute an authorized external tool with owned standard input.
     pub(crate) async fn run_tool_with_stdin(
         &self,
@@ -143,6 +160,23 @@ impl CodeContext {
         }
         Err(crate::engine::error::ScorchError::Config(format!(
             "code tool denied: context has no ExternalTool/Passive grant for {target}"
+        )))
+    }
+
+    fn require_credential_authorization(&self) -> Result<()> {
+        let target = PolicyTarget::Code(self.path.clone());
+        if self.authorization.iter().any(|decision| {
+            super::policy::decision_grants_exactly(
+                decision,
+                &target,
+                Capability::CredentialUse,
+                EffectClass::Passive,
+            )
+        }) {
+            return Ok(());
+        }
+        Err(crate::engine::error::ScorchError::Config(format!(
+            "credential-bearing code tool denied: context has no CredentialUse/Passive grant for {target}"
         )))
     }
 }
@@ -251,6 +285,48 @@ mod tests {
             }],
         );
         assert!(denied.require_tool_authorization().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn credential_bearing_code_tool_requires_a_separate_exact_grant() -> std::io::Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().canonicalize()?;
+        let target = PolicyTarget::Code(path.clone());
+        let tool_grant = AuthorizationDecision {
+            engagement_id: Uuid::nil(),
+            target: target.clone(),
+            capability: Capability::ExternalTool,
+            effect: EffectClass::Passive,
+            allowed: true,
+            matched_scope: None,
+            denial: None,
+        };
+        let credential_grant = AuthorizationDecision {
+            engagement_id: Uuid::nil(),
+            target,
+            capability: Capability::CredentialUse,
+            effect: EffectClass::Passive,
+            allowed: true,
+            matched_scope: None,
+            denial: None,
+        };
+
+        let denied = CodeContext::new(
+            path.clone(),
+            None,
+            Arc::new(AppConfig::default()),
+            vec![tool_grant.clone()],
+        );
+        assert!(denied.require_credential_authorization().is_err());
+
+        let allowed = CodeContext::new(
+            path,
+            None,
+            Arc::new(AppConfig::default()),
+            vec![tool_grant, credential_grant],
+        );
+        assert!(allowed.require_credential_authorization().is_ok());
         Ok(())
     }
 }

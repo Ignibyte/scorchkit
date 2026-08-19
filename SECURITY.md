@@ -56,6 +56,15 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
 
 ## Current support boundary
 
+- Default DAST and code profiles, CLI module listing, MCP catalogs, and AI planning expose only
+  application source, dependency, artifact, runtime, and attack-path modules. Network, enterprise,
+  and cloud-account posture adapters require explicit compatibility selection. Selection never
+  supplies an engagement or a missing capability or effect grant.
+- Scanner descriptors declare their strongest effect. DAST process authorization reads the same
+  canonical tool-effect mapping: Hydra, Kerbrute, NetExec, onesixtyone, and SMBMap require
+  `credential-test` and `credential-use`; Commix and Metasploit require `exploit`. The legacy
+  web-family Prowler adapter separately requires passive `credential-use` before it can inherit
+  cloud credentials.
 - Linux and macOS are supported. Non-Unix builds fail until Windows Job Object cleanup provides the
   same descendant-process guarantee.
 - MCP is local stdio only. Do not expose it through an unauthenticated remote wrapper. Any future

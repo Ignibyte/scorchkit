@@ -1,5 +1,6 @@
 //! Stable vocabulary for URL-targeted reconnaissance and DAST modules.
 
+use scorchkit_core::AdapterContractV1;
 use serde::{Deserialize, Serialize};
 
 /// Categories for organizing web modules.
@@ -24,6 +25,8 @@ impl std::fmt::Display for ModuleCategory {
 /// Immutable metadata exposed by one web scanner module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct WebModuleDescriptor<'a> {
+    /// Common versioned scanner-adapter contract.
+    pub adapter: AdapterContractV1<'a>,
     /// Human-readable module name.
     pub name: &'a str,
     /// Stable registry identifier.

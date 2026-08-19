@@ -1,5 +1,6 @@
 //! Stable vocabulary for cloud-provider and Kubernetes posture modules.
 
+use scorchkit_core::AdapterContractV1;
 use serde::{Deserialize, Serialize};
 
 /// Posture-check category for a cloud module.
@@ -61,6 +62,8 @@ impl std::fmt::Display for CloudProvider {
 /// Immutable metadata exposed by one cloud posture module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct CloudModuleDescriptor<'a> {
+    /// Common versioned scanner-adapter contract.
+    pub adapter: AdapterContractV1<'a>,
     /// Human-readable module name.
     pub name: &'a str,
     /// Stable registry identifier.

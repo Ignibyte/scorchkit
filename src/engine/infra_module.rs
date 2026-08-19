@@ -22,6 +22,11 @@ pub trait InfraModule: Send + Sync {
     /// Return package-owned immutable module metadata.
     fn descriptor(&self) -> InfraModuleDescriptor<'_> {
         InfraModuleDescriptor {
+            adapter: crate::adapter_catalog::infra_adapter_contract(
+                self.id(),
+                self.category(),
+                self.requires_external_tool(),
+            ),
             name: self.name(),
             id: self.id(),
             category: self.category(),

@@ -1,5 +1,6 @@
 //! Stable vocabulary for host, network, DNS, CVE, and TLS modules.
 
+use scorchkit_core::AdapterContractV1;
 use serde::{Deserialize, Serialize};
 
 /// Categories for infrastructure modules.
@@ -36,6 +37,8 @@ impl std::fmt::Display for InfraCategory {
 /// Immutable metadata exposed by one infrastructure module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct InfraModuleDescriptor<'a> {
+    /// Common versioned scanner-adapter contract.
+    pub adapter: AdapterContractV1<'a>,
     /// Human-readable module name.
     pub name: &'a str,
     /// Stable registry identifier.

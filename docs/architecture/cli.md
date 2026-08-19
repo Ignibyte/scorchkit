@@ -47,11 +47,13 @@ which the next command discovers automatically.
 | Profile | Modules | Required effect |
 |---|---|---|
 | `quick` | headers, tech, SSL, misconfiguration | active-safe |
-| `standard` | all built-ins | intrusive |
-| `thorough` | built-ins and non-restricted tools | intrusive and external-tool capability |
-| `pentest` | all modules | explicit credential and exploit grants in addition to intrusive |
+| `standard` | built-in application modules | intrusive |
+| `thorough` | application modules except credential-test and exploit effects | intrusive and external-tool capability |
+| `pentest` | all 69 application modules | explicit exploit grants in addition to intrusive and external-tool capability |
 
-Unknown profiles are errors. `commix`, `hydra`, `nxc`, and `smbmap` are restricted to `pentest`.
+Unknown profiles are errors. `commix` is restricted to `pentest`. Network, enterprise credential,
+and cloud-account adapters remain outside every implicit profile; explicit module IDs or the
+`compatibility` template make them eligible without granting their required effects.
 
 ## Output
 

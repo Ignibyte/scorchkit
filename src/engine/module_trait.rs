@@ -15,6 +15,12 @@ pub trait ScanModule: Send + Sync {
     /// Return package-owned immutable module metadata.
     fn descriptor(&self) -> WebModuleDescriptor<'_> {
         WebModuleDescriptor {
+            adapter: crate::adapter_catalog::web_adapter_contract(
+                self.id(),
+                self.category(),
+                self.requires_external_tool(),
+                self.required_tool(),
+            ),
             name: self.name(),
             id: self.id(),
             category: self.category(),

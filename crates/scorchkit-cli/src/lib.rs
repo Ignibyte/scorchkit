@@ -71,7 +71,7 @@ pub enum Commands {
         #[arg(long, default_value = "standard")]
         profile: String,
 
-        /// Scan template: web-app, api, graphql, wordpress, spa, network, full
+        /// Scan template: web-app, api, graphql, wordpress, spa, network, compatibility, full
         #[arg(long)]
         template: Option<String>,
 
@@ -159,6 +159,10 @@ pub enum Commands {
         /// Check which external tools are installed
         #[arg(long)]
         check_tools: bool,
+
+        /// Include the explicit network, enterprise, and cloud compatibility catalog
+        #[arg(long)]
+        include_compatibility: bool,
     },
 
     /// Initialize a config file, optionally binding a safe engagement to a target

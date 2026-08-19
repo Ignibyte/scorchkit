@@ -233,8 +233,8 @@ pub async fn execute(cli: Cli) -> Result<()> {
 
         Commands::Diff { baseline, current } => run_diff(&baseline, &current),
 
-        Commands::Modules { check_tools } => {
-            list_modules(check_tools);
+        Commands::Modules { check_tools, include_compatibility } => {
+            list_modules(check_tools, include_compatibility);
             Ok(())
         }
 
@@ -817,12 +817,14 @@ async fn run_scan(
     } else if let Some(tmpl) = template {
         if !orchestrator.apply_template(tmpl) {
             return Err(ScorchError::Config(format!(
-                "unknown template '{tmpl}'. Available: web-app, api, graphql, wordpress, spa, network, full"
+                "unknown template '{tmpl}'. Available: web-app, api, graphql, wordpress, spa, network, compatibility, full"
             )));
         }
         if !quiet {
             println!("{} Using template: {}", "Template:".cyan().bold(), tmpl.cyan());
         }
+    } else if let Some(ref include) = module_filter {
+        orchestrator.apply_selection(profile, Some(include));
     } else {
         orchestrator.apply_profile(profile);
     }
@@ -1175,12 +1177,10 @@ async fn run_code_scan(
 
     let mut orchestrator = CodeOrchestrator::new(ctx);
     orchestrator.register_default_modules();
-    orchestrator.apply_profile(profile);
-
-    if let Some(ref mods) = modules {
-        let ids: Vec<String> = mods.split(',').map(|s| s.trim().to_string()).collect();
-        orchestrator.filter_by_ids(&ids);
-    }
+    let module_ids = modules
+        .as_deref()
+        .map(|mods| mods.split(',').map(|id| id.trim().to_string()).collect::<Vec<_>>());
+    orchestrator.apply_selection(profile, module_ids.as_deref());
     if let Some(ref skip_ids) = skip {
         let ids: Vec<String> = skip_ids.split(',').map(|s| s.trim().to_string()).collect();
         orchestrator.exclude_by_ids(&ids);
@@ -1198,8 +1198,12 @@ async fn run_code_scan(
     Ok(())
 }
 
-fn list_modules(check_tools: bool) {
-    let modules = crate::runner::orchestrator::all_modules();
+fn list_modules(check_tools: bool, include_compatibility: bool) {
+    let modules = if include_compatibility {
+        crate::runner::orchestrator::all_modules()
+    } else {
+        crate::runner::orchestrator::application_modules()
+    };
 
     println!();
     println!("{}", "Available Modules".bold().underline());

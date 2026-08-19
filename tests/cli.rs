@@ -63,8 +63,6 @@ fn test_modules_list() {
         .stdout(predicate::str::contains("xss"))
         .stdout(predicate::str::contains("ssrf"))
         .stdout(predicate::str::contains("jwt"))
-        .stdout(predicate::str::contains("subdomain"))
-        .stdout(predicate::str::contains("nmap"))
         .stdout(predicate::str::contains("nuclei"))
         .stdout(predicate::str::contains("nikto"))
         .stdout(predicate::str::contains("sqlmap"))
@@ -84,19 +82,29 @@ fn test_modules_list() {
         // External tool wrappers
         .stdout(predicate::str::contains("zap"))
         .stdout(predicate::str::contains("ffuf"))
-        .stdout(predicate::str::contains("metasploit"))
         .stdout(predicate::str::contains("wafw00f"))
         .stdout(predicate::str::contains("testssl"))
         .stdout(predicate::str::contains("wpscan"))
-        .stdout(predicate::str::contains("amass"))
-        .stdout(predicate::str::contains("subfinder"))
         .stdout(predicate::str::contains("dalfox"))
-        .stdout(predicate::str::contains("hydra"))
         .stdout(predicate::str::contains("httpx"))
-        .stdout(predicate::str::contains("theharvester"))
         .stdout(predicate::str::contains("arjun"))
-        .stdout(predicate::str::contains("cewl"))
-        .stdout(predicate::str::contains("droopescan"));
+        .stdout(predicate::str::contains("droopescan"))
+        .stdout(predicate::str::contains("nmap").not())
+        .stdout(predicate::str::contains("hydra").not())
+        .stdout(predicate::str::contains("metasploit").not());
+}
+
+#[test]
+fn test_modules_compatibility_catalog_requires_explicit_flag() {
+    Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["modules", "--include-compatibility"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("nmap"))
+        .stdout(predicate::str::contains("hydra"))
+        .stdout(predicate::str::contains("metasploit"))
+        .stdout(predicate::str::contains("prowler"));
 }
 
 #[test]

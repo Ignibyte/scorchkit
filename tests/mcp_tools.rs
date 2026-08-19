@@ -197,12 +197,27 @@ async fn test_server_creation() {
 /// Verify `list_modules` returns a JSON array of modules.
 #[tokio::test]
 async fn test_tool_list_modules() {
-    let Some(pool) = get_pool_or_skip().await else { return };
-    let server = test_server(pool);
+    let server = test_server_without_database();
     let result = server.do_list_modules();
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
-    assert!(!parsed.is_empty(), "should return at least one module");
-    assert!(parsed[0].get("id").is_some(), "each module should have an id");
+    assert_eq!(parsed.len(), 69);
+    assert!(parsed
+        .iter()
+        .all(|module| module["adapter"]["schemaVersion"] == scorchkit_core::ADAPTER_CONTRACT_V1));
+    assert!(!parsed.iter().any(|module| module["id"] == "nmap"));
+    assert!(!parsed.iter().any(|module| module["id"] == "metasploit"));
+}
+
+#[tokio::test]
+async fn test_tool_list_code_modules_uses_application_catalog() {
+    let server = test_server_without_database();
+    let result = server.do_list_code_modules();
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed.len(), 21);
+    assert!(parsed
+        .iter()
+        .all(|module| module["adapter"]["schemaVersion"] == scorchkit_core::ADAPTER_CONTRACT_V1));
+    assert!(!parsed.iter().any(|module| module["id"] == "scoutsuite"));
 }
 
 /// Verify `check_tools` returns a JSON array of tool status.

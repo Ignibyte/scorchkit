@@ -179,28 +179,31 @@ impl ScanContext {
             return Ok(());
         }
 
-        let (effect, additional_capability) = match tool_name {
-            "hydra" | "nxc" | "smbmap" => {
-                (EffectClass::CredentialTest, Some(Capability::CredentialUse))
-            }
-            "commix" => (EffectClass::Exploit, Some(Capability::Exploit)),
-            _ => {
-                let effect = self
-                    .authorization
-                    .iter()
-                    .find(|decision| decision.capability == Capability::DastScan)
-                    .map(|decision| decision.effect)
-                    .ok_or_else(|| {
-                        crate::engine::error::ScorchError::Config(
-                            "external tool denied: DAST context has no primary authorization"
-                                .to_string(),
-                        )
-                    })?;
-                (effect, None)
-            }
+        let special_effect = crate::adapter_catalog::external_web_tool_effect(tool_name);
+        let effect = if let Some(effect) = special_effect {
+            effect
+        } else {
+            self.authorization
+                .iter()
+                .find(|decision| decision.capability == Capability::DastScan)
+                .map(|decision| decision.effect)
+                .ok_or_else(|| {
+                    crate::engine::error::ScorchError::Config(
+                        "external tool denied: DAST context has no primary authorization"
+                            .to_string(),
+                    )
+                })?
+        };
+        let additional_capability = match special_effect {
+            Some(EffectClass::CredentialTest) => Some(Capability::CredentialUse),
+            Some(EffectClass::Exploit) => Some(Capability::Exploit),
+            _ => None,
         };
 
         self.require_grant(Capability::ExternalTool, effect)?;
+        if crate::adapter_catalog::external_web_tool_uses_ambient_credentials(tool_name) {
+            self.require_grant(Capability::CredentialUse, EffectClass::Passive)?;
+        }
         if let Some(capability) = additional_capability {
             self.require_grant(capability, effect)?;
         }
@@ -278,13 +281,25 @@ mod tests {
                 decision(&target, Capability::CredentialUse, EffectClass::CredentialTest),
             ],
         );
-        assert!(credential.require_tool_authorization("hydra").is_ok());
+        for tool in ["hydra", "kerbrute", "nxc", "onesixtyone", "smbmap"] {
+            assert!(credential.require_tool_authorization(tool).is_ok());
+        }
 
         let missing_credential = context(
             target.clone(),
             vec![decision(&target, Capability::ExternalTool, EffectClass::CredentialTest)],
         );
         assert!(missing_credential.require_tool_authorization("hydra").is_err());
+
+        assert!(normal.require_tool_authorization("prowler").is_ok());
+        let missing_passive_credential = context(
+            target.clone(),
+            vec![
+                decision(&target, Capability::DastScan, EffectClass::Intrusive),
+                decision(&target, Capability::ExternalTool, EffectClass::Intrusive),
+            ],
+        );
+        assert!(missing_passive_credential.require_tool_authorization("prowler").is_err());
 
         let exploit = context(
             target.clone(),
@@ -293,7 +308,16 @@ mod tests {
                 decision(&target, Capability::Exploit, EffectClass::Exploit),
             ],
         );
-        assert!(exploit.require_tool_authorization("commix").is_ok());
+        for tool in ["commix", "msfconsole"] {
+            assert!(exploit.require_tool_authorization(tool).is_ok());
+        }
+        let missing_exploit_capability = context(
+            target.clone(),
+            vec![decision(&target, Capability::ExternalTool, EffectClass::Exploit)],
+        );
+        for tool in ["commix", "msfconsole"] {
+            assert!(missing_exploit_capability.require_tool_authorization(tool).is_err());
+        }
 
         let wrong_target = Target::parse("https://outside.test").expect("second fixture target");
         let mismatched = context(

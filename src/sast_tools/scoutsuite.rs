@@ -52,7 +52,7 @@ impl CodeModule for ScoutsuiteModule {
         };
         let out_path = out_dir.path().to_string_lossy().to_string();
         let _output = ctx
-            .run_tool_lenient(
+            .run_credential_tool_lenient(
                 "scout",
                 &["aws", "--report-dir", &out_path, "--no-browser"],
                 Duration::from_mins(10),

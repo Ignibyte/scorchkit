@@ -12,6 +12,7 @@ use crate::engine::code_module::{CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::finding::Finding;
 use crate::engine::severity::Severity;
+use scorchkit_core::AdapterParseOutcome;
 
 /// Multi-language static analysis via Semgrep.
 #[derive(Debug)]
@@ -41,13 +42,13 @@ impl CodeModule for SemgrepModule {
     async fn run(&self, ctx: &CodeContext) -> Result<Vec<Finding>> {
         let path_str = ctx.path.display().to_string();
         let output = ctx
-            .run_tool_lenient(
+            .run_tool(
                 "semgrep",
                 &["scan", "--config", "auto", "--json", "--quiet", &path_str],
                 Duration::from_mins(5),
             )
             .await?;
-        Ok(parse_semgrep_output(&output.stdout))
+        parse_semgrep_output_v1(&output.stdout).into_result("semgrep")
     }
 }
 
@@ -68,70 +69,98 @@ fn map_semgrep_severity(severity: &str) -> Severity {
 /// `extra.message`, and optional `extra.metadata` (CWE, OWASP).
 #[must_use]
 pub fn parse_semgrep_output(stdout: &str) -> Vec<Finding> {
+    parse_semgrep_output_v1(stdout).into_legacy()
+}
+
+fn parse_semgrep_output_v1(stdout: &str) -> AdapterParseOutcome<Vec<Finding>> {
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
-        return Vec::new();
+        return AdapterParseOutcome::NoFindings;
     }
 
-    let Ok(root) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-        return Vec::new();
+    let root = match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(root) => root,
+        Err(error) => {
+            return AdapterParseOutcome::malformed(format!("invalid JSON document: {error}"));
+        }
     };
 
     let Some(results) = root["results"].as_array() else {
-        return Vec::new();
+        return AdapterParseOutcome::malformed("JSON document has no results array");
     };
+    if root["errors"].as_array().is_some_and(|errors| !errors.is_empty()) {
+        return AdapterParseOutcome::malformed("JSON document reports one or more scan errors");
+    }
 
-    results
-        .iter()
-        .filter_map(|result| {
-            let check_id = result["check_id"].as_str()?;
-            let path = result["path"].as_str().unwrap_or("unknown");
-            let line = result["start"]["line"].as_u64().unwrap_or(0);
-            let severity_str = result["extra"]["severity"].as_str().unwrap_or("INFO");
-            let message = result["extra"]["message"].as_str().unwrap_or(check_id);
-            let lines = result["extra"]["lines"].as_str().unwrap_or("");
+    if results.is_empty() {
+        return AdapterParseOutcome::NoFindings;
+    }
 
-            let affected = format!("{path}:{line}");
+    let mut findings = Vec::with_capacity(results.len());
+    for (index, result) in results.iter().enumerate() {
+        let Some(check_id) = result["check_id"].as_str() else {
+            return AdapterParseOutcome::malformed(format!("result {} has no check_id", index + 1));
+        };
+        let Some(path) = result["path"].as_str() else {
+            return AdapterParseOutcome::malformed(format!("result {} has no path", index + 1));
+        };
+        let Some(line) = result["start"]["line"].as_u64() else {
+            return AdapterParseOutcome::malformed(format!(
+                "result {} has no start.line",
+                index + 1
+            ));
+        };
+        let Some(message) = result["extra"]["message"].as_str() else {
+            return AdapterParseOutcome::malformed(format!(
+                "result {} has no extra.message",
+                index + 1
+            ));
+        };
+        let severity_str = result["extra"]["severity"].as_str().unwrap_or("INFO");
+        let lines = result["extra"]["lines"].as_str().unwrap_or("");
 
-            let mut finding = Finding::new(
-                "semgrep",
-                map_semgrep_severity(severity_str),
-                check_id,
-                message,
-                &affected,
-            )
-            .with_confidence(0.8);
+        let affected = format!("{path}:{line}");
 
-            if !lines.is_empty() {
-                finding = finding.with_evidence(lines);
-            }
+        let mut finding = Finding::new(
+            "semgrep",
+            map_semgrep_severity(severity_str),
+            check_id,
+            message,
+            &affected,
+        )
+        .with_confidence(0.8);
 
-            // Extract CWE from metadata if available
-            if let Some(cwe_arr) = result["extra"]["metadata"]["cwe"].as_array() {
-                if let Some(first_cwe) = cwe_arr.first().and_then(|v| v.as_str()) {
-                    // CWE format: "CWE-79" -> extract number
-                    if let Some(num_str) = first_cwe.strip_prefix("CWE-") {
-                        if let Ok(cwe_num) = num_str.parse::<u32>() {
-                            finding = finding.with_cwe(cwe_num);
-                        }
+        if !lines.is_empty() {
+            finding = finding.with_evidence(lines);
+        }
+
+        // Extract CWE from metadata if available
+        if let Some(cwe_arr) = result["extra"]["metadata"]["cwe"].as_array() {
+            if let Some(first_cwe) = cwe_arr.first().and_then(|v| v.as_str()) {
+                // CWE format: "CWE-79" -> extract number
+                if let Some(num_str) = first_cwe.strip_prefix("CWE-") {
+                    if let Ok(cwe_num) = num_str.parse::<u32>() {
+                        finding = finding.with_cwe(cwe_num);
                     }
                 }
             }
+        }
 
-            // Extract OWASP from metadata
-            if let Some(owasp_arr) = result["extra"]["metadata"]["owasp"].as_array() {
-                if let Some(first_owasp) = owasp_arr.first().and_then(|v| v.as_str()) {
-                    finding = finding.with_owasp(first_owasp);
-                }
+        // Extract OWASP from metadata
+        if let Some(owasp_arr) = result["extra"]["metadata"]["owasp"].as_array() {
+            if let Some(first_owasp) = owasp_arr.first().and_then(|v| v.as_str()) {
+                finding = finding.with_owasp(first_owasp);
             }
+        }
 
-            finding = finding.with_remediation(format!(
-                "Review and fix the issue identified by Semgrep rule: {check_id}"
-            ));
+        finding = finding.with_remediation(format!(
+            "Review and fix the issue identified by Semgrep rule: {check_id}"
+        ));
 
-            Some(finding)
-        })
-        .collect()
+        findings.push(finding);
+    }
+
+    AdapterParseOutcome::Findings(findings)
 }
 
 #[cfg(test)]
@@ -175,5 +204,20 @@ mod tests {
         assert!(parse_semgrep_output("").is_empty());
         assert!(parse_semgrep_output(r#"{"results": []}"#).is_empty());
         assert!(parse_semgrep_output("not json").is_empty());
+    }
+
+    #[test]
+    fn malformed_semgrep_json_is_not_reported_as_no_findings() {
+        for malformed in [
+            "not json",
+            r#"{"errors": []}"#,
+            r#"{"results": [], "errors": [{}]}"#,
+            r#"{"results": [{"check_id": "partial"}]}"#,
+        ] {
+            assert!(matches!(
+                parse_semgrep_output_v1(malformed),
+                AdapterParseOutcome::Malformed { .. }
+            ));
+        }
     }
 }

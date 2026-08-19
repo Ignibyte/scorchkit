@@ -6,17 +6,17 @@ use std::path::Path;
 const PACKAGES: &[(&str, &[&str])] = &[
     ("scorchkit-agent", &[]),
     ("scorchkit-cli", &[]),
-    ("scorchkit-cloud", &[]),
-    ("scorchkit-code", &[]),
+    ("scorchkit-cloud", &["scorchkit-core"]),
+    ("scorchkit-code", &["scorchkit-core"]),
     ("scorchkit-config", &["scorchkit-core", "scorchkit-policy"]),
     ("scorchkit-core", &["scorchkit-policy"]),
     ("scorchkit-executor", &["scorchkit-config", "scorchkit-core", "scorchkit-policy"]),
-    ("scorchkit-infra", &[]),
+    ("scorchkit-infra", &["scorchkit-core"]),
     ("scorchkit-mcp", &[]),
     ("scorchkit-policy", &[]),
     ("scorchkit-storage", &[]),
     ("scorchkit-tools", &["scorchkit-core"]),
-    ("scorchkit-web", &[]),
+    ("scorchkit-web", &["scorchkit-core"]),
 ];
 
 fn manifest(path: &Path) -> toml::Value {

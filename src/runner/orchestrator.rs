@@ -30,10 +30,31 @@ pub fn all_modules() -> Vec<Box<dyn ScanModule>> {
     modules
 }
 
-/// Tool modules that create credential-testing or exploitation effects.
-/// They are available only through the explicitly authorized `pentest` profile.
-fn is_restricted_pentest_module(module_id: &str) -> bool {
-    matches!(module_id, "commix" | "hydra" | "nxc" | "smbmap")
+/// Return modules in the default application-security product catalog.
+#[must_use]
+pub fn application_modules() -> Vec<Box<dyn ScanModule>> {
+    all_modules()
+        .into_iter()
+        .filter(|module| module.descriptor().adapter.is_application_security())
+        .collect()
+}
+
+/// Return modules retained only for explicit compatibility workflows.
+#[must_use]
+pub fn compatibility_modules() -> Vec<Box<dyn ScanModule>> {
+    all_modules()
+        .into_iter()
+        .filter(|module| !module.descriptor().adapter.is_application_security())
+        .collect()
+}
+
+/// Modules withheld from every implicit profile below `pentest`.
+fn is_credential_or_exploit_module(module: &dyn ScanModule) -> bool {
+    matches!(
+        module.descriptor().adapter.strongest_effect,
+        crate::engine::policy::EffectClass::CredentialTest
+            | crate::engine::policy::EffectClass::Exploit
+    )
 }
 
 /// Orchestrates scan module execution with concurrency control.
@@ -86,6 +107,19 @@ impl Orchestrator {
         self.modules.retain(|m| !ids.iter().any(|id| id == m.id()));
     }
 
+    /// Apply an implicit application profile or an explicit module-ID selection.
+    pub fn apply_selection(&mut self, profile: &str, explicit_ids: Option<&[String]>) {
+        if !matches!(profile, "quick" | "standard" | "thorough" | "pentest") {
+            self.modules.clear();
+            return;
+        }
+        if let Some(ids) = explicit_ids {
+            self.filter_by_ids(ids);
+        } else {
+            self.apply_profile(profile);
+        }
+    }
+
     /// Number of modules selected for this orchestrator run.
     #[must_use]
     pub fn module_count(&self) -> usize {
@@ -99,6 +133,11 @@ impl Orchestrator {
 
     /// Filter modules by scan profile.
     pub fn apply_profile(&mut self, profile: &str) {
+        if !matches!(profile, "quick" | "standard" | "thorough" | "pentest") {
+            self.modules.clear();
+            return;
+        }
+        self.modules.retain(|module| module.descriptor().adapter.is_application_security());
         match profile {
             "quick" => {
                 self.modules.retain(|m| {
@@ -108,10 +147,9 @@ impl Orchestrator {
             }
             "standard" => self.modules.retain(|module| !module.requires_external_tool()),
             "thorough" => {
-                self.modules.retain(|module| !is_restricted_pentest_module(module.id()));
+                self.modules.retain(|module| !is_credential_or_exploit_module(module.as_ref()));
             }
-            "pentest" => {}
-            _ => self.modules.clear(),
+            _ => {}
         }
     }
 
@@ -137,11 +175,11 @@ impl Orchestrator {
                 "ssti",
                 "redirect",
                 "sensitive",
-                "auth",
+                "auth-session",
                 "upload",
                 "clickjacking",
-                "cors",
-                "csp",
+                "cors-deep",
+                "csp-deep",
                 "crawler",
                 "discovery",
                 "dom_xss",
@@ -156,12 +194,12 @@ impl Orchestrator {
                 "misconfig",
                 "injection",
                 "nosql",
-                "api",
-                "api_schema",
-                "cors",
+                "api-security",
+                "api-schema",
+                "cors-deep",
                 "jwt",
                 "ratelimit",
-                "auth",
+                "auth-session",
                 "idor",
                 "mass_assignment",
                 "ssrf",
@@ -172,9 +210,9 @@ impl Orchestrator {
                 "ssl",
                 "graphql",
                 "injection",
-                "cors",
+                "cors-deep",
                 "jwt",
-                "auth",
+                "auth-session",
                 "ratelimit",
                 "sensitive",
                 "nosql",
@@ -195,12 +233,12 @@ impl Orchestrator {
             "spa" => &[
                 "headers",
                 "ssl",
-                "cors",
-                "csp",
+                "cors-deep",
+                "csp-deep",
                 "dom_xss",
                 "js_analysis",
                 "xss",
-                "api",
+                "api-security",
                 "jwt",
                 "clickjacking",
                 "sensitive",
@@ -209,7 +247,7 @@ impl Orchestrator {
             "network" => &[
                 "ssl",
                 "headers",
-                "dns",
+                "dns-security",
                 "subdomain",
                 "cloud",
                 "smuggling",
@@ -220,7 +258,15 @@ impl Orchestrator {
                 "dnsx",
                 "dnsrecon",
             ],
-            "full" => &[], // Empty means keep all — same as thorough
+            "full" => {
+                self.apply_profile("thorough");
+                return true;
+            }
+            "compatibility" => {
+                self.modules
+                    .retain(|module| !module.descriptor().adapter.is_application_security());
+                return true;
+            }
             _ => return false,
         };
 
@@ -240,7 +286,8 @@ impl Orchestrator {
             ("wordpress", "WordPress-specific assessment", 11),
             ("spa", "Single-page application (React/Vue/Angular)", 12),
             ("network", "Network infrastructure & DNS", 12),
-            ("full", "All modules (same as --profile thorough)", 77),
+            ("full", "All application modules (same as --profile thorough)", 68),
+            ("compatibility", "Explicit non-application compatibility catalog", 22),
         ]
     }
 
@@ -987,14 +1034,18 @@ mod tests {
         ));
         thorough.register_default_modules();
         thorough.apply_profile("thorough");
-        assert!(thorough.modules.iter().all(|module| !is_restricted_pentest_module(module.id())));
+        assert!(thorough
+            .modules
+            .iter()
+            .all(|module| !is_credential_or_exploit_module(module.as_ref())));
 
         let mut pentest =
             Orchestrator::new(ScanContext::new(target, config, http_client, Vec::new()));
         pentest.register_default_modules();
         pentest.apply_profile("pentest");
-        for restricted in ["commix", "hydra", "nxc", "smbmap"] {
-            assert!(pentest.modules.iter().any(|module| module.id() == restricted));
+        assert!(pentest.modules.iter().any(|module| module.id() == "commix"));
+        for compatibility in ["hydra", "kerbrute", "metasploit", "nxc", "smbmap"] {
+            assert!(!pentest.modules.iter().any(|module| module.id() == compatibility));
         }
     }
 
@@ -1151,7 +1202,7 @@ mod tests {
             ("headers", None),
             ("tech", Some("scorchkit-profile-tool-that-does-not-exist")),
             ("crawler", None),
-            ("commix", Some("scorchkit-profile-tool-that-does-not-exist")),
+            ("commix", Some("commix")),
         ] {
             orchestrator.add_module(Box::new(FixtureModule {
                 module_id,
@@ -1169,11 +1220,20 @@ mod tests {
 
     #[test]
     fn profile_selection_has_exact_non_vacuous_membership() {
-        for restricted in ["commix", "hydra", "nxc", "smbmap"] {
-            assert!(is_restricted_pentest_module(restricted));
+        let modules = all_modules();
+        for restricted in ["commix", "hydra", "kerbrute", "metasploit", "nxc", "smbmap"] {
+            let module = modules
+                .iter()
+                .find(|module| module.id() == restricted)
+                .unwrap_or_else(|| panic!("missing profile fixture module {restricted}"));
+            assert!(is_credential_or_exploit_module(module.as_ref()));
         }
         for allowed in ["headers", "tech", "crawler", "nuclei"] {
-            assert!(!is_restricted_pentest_module(allowed));
+            let module = modules
+                .iter()
+                .find(|module| module.id() == allowed)
+                .unwrap_or_else(|| panic!("missing profile fixture module {allowed}"));
+            assert!(!is_credential_or_exploit_module(module.as_ref()));
         }
 
         let mut quick = profile_fixture();
@@ -1195,6 +1255,33 @@ mod tests {
         let mut unknown = profile_fixture();
         unknown.apply_profile("unknown");
         assert!(unknown.modules.is_empty());
+    }
+
+    #[test]
+    fn named_templates_match_their_declared_catalog_sizes() {
+        for (template, _description, expected_count) in Orchestrator::list_templates() {
+            let mut orchestrator = Orchestrator::new(fixture_context());
+            orchestrator.register_default_modules();
+            assert!(orchestrator.apply_template(template), "missing template {template}");
+            assert_eq!(orchestrator.module_count(), expected_count, "template {template}");
+        }
+    }
+
+    #[test]
+    fn explicit_module_selection_can_reach_compatibility_catalog() {
+        let mut orchestrator = Orchestrator::new(fixture_context());
+        orchestrator.register_default_modules();
+        orchestrator
+            .apply_selection("standard", Some(&["nmap".to_string(), "metasploit".to_string()]));
+        let selected = module_ids(&orchestrator);
+        assert_eq!(selected.len(), 2);
+        assert!(selected.contains(&"nmap"));
+        assert!(selected.contains(&"metasploit"));
+
+        let mut unknown = Orchestrator::new(fixture_context());
+        unknown.register_default_modules();
+        unknown.apply_selection("unknown", Some(&["nmap".to_string()]));
+        assert_eq!(unknown.module_count(), 0);
     }
 
     #[tokio::test]

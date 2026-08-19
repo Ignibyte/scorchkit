@@ -65,6 +65,7 @@ fn authorized_dast_context(target: &str) -> Result<ScanContext> {
         .allow_capability(Capability::ExternalTool)
         .allow_capability(Capability::CredentialUse)
         .allow_capability(Capability::Exploit)
+        .allow_effect(EffectClass::Passive)
         .allow_effect(EffectClass::Intrusive)
         .allow_effect(EffectClass::CredentialTest)
         .allow_effect(EffectClass::Exploit);
@@ -87,7 +88,34 @@ fn dast_context_without_external_tool_grant(target: &str) -> Result<ScanContext>
     .dast_context(target, "standard")
 }
 
+fn dast_context_without_credential_grant(target: &str) -> Result<ScanContext> {
+    let policy = EngagementPolicy::default()
+        .allow_scope(ScopeRule::Exact("example.com".to_string()))
+        .allow_capability(Capability::DastScan)
+        .allow_capability(Capability::ExternalTool)
+        .allow_effect(EffectClass::Intrusive);
+    Engine::for_engagement(
+        Arc::new(AppConfig::default()),
+        Arc::new(Engagement::new("DAST no-credential contract", policy)),
+    )
+    .dast_context(target, "thorough")
+}
+
 fn authorized_code_context(path: &std::path::Path) -> Result<CodeContext> {
+    let policy = EngagementPolicy::default()
+        .allow_scope(ScopeRule::path_prefix(path)?)
+        .allow_capability(Capability::CodeScan)
+        .allow_capability(Capability::ExternalTool)
+        .allow_capability(Capability::CredentialUse)
+        .allow_effect(EffectClass::Passive);
+    Engine::for_engagement(
+        Arc::new(AppConfig::default()),
+        Arc::new(Engagement::new("SAST contract", policy)),
+    )
+    .code_context(path, None)
+}
+
+fn code_context_without_credential_grant(path: &std::path::Path) -> Result<CodeContext> {
     let policy = EngagementPolicy::default()
         .allow_scope(ScopeRule::path_prefix(path)?)
         .allow_capability(Capability::CodeScan)
@@ -95,7 +123,7 @@ fn authorized_code_context(path: &std::path::Path) -> Result<CodeContext> {
         .allow_effect(EffectClass::Passive);
     Engine::for_engagement(
         Arc::new(AppConfig::default()),
-        Arc::new(Engagement::new("SAST contract", policy)),
+        Arc::new(Engagement::new("SAST no-credential contract", policy)),
     )
     .code_context(path, None)
 }
@@ -199,6 +227,24 @@ async fn long_lived_interactsh_session_is_denied_before_process_start() -> Resul
 }
 
 #[tokio::test]
+async fn prowler_is_denied_before_inheriting_ambient_credentials() -> Result<()> {
+    use scorchkit::engine::module_trait::ScanModule;
+
+    let recorder = Arc::new(RecordingToolExecutor::default());
+    let injected: Arc<dyn ToolExecutor> = recorder.clone();
+    let context =
+        dast_context_without_credential_grant("https://example.com")?.with_tool_executor(injected);
+
+    let error = scorchkit::tools::prowler::ProwlerModule
+        .run(&context)
+        .await
+        .expect_err("Prowler must require credential-use authorization");
+    assert!(error.to_string().contains("CredentialUse/Passive"));
+    assert_eq!(recorder.len(), 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn every_sast_tool_wrapper_executes_its_declared_invocation() -> Result<()> {
     let root = tempfile::tempdir()?;
     std::fs::write(root.path().join("Dockerfile"), "FROM scratch\n")?;
@@ -226,6 +272,24 @@ async fn every_sast_tool_wrapper_executes_its_declared_invocation() -> Result<()
     }
 
     assert_eq!(recorder.len(), 21);
+    Ok(())
+}
+
+#[tokio::test]
+async fn scoutsuite_is_denied_before_inheriting_ambient_credentials() -> Result<()> {
+    use scorchkit::engine::code_module::CodeModule;
+
+    let root = tempfile::tempdir()?;
+    let recorder = Arc::new(RecordingToolExecutor::default());
+    let injected: Arc<dyn ToolExecutor> = recorder.clone();
+    let context = code_context_without_credential_grant(root.path())?.with_tool_executor(injected);
+
+    let error = scorchkit::sast_tools::scoutsuite::ScoutsuiteModule
+        .run(&context)
+        .await
+        .expect_err("ScoutSuite must require credential-use authorization");
+    assert!(error.to_string().contains("CredentialUse/Passive"));
+    assert_eq!(recorder.len(), 0);
     Ok(())
 }
 

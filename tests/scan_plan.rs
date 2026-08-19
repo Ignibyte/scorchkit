@@ -213,7 +213,7 @@ fn test_module_catalog_contains_all() {
 /// Verify catalog entries have required fields.
 #[test]
 fn test_module_catalog_format() {
-    let modules = scorchkit::runner::orchestrator::all_modules();
+    let modules = scorchkit::runner::orchestrator::application_modules();
     let catalog = AiModuleInput::collect(&modules);
 
     assert!(!catalog.is_empty(), "catalog should not be empty");
@@ -223,6 +223,8 @@ fn test_module_catalog_format() {
         assert!(!entry.name.is_empty(), "entry missing 'name'");
         assert!(!entry.description.is_empty(), "entry missing 'description'");
         assert!(matches!(entry.category.as_str(), "recon" | "scanner"));
+        assert_eq!(entry.adapter_schema, scorchkit_core::ADAPTER_CONTRACT_V1);
+        assert!(entry.security_domain.is_application_security());
     }
 }
 

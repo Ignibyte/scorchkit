@@ -95,9 +95,9 @@ impl Engine {
     ///
     /// Profiles control which modules run:
     /// - `"quick"` — fast built-in modules only (headers, tech, ssl, misconfig)
-    /// - `"standard"` — all built-in modules
-    /// - `"thorough"` — built-ins plus non-restricted external tool wrappers
-    /// - `"pentest"` — credential/exploit modules with explicit grants
+    /// - `"standard"` — built-in application modules
+    /// - `"thorough"` — application modules except credential-test and exploit effects
+    /// - `"pentest"` — all application modules with explicit effect grants
     ///
     /// # Errors
     ///
@@ -758,6 +758,16 @@ impl Engine {
                 EffectClass::Exploit,
             )?);
         }
+        if let Some(engagement) = &self.engagement {
+            let credential = engagement.authorize(
+                PolicyTarget::Web(target.clone()),
+                Capability::CredentialUse,
+                EffectClass::Passive,
+            );
+            if credential.allowed {
+                authorization.push(credential);
+            }
+        }
         Ok(authorization)
     }
 
@@ -770,7 +780,7 @@ impl Engine {
             unreachable!("code_policy_target always returns PolicyTarget::Code");
         };
         let canonical_path = canonical_path.clone();
-        let authorization = vec![
+        let mut authorization = vec![
             self.require_authorized(
                 policy_target.clone(),
                 Capability::CodeScan,
@@ -778,6 +788,16 @@ impl Engine {
             )?,
             self.require_authorized(policy_target, Capability::ExternalTool, EffectClass::Passive)?,
         ];
+        if let Some(engagement) = &self.engagement {
+            let credential = engagement.authorize(
+                PolicyTarget::Code(canonical_path.clone()),
+                Capability::CredentialUse,
+                EffectClass::Passive,
+            );
+            if credential.allowed {
+                authorization.push(credential);
+            }
+        }
         Ok((canonical_path, authorization))
     }
 }

@@ -281,10 +281,7 @@ impl ScanJobService {
         let ctx = engine.dast_context(&job.request.target, &job.request.profile)?;
         let mut orchestrator = Orchestrator::new(ctx);
         orchestrator.register_default_modules();
-        orchestrator.apply_profile(&job.request.profile);
-        if let Some(modules) = &job.request.modules {
-            orchestrator.filter_by_ids(modules);
-        }
+        orchestrator.apply_selection(&job.request.profile, job.request.modules.as_deref());
         let mut excluded = job.request.skip.clone();
         excluded.extend(job.progress.completed_modules.iter().cloned());
         if !excluded.is_empty() {

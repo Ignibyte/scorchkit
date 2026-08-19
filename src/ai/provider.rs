@@ -4,6 +4,7 @@
 //! Claude CLI adapter remains available for compatibility. Callers consume
 //! typed responses and do not need to understand either CLI's response format.
 
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,7 +22,8 @@ use crate::ai::types::{RemediationAnalysis, ScanPlan, StructuredAnalysis};
 use crate::config::{AiConfig, AiProviderKind};
 use crate::engine::correlation::AttackChain;
 use crate::runner::subprocess::{
-    ExitPolicy, SystemToolExecutor, ToolExecutor, ToolInvocation, DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
+    EnvironmentPolicy, ExitPolicy, SystemToolExecutor, ToolExecutor, ToolInvocation,
+    DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
 };
 
 const AI_PROCESS_TIMEOUT: Duration = Duration::from_mins(5);
@@ -120,6 +122,9 @@ impl CliAiProvider {
             exit_policy: ExitPolicy::RequireSuccess,
             output_limit_bytes: DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
             stdin: Some(combine_prompts(system, user).into_bytes()),
+            environment_policy: EnvironmentPolicy::Inherit,
+            environment: BTreeMap::default(),
+            working_directory: None,
         }
     }
 
@@ -148,6 +153,9 @@ impl CliAiProvider {
             exit_policy: ExitPolicy::RequireSuccess,
             output_limit_bytes: DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
             stdin: None,
+            environment_policy: EnvironmentPolicy::Inherit,
+            environment: BTreeMap::default(),
+            working_directory: None,
         }
     }
 
