@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub enum CodeCategory {
     /// Static application security testing.
     Sast,
+    /// Static correctness analysis that does not claim vulnerability coverage.
+    Correctness,
     /// Software composition analysis.
     Sca,
     /// Secret detection.
@@ -23,12 +25,23 @@ impl std::fmt::Display for CodeCategory {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Sast => formatter.write_str("sast"),
+            Self::Correctness => formatter.write_str("correctness"),
             Self::Sca => formatter.write_str("sca"),
             Self::Secrets => formatter.write_str("secrets"),
             Self::Iac => formatter.write_str("iac"),
             Self::Container => formatter.write_str("container"),
         }
     }
+}
+
+/// Relative cost and intended profile placement for a code analyzer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CodeAnalysisDepth {
+    /// Suitable for frequent standard analysis.
+    Fast,
+    /// Reserved for thorough, pentest, or explicit module selection.
+    Deep,
 }
 
 /// Immutable metadata exposed by one code scanner module.
@@ -42,6 +55,8 @@ pub struct CodeModuleDescriptor<'a> {
     pub id: &'a str,
     /// Module family category.
     pub category: CodeCategory,
+    /// Intended implicit-profile depth.
+    pub depth: CodeAnalysisDepth,
     /// Human-readable behavior description.
     pub description: &'a str,
     /// Supported languages; an empty slice means language-agnostic.

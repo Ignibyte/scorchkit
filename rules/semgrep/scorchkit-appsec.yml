@@ -1,0 +1,89 @@
+rules:
+  - id: scorchkit.python.dangerous-eval
+    languages: [python]
+    message: Avoid evaluating dynamic Python expressions.
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021 Injection"]
+    pattern: eval(...)
+
+  - id: scorchkit.python.dangerous-exec
+    languages: [python]
+    message: Avoid executing dynamic Python source.
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021 Injection"]
+    pattern: exec(...)
+
+  - id: scorchkit.python.subprocess-shell
+    languages: [python]
+    message: Avoid invoking a subprocess through a command shell.
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021 Injection"]
+    patterns:
+      - pattern: $FUNC(..., shell=True, ...)
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: ^(subprocess\.)?(run|call|check_call|check_output|Popen)$
+
+  - id: scorchkit.javascript.dangerous-eval
+    languages: [javascript, typescript]
+    message: Avoid evaluating dynamic JavaScript expressions.
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021 Injection"]
+    pattern: eval(...)
+
+  - id: scorchkit.javascript.child-process-exec
+    languages: [javascript, typescript]
+    message: Prefer argument-vector process APIs over shell command execution.
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021 Injection"]
+    pattern-either:
+      - pattern: child_process.exec(...)
+      - pattern: require("child_process").exec(...)
+
+  - id: scorchkit.php.dangerous-eval
+    languages: [php]
+    message: Avoid evaluating dynamic PHP source.
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021 Injection"]
+    pattern: eval(...)
+
+  - id: scorchkit.ruby.dangerous-eval
+    languages: [ruby]
+    message: Avoid evaluating dynamic Ruby source.
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021 Injection"]
+    pattern: eval(...)
+
+  - id: scorchkit.java.runtime-exec
+    languages: [java]
+    message: Prefer an argument-safe process API and validate every command component.
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021 Injection"]
+    pattern: Runtime.getRuntime().exec(...)
+
+  - id: scorchkit.go.shell-command
+    languages: [go]
+    message: Avoid passing dynamic commands to a system shell.
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021 Injection"]
+    pattern-either:
+      - pattern: exec.Command("sh", "-c", ...)
+      - pattern: exec.Command("bash", "-c", ...)

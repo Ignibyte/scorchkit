@@ -19,6 +19,18 @@ pub const AGENT_ANALYSIS_SCHEMA_V1: &str = "scorchkit.agent-analysis/v1";
 /// Schema for deterministic finding identities.
 pub const FINDING_IDENTITY_SCHEMA_V1: &str = "scorchkit.finding-identity/v1";
 
+/// Return the lowercase SHA-256 digest for reproducibility metadata.
+#[must_use]
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Return a stable SHA-256 digest for a structured JSON value independent of map order.
+#[must_use]
+pub fn canonical_json_sha256(value: &serde_json::Value) -> String {
+    sha256_hex(canonical_json(value).as_bytes())
+}
+
 /// A one-based source-code region.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceRegion {
@@ -33,6 +45,87 @@ pub struct SourceRegion {
     /// Optional last column in the region.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_column: Option<u64>,
+}
+
+/// One scanner-reported location in a static-analysis data-flow path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeFlowStep {
+    /// Typed source location for this step.
+    pub location: ObservationLocation,
+    /// Scanner explanation for the step, when supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// Scanner-defined step kinds such as `source`, `sink`, or `path`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kinds: Vec<String>,
+    /// SARIF nesting level, when supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nesting_level: Option<u64>,
+    /// SARIF execution order, when supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_order: Option<u64>,
+}
+
+impl CodeFlowStep {
+    /// Create a flow step from a typed location.
+    #[must_use]
+    pub const fn new(location: ObservationLocation) -> Self {
+        Self {
+            location,
+            message: None,
+            kinds: Vec::new(),
+            nesting_level: None,
+            execution_order: None,
+        }
+    }
+
+    /// Redact user-controlled text and location data before durable use.
+    #[must_use]
+    pub fn normalized(mut self) -> Self {
+        self.location = self.location.redacted();
+        self.message = self.message.map(|message| redact_text(&message));
+        self
+    }
+}
+
+/// One ordered thread through a scanner-reported code flow.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadFlow {
+    /// Optional scanner explanation for this path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// Ordered source, propagation, and sink locations.
+    pub steps: Vec<CodeFlowStep>,
+}
+
+impl ThreadFlow {
+    /// Redact every durable field while preserving path order and cardinality.
+    #[must_use]
+    pub fn normalized(mut self) -> Self {
+        self.message = self.message.map(|message| redact_text(&message));
+        self.steps = self.steps.into_iter().map(CodeFlowStep::normalized).collect();
+        self
+    }
+}
+
+/// One scanner-reported code flow, retaining each independent thread path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeFlow {
+    /// Optional scanner explanation for the flow.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// Independent ordered flow paths reported for the finding.
+    pub thread_flows: Vec<ThreadFlow>,
+}
+
+impl CodeFlow {
+    /// Redact every durable field without flattening flow structure.
+    #[must_use]
+    pub fn normalized(mut self) -> Self {
+        self.message = self.message.map(|message| redact_text(&message));
+        self.thread_flows = self.thread_flows.into_iter().map(ThreadFlow::normalized).collect();
+        self
+    }
 }
 
 impl SourceRegion {
@@ -385,6 +478,14 @@ impl EvidenceRecord {
         Self::build(EvidencePayload::Http { exchange: Box::new(exchange) }, provenance, fields)
     }
 
+    /// Build a recursively redacted scanner-native structured evidence record.
+    #[must_use]
+    pub fn structured(mut value: serde_json::Value, provenance: ScannerProvenance) -> Self {
+        let mut fields = Vec::new();
+        redact_json(&mut value, "$", &mut fields);
+        Self::build(EvidencePayload::Structured { value }, provenance, fields)
+    }
+
     /// Redact the payload again and recompute its identity.
     #[must_use]
     pub fn normalized(self) -> Self {
@@ -514,6 +615,9 @@ pub struct FindingRecordV2 {
     /// Explicit cross-scanner correlation keys.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub correlation_keys: Vec<CorrelationKey>,
+    /// Scanner-reported source-to-sink flows, preserving path and step order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_flows: Vec<CodeFlow>,
     /// Immutable scanner evidence records.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<EvidenceRecord>,
@@ -541,6 +645,7 @@ impl FindingRecordV2 {
             location: ObservationLocation::infer(affected_target),
             provenance: ScannerProvenance::new(module_id, collected_at),
             correlation_keys: Vec::new(),
+            code_flows: Vec::new(),
             evidence: Vec::new(),
             agent_analysis: Vec::new(),
         };
@@ -600,17 +705,24 @@ pub fn redact_url(input: &str) -> (String, Vec<String>) {
     };
     let pairs: Vec<(String, String)> =
         url.query_pairs().map(|(key, value)| (key.into_owned(), value.into_owned())).collect();
-    let fields: Vec<String> = pairs
+    let has_sensitive_query = pairs.iter().any(|(key, _)| is_sensitive_key(key));
+    let mut fields: Vec<String> = pairs
         .iter()
         .filter(|(key, _)| is_sensitive_key(key))
         .map(|(key, _)| format!("query.{key}"))
         .collect();
+    if url.password().is_some() {
+        let _ = url.set_password(Some("[REDACTED]"));
+        fields.push("authority.password".to_string());
+    }
     if fields.is_empty() {
         return (input.to_string(), fields);
     }
-    url.query_pairs_mut().clear().extend_pairs(pairs.iter().map(|(key, value)| {
-        (key.as_str(), if is_sensitive_key(key) { "[REDACTED]" } else { value.as_str() })
-    }));
+    if has_sensitive_query {
+        url.query_pairs_mut().clear().extend_pairs(pairs.iter().map(|(key, value)| {
+            (key.as_str(), if is_sensitive_key(key) { "[REDACTED]" } else { value.as_str() })
+        }));
+    }
     (url.into(), fields)
 }
 
@@ -650,14 +762,14 @@ fn redact_text_with_fields(input: &str) -> (String, Vec<String>) {
         .lines()
         .map(|line| {
             if let Some((key, value)) = line.split_once(':') {
-                if is_sensitive_key(key) {
+                if is_plain_text_key(key) && is_sensitive_key(key) {
                     fields.push(format!("text.{}", key.trim()));
                     format!("{key}: [REDACTED]")
                 } else {
                     format!("{key}:{value}")
                 }
             } else if let Some((key, value)) = line.split_once('=') {
-                if is_sensitive_key(key) {
+                if is_plain_text_key(key) && is_sensitive_key(key) {
                     fields.push(format!("text.{}", key.trim()));
                     format!("{key}=[REDACTED]")
                 } else {
@@ -669,7 +781,167 @@ fn redact_text_with_fields(input: &str) -> (String, Vec<String>) {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    (lines, fields)
+    let redacted = redact_source_assignments(&lines, &mut fields);
+    fields.sort();
+    fields.dedup();
+    (redacted, fields)
+}
+
+/// Redact assignment-shaped secrets embedded in source snippets and scanner diagnostics.
+///
+/// JSON, form data, and header-shaped text are handled above. This pass closes the remaining
+/// evidence boundary for ordinary source syntax such as `password = "value"`,
+/// `config["api_key"] = "value"`, and PHP-style `'token' => 'value'` without treating equality
+/// comparisons as assignments.
+fn redact_source_assignments(input: &str, fields: &mut Vec<String>) -> String {
+    let bytes = input.as_bytes();
+    let mut replacements = Vec::new();
+    let mut cursor = 0;
+
+    while cursor < bytes.len() {
+        let Some((key, key_end)) = source_key_at(input, cursor) else {
+            cursor += input[cursor..].chars().next().map_or(1, char::len_utf8);
+            continue;
+        };
+        if !is_sensitive_key(key) {
+            cursor = key_end;
+            continue;
+        }
+
+        let mut operator = skip_ascii_whitespace(bytes, key_end);
+        if bytes.get(operator) == Some(&b']') {
+            operator = skip_ascii_whitespace(bytes, operator + 1);
+        }
+        let Some(&symbol) = bytes.get(operator) else {
+            break;
+        };
+        if !matches!(symbol, b'=' | b':') {
+            cursor = key_end;
+            continue;
+        }
+
+        let mut value_start = operator + 1;
+        if symbol == b'=' {
+            match bytes.get(value_start) {
+                Some(b'=') => {
+                    cursor = value_start + 1;
+                    continue;
+                }
+                Some(b'>') => value_start += 1,
+                _ => {}
+            }
+        } else if bytes.get(value_start) == Some(&b':') {
+            cursor = value_start + 1;
+            continue;
+        }
+        value_start = skip_ascii_whitespace(bytes, value_start);
+        let Some((replace_start, replace_end)) = source_value_range(bytes, value_start) else {
+            cursor = value_start.max(key_end);
+            continue;
+        };
+        if &input[replace_start..replace_end] != "[REDACTED]" {
+            replacements.push((replace_start, replace_end));
+            fields.push(format!("text.{key}"));
+        }
+        cursor = replace_end;
+    }
+
+    if replacements.is_empty() {
+        return input.to_string();
+    }
+
+    let mut redacted = String::with_capacity(input.len());
+    let mut copied = 0;
+    for (start, end) in replacements {
+        redacted.push_str(&input[copied..start]);
+        redacted.push_str("[REDACTED]");
+        copied = end;
+    }
+    redacted.push_str(&input[copied..]);
+    redacted
+}
+
+fn source_key_at(input: &str, start: usize) -> Option<(&str, usize)> {
+    let bytes = input.as_bytes();
+    let first = *bytes.get(start)?;
+    if matches!(first, b'\'' | b'"') {
+        if start > 0 {
+            let previous = bytes[start - 1];
+            if !(previous.is_ascii_whitespace()
+                || matches!(previous, b'[' | b'{' | b'(' | b',' | b':'))
+            {
+                return None;
+            }
+        }
+        let quote = first;
+        let key_start = start + 1;
+        let mut end = key_start;
+        while let Some(&byte) = bytes.get(end) {
+            if byte == quote && bytes.get(end.wrapping_sub(1)) != Some(&b'\\') {
+                return Some((&input[key_start..end], end + 1));
+            }
+            end += 1;
+        }
+        return None;
+    }
+    if !(first.is_ascii_alphabetic() || first == b'_') {
+        return None;
+    }
+    if start > 0 {
+        let previous = bytes[start - 1];
+        if previous.is_ascii_alphanumeric() || previous == b'_' {
+            return None;
+        }
+    }
+    let mut end = start + 1;
+    while let Some(&byte) = bytes.get(end) {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-') {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    Some((&input[start..end], end))
+}
+
+fn is_plain_text_key(key: &str) -> bool {
+    let key = key.trim();
+    !key.is_empty()
+        && key.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn skip_ascii_whitespace(bytes: &[u8], mut cursor: usize) -> usize {
+    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+        cursor += 1;
+    }
+    cursor
+}
+
+fn source_value_range(bytes: &[u8], start: usize) -> Option<(usize, usize)> {
+    const REDACTED: &[u8] = b"[REDACTED]";
+    if bytes.get(start..start + REDACTED.len()) == Some(REDACTED) {
+        return Some((start, start + REDACTED.len()));
+    }
+    let first = *bytes.get(start)?;
+    if matches!(first, b'\'' | b'"' | b'`') {
+        let mut end = start + 1;
+        while let Some(&byte) = bytes.get(end) {
+            if byte == first && bytes.get(end.wrapping_sub(1)) != Some(&b'\\') {
+                return (end > start + 1).then_some((start + 1, end));
+            }
+            end += 1;
+        }
+        return (bytes.len() > start + 1).then_some((start + 1, bytes.len()));
+    }
+
+    let mut end = start;
+    while let Some(&byte) = bytes.get(end) {
+        if byte.is_ascii_whitespace() || matches!(byte, b',' | b';' | b')' | b']' | b'}' | b'&') {
+            break;
+        }
+        end += 1;
+    }
+    (end > start).then_some((start, end))
 }
 
 fn redact_json(value: &mut serde_json::Value, path: &str, fields: &mut Vec<String>) {
@@ -688,6 +960,13 @@ fn redact_json(value: &mut serde_json::Value, path: &str, fields: &mut Vec<Strin
         serde_json::Value::Array(array) => {
             for (index, child) in array.iter_mut().enumerate() {
                 redact_json(child, &format!("{path}[{index}]"), fields);
+            }
+        }
+        serde_json::Value::String(text) => {
+            let (redacted, nested_fields) = redact_text_with_fields(text);
+            if redacted != *text {
+                *text = redacted;
+                fields.extend(nested_fields.into_iter().map(|field| format!("{path}.{field}")));
             }
         }
         _ => {}
@@ -889,6 +1168,71 @@ mod tests {
     }
 
     #[test]
+    fn structured_evidence_identity_is_stable_and_redacts_nested_strings() {
+        let now = Utc::now();
+        let provenance = ScannerProvenance::new("scanner", now);
+        let first = EvidenceRecord::structured(
+            serde_json::json!({
+                "z": {"password": "secret"},
+                "a": {"snippet": "api_key=secret"}
+            }),
+            provenance.clone(),
+        );
+        let second = EvidenceRecord::structured(
+            serde_json::json!({
+                "a": {"snippet": "api_key=secret"},
+                "z": {"password": "secret"}
+            }),
+            provenance,
+        );
+
+        assert_eq!(first.identity, second.identity);
+        let encoded = serde_json::to_string(&first).expect("serialize structured evidence");
+        assert!(!encoded.contains("secret"));
+        assert!(encoded.contains("REDACTED"));
+    }
+
+    #[test]
+    fn code_flow_round_trip_preserves_paths_and_redacts_messages() {
+        let flow = CodeFlow {
+            message: Some("password=secret".to_string()),
+            thread_flows: vec![ThreadFlow {
+                message: Some("authorization: bearer-secret".to_string()),
+                steps: vec![
+                    CodeFlowStep {
+                        location: ObservationLocation::Source {
+                            path: "src/source.rs".to_string(),
+                            region: Some(SourceRegion::new(3)),
+                        },
+                        message: Some("api_key=secret".to_string()),
+                        kinds: vec!["source".to_string()],
+                        nesting_level: None,
+                        execution_order: Some(0),
+                    },
+                    CodeFlowStep {
+                        location: ObservationLocation::Source {
+                            path: "src/sink.rs".to_string(),
+                            region: Some(SourceRegion::new(11)),
+                        },
+                        message: Some("execute(query)".to_string()),
+                        kinds: vec!["sink".to_string()],
+                        nesting_level: None,
+                        execution_order: Some(1),
+                    },
+                ],
+            }],
+        }
+        .normalized();
+        let encoded = serde_json::to_string(&flow).expect("serialize code flow");
+        assert!(!encoded.contains("secret"));
+        let restored: CodeFlow = serde_json::from_str(&encoded).expect("deserialize code flow");
+        assert_eq!(restored, flow);
+        assert_eq!(restored.thread_flows[0].steps.len(), 2);
+        assert_eq!(restored.thread_flows[0].steps[0].kinds, ["source"]);
+        assert_eq!(restored.thread_flows[0].steps[1].kinds, ["sink"]);
+    }
+
+    #[test]
     fn redact_text_handles_json_form_and_header_shapes() {
         assert_eq!(
             redact_text(r#"{"user":"alice","password":"secret"}"#),
@@ -905,6 +1249,64 @@ mod tests {
     }
 
     #[test]
+    fn redact_text_handles_source_assignment_shapes() {
+        let source = concat!(
+            "eval(password = \"line-fixture-secret\")\n",
+            "config[\"api_key\"] = 'config-fixture-secret';\n",
+            "['token' => `array-fixture-secret`]\n",
+            "authorization: bearer-fixture-secret"
+        );
+        let redacted = redact_text(source);
+
+        assert!(!redacted.contains("fixture-secret"), "redacted output: {redacted}");
+        assert!(redacted.contains("eval(password = \"[REDACTED]\")"));
+        assert!(redacted.contains("config[\"api_key\"] = '[REDACTED]'"));
+        assert!(redacted.contains("'token' => `[REDACTED]`"));
+        assert!(redacted.contains("authorization: [REDACTED]"));
+    }
+
+    #[test]
+    fn redact_text_does_not_rewrite_comparisons_or_ordinary_source() {
+        let source = concat!(
+            "if password == expected { authenticate(); }\n",
+            "let password_length = input.len();\n",
+            "description: this is ordinary text"
+        );
+        assert_eq!(redact_text(source), source);
+    }
+
+    #[test]
+    fn structured_and_flow_evidence_redact_source_assignments() {
+        let provenance = ScannerProvenance::new("semgrep", Utc::now());
+        let evidence = EvidenceRecord::structured(
+            serde_json::json!({"extra": {"line": "eval(password = \"evidence-secret\")"}}),
+            provenance,
+        );
+        let flow = CodeFlow {
+            message: None,
+            thread_flows: vec![ThreadFlow {
+                message: None,
+                steps: vec![CodeFlowStep {
+                    location: ObservationLocation::Source {
+                        path: "src/main.py".to_string(),
+                        region: Some(SourceRegion::new(1)),
+                    },
+                    message: Some("eval(password = \"flow-secret\")".to_string()),
+                    kinds: vec!["sink".to_string()],
+                    nesting_level: None,
+                    execution_order: Some(0),
+                }],
+            }],
+        }
+        .normalized();
+
+        let encoded = serde_json::to_string(&(evidence, flow)).expect("serialize redacted data");
+        assert!(!encoded.contains("evidence-secret"));
+        assert!(!encoded.contains("flow-secret"));
+        assert!(encoded.contains("REDACTED"));
+    }
+
+    #[test]
     fn url_redaction_keeps_names_and_non_sensitive_values() {
         let (url, fields) =
             redact_url("https://example.com/search?q=public&access_token=secret#fragment");
@@ -912,6 +1314,17 @@ mod tests {
         assert!(url.contains("access_token=%5BREDACTED%5D"));
         assert!(!url.contains("secret"));
         assert_eq!(fields, vec!["query.access_token"]);
+    }
+
+    #[test]
+    fn url_redaction_removes_passwords_and_sensitive_query_values_together() {
+        let (url, fields) = redact_url(
+            "https://user:authority-fixture-secret@example.com/?token=query-fixture-secret",
+        );
+        assert!(!url.contains("authority-fixture-secret"));
+        assert!(!url.contains("query-fixture-secret"));
+        assert!(url.contains("REDACTED"));
+        assert_eq!(fields, vec!["query.token", "authority.password"]);
     }
 
     #[test]
@@ -944,5 +1357,80 @@ mod tests {
                 serde_json::from_str(&encoded).expect("deserialize location");
             assert_eq!(location, restored);
         }
+    }
+
+    #[test]
+    fn canonical_json_digest_matches_the_canonical_bytes() {
+        assert_eq!(
+            canonical_json_sha256(&serde_json::json!({"a": 1})),
+            "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+        );
+    }
+
+    #[test]
+    fn source_key_parser_enforces_token_boundaries_and_offsets() {
+        assert_eq!(source_key_at("'token'", 0), Some(("token", 7)));
+        assert_eq!(source_key_at("  token=", 2), Some(("token", 7)));
+        assert_eq!(source_key_at("xtoken", 1), None);
+        assert_eq!(source_key_at("_token", 1), None);
+
+        let production =
+            include_str!("observation.rs").split("#[cfg(test)]").next().expect("production source");
+        let body = production
+            .split("fn source_key_at")
+            .nth(1)
+            .expect("source_key_at body")
+            .split("fn is_plain_text_key")
+            .next()
+            .expect("source_key_at boundary");
+        let compact: String = body.split_whitespace().collect();
+        assert!(compact.contains("letmutend=start+1;"));
+    }
+
+    #[test]
+    fn source_value_parser_preserves_exact_value_boundaries() {
+        assert_eq!(source_value_range(b"xx[REDACTED],tail", 2), Some((2, 12)));
+        assert_eq!(source_value_range(b"xx'v'", 2), Some((3, 4)));
+        assert_eq!(source_value_range(b"xx''", 2), None);
+        assert_eq!(source_value_range(b"xx'unterminated", 2), Some((3, 15)));
+        assert_eq!(source_value_range(b"xx'", 2), None);
+        assert_eq!(source_value_range(b"xxvalue,tail", 2), Some((2, 7)));
+        assert_eq!(source_value_range(b"xxvalue tail", 2), Some((2, 7)));
+        assert_eq!(source_value_range(b",tail", 0), None);
+    }
+
+    #[test]
+    fn source_assignment_redaction_handles_assignments_but_not_comparisons() {
+        let cases = [
+            ("password = \"secret\"", "password = \"[REDACTED]\"", vec!["text.password"]),
+            (
+                "config[\"api_key\"] = \"secret\"",
+                "config[\"api_key\"] = \"[REDACTED]\"",
+                vec!["text.api_key"],
+            ),
+            ("'token' => 'secret'", "'token' => '[REDACTED]'", vec!["text.token"]),
+            ("password == \"secret\"", "password == \"secret\"", Vec::new()),
+            ("password::secret", "password::secret", Vec::new()),
+        ];
+        for (input, expected, expected_fields) in cases {
+            let mut fields = Vec::new();
+            assert_eq!(redact_source_assignments(input, &mut fields), expected, "input {input}");
+            assert_eq!(fields, expected_fields, "fields for {input}");
+        }
+
+        let production =
+            include_str!("observation.rs").split("#[cfg(test)]").next().expect("production source");
+        let body = production
+            .split("fn redact_source_assignments")
+            .nth(1)
+            .expect("redaction body")
+            .split("fn source_key_at")
+            .next()
+            .expect("redaction boundary");
+        let compact: String = body.split_whitespace().collect();
+        assert!(compact.contains("whilecursor<bytes.len(){"));
+        assert!(compact.contains("operator=skip_ascii_whitespace(bytes,operator+1);"));
+        let cursor_advance = ["cursor=value_start", "+1;"].concat();
+        assert_eq!(compact.matches(&cursor_advance).count(), 2);
     }
 }

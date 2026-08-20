@@ -5,12 +5,14 @@ use std::time::Duration;
 use async_trait::async_trait;
 use scorchkit::config::AppConfig;
 use scorchkit::engine::code_context::CodeContext;
+use scorchkit::engine::code_module::CodeModule;
 use scorchkit::engine::module_trait::ScanModule;
 use scorchkit::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
 use scorchkit::engine::scan_context::ScanContext;
 use scorchkit::runner::plugin::{PluginDef, PluginModule};
 use scorchkit::runner::subprocess::{
-    ExitPolicy, ToolExecutor, ToolInvocation, ToolOutput, DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
+    EnvironmentPolicy, ExitPolicy, ToolExecutor, ToolInvocation, ToolOutput,
+    DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
 };
 use scorchkit::{Engine, Result, ScopeRule};
 
@@ -24,6 +26,7 @@ use scorchkit::engine::infra_context::InfraContext;
 #[derive(Debug, Default)]
 struct RecordingToolExecutor {
     invocations: Mutex<Vec<ToolInvocation>>,
+    emit_sast_outputs: bool,
 }
 
 impl RecordingToolExecutor {
@@ -41,15 +44,53 @@ impl RecordingToolExecutor {
             .cloned()
             .unwrap_or_else(|| panic!("expected a recorded tool invocation"))
     }
+
+    const fn with_sast_outputs() -> Self {
+        Self { invocations: Mutex::new(Vec::new()), emit_sast_outputs: true }
+    }
 }
 
 #[async_trait]
 impl ToolExecutor for RecordingToolExecutor {
     async fn execute(&self, invocation: ToolInvocation) -> Result<ToolOutput> {
         let resolved_program = PathBuf::from(format!("/mock/{}", invocation.program));
+        let stdout = if self.emit_sast_outputs && invocation.program == "semgrep" {
+            r#"{
+                "version":"1.156.0",
+                "errors":[],
+                "results":[{
+                    "check_id":"scorchkit.python.dangerous-eval",
+                    "path":"app.py",
+                    "start":{"line":2,"col":1},
+                    "end":{"line":2,"col":12},
+                    "extra":{
+                        "severity":"ERROR",
+                        "message":"Avoid dynamic evaluation",
+                        "lines":"eval(user_input)"
+                    }
+                }]
+            }"#
+            .to_string()
+        } else {
+            String::new()
+        };
+        if self.emit_sast_outputs && invocation.program == "codeql" {
+            if let Some(path) =
+                invocation.args.iter().find_map(|argument| argument.strip_prefix("--output="))
+            {
+                std::fs::write(path, include_str!("fixtures/sast/codeql-path.sarif.json"))?;
+            }
+        }
+        if self.emit_sast_outputs && invocation.program == "psalm" {
+            if let Some(path) =
+                invocation.args.iter().find_map(|argument| argument.strip_prefix("--report="))
+            {
+                std::fs::write(path, include_str!("fixtures/sast/psalm-taint.sarif.json"))?;
+            }
+        }
         self.recorded().push(invocation);
         Ok(ToolOutput {
-            stdout: String::new(),
+            stdout,
             stderr: String::new(),
             exit_code: 0,
             duration: Duration::ZERO,
@@ -102,17 +143,22 @@ fn dast_context_without_credential_grant(target: &str) -> Result<ScanContext> {
 }
 
 fn authorized_code_context(path: &std::path::Path) -> Result<CodeContext> {
+    authorized_code_context_with(path, AppConfig::default(), None)
+}
+
+fn authorized_code_context_with(
+    path: &std::path::Path,
+    config: AppConfig,
+    language: Option<&str>,
+) -> Result<CodeContext> {
     let policy = EngagementPolicy::default()
         .allow_scope(ScopeRule::path_prefix(path)?)
         .allow_capability(Capability::CodeScan)
         .allow_capability(Capability::ExternalTool)
         .allow_capability(Capability::CredentialUse)
         .allow_effect(EffectClass::Passive);
-    Engine::for_engagement(
-        Arc::new(AppConfig::default()),
-        Arc::new(Engagement::new("SAST contract", policy)),
-    )
-    .code_context(path, None)
+    Engine::for_engagement(Arc::new(config), Arc::new(Engagement::new("SAST contract", policy)))
+        .code_context(path, language)
 }
 
 fn code_context_without_credential_grant(path: &std::path::Path) -> Result<CodeContext> {
@@ -248,12 +294,14 @@ async fn prowler_is_denied_before_inheriting_ambient_credentials() -> Result<()>
 async fn every_sast_tool_wrapper_executes_its_declared_invocation() -> Result<()> {
     let root = tempfile::tempdir()?;
     std::fs::write(root.path().join("Dockerfile"), "FROM scratch\n")?;
+    std::fs::write(root.path().join("package.json"), "{}\n")?;
+    std::fs::write(root.path().join("composer.json"), "{}\n")?;
     let recorder = Arc::new(RecordingToolExecutor::default());
     let injected: Arc<dyn ToolExecutor> = recorder.clone();
     let context = authorized_code_context(root.path())?.with_tool_executor(injected);
     let modules = scorchkit::sast_tools::register_modules();
 
-    assert_eq!(modules.len(), 21, "SAST tool registry contract changed");
+    assert_eq!(modules.len(), 23, "SAST tool registry contract changed");
     for module in modules {
         assert!(
             module.requires_external_tool(),
@@ -262,23 +310,165 @@ async fn every_sast_tool_wrapper_executes_its_declared_invocation() -> Result<()
         );
         let before = recorder.len();
         let _module_outcome = module.run(&context).await;
+        let expected_invocations = if module.id() == "codeql" { 2 } else { 1 };
         assert_eq!(
             recorder.len(),
-            before + 1,
-            "{} returned without executing its external tool",
+            before + expected_invocations,
+            "{} did not execute its complete external-tool contract",
             module.id()
         );
-        assert_invocation_contract(module.id(), module.required_tool(), &recorder.last());
+        for invocation in &recorder.recorded()[before..] {
+            assert_invocation_contract(module.id(), module.required_tool(), invocation);
+        }
     }
 
-    assert_eq!(recorder.len(), 21);
+    assert_eq!(recorder.len(), 24);
+    Ok(())
+}
+
+#[tokio::test]
+async fn semgrep_rejects_digest_mismatch_before_process_execution() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let rules = root.path().join("rules.yml");
+    std::fs::write(
+        &rules,
+        "rules:\n  - id: fixture\n    languages: [python]\n    message: fixture\n    severity: ERROR\n    pattern: eval(...)\n",
+    )?;
+    let mut config = AppConfig::default();
+    config.sast.semgrep.local_rule_file = Some(rules);
+    config.sast.semgrep.local_rule_sha256 = Some("0".repeat(64));
+    let recorder = Arc::new(RecordingToolExecutor::default());
+    let injected: Arc<dyn ToolExecutor> = recorder.clone();
+    let context = authorized_code_context_with(root.path(), config, Some("python"))?
+        .with_tool_executor(injected);
+
+    let error = scorchkit::sast_tools::semgrep::SemgrepModule
+        .run(&context)
+        .await
+        .expect_err("digest mismatch must fail");
+
+    assert!(error.to_string().contains("digest mismatch"));
+    assert_eq!(recorder.len(), 0, "invalid rules must fail before the executor");
+    Ok(())
+}
+
+#[tokio::test]
+async fn semgrep_executes_the_owned_offline_rule_pack_and_records_its_digest() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let recorder = Arc::new(RecordingToolExecutor::with_sast_outputs());
+    let injected: Arc<dyn ToolExecutor> = recorder.clone();
+    let context = authorized_code_context_with(root.path(), AppConfig::default(), Some("python"))?
+        .with_tool_executor(injected);
+
+    let findings = scorchkit::sast_tools::semgrep::SemgrepModule.run(&context).await?;
+
+    assert_eq!(findings.len(), 1);
+    let identity =
+        findings[0].appsec.provenance.config_identity.as_deref().expect("Semgrep config identity");
+    assert!(identity.starts_with("scorchkit-semgrep-appsec/v1@sha256:"));
+    assert_eq!(identity.len(), "scorchkit-semgrep-appsec/v1@sha256:".len() + 64);
+    let invocation = recorder.last();
+    assert_invocation_contract("semgrep", Some("semgrep"), &invocation);
+    assert_eq!(invocation.args.first().map(String::as_str), Some("scan"));
+    assert!(invocation.args.iter().any(|argument| argument == "--metrics=off"));
+    assert!(invocation.args.iter().any(|argument| argument == "--disable-version-check"));
+    assert!(invocation.args.iter().any(|argument| argument == "--dataflow-traces"));
+    assert!(!invocation.args.iter().any(|argument| argument == "auto"));
+    let config_index = invocation
+        .args
+        .iter()
+        .position(|argument| argument == "--config")
+        .expect("Semgrep config argument");
+    let materialized = PathBuf::from(&invocation.args[config_index + 1]);
+    assert!(materialized.is_absolute());
+    assert!(!materialized.exists(), "owned rule file must be removed after the scan");
+    Ok(())
+}
+
+#[tokio::test]
+async fn codeql_executes_no_build_create_then_offline_analyze_and_cleans_artifacts() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let recorder = Arc::new(RecordingToolExecutor::with_sast_outputs());
+    let injected: Arc<dyn ToolExecutor> = recorder.clone();
+    let context = authorized_code_context_with(root.path(), AppConfig::default(), Some("python"))?
+        .with_tool_executor(injected);
+
+    let findings = scorchkit::sast_tools::codeql::CodeqlModule.run(&context).await?;
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].appsec.code_flows[0].thread_flows[0].steps.len(), 3);
+    let invocations = recorder.recorded().clone();
+    assert_eq!(invocations.len(), 2);
+    let create = &invocations[0];
+    assert_eq!(create.args.first().map(String::as_str), Some("database"));
+    assert_eq!(create.args.get(1).map(String::as_str), Some("create"));
+    assert!(create.args.iter().any(|argument| argument == "--language=python"));
+    assert!(create.args.iter().any(|argument| argument == "--build-mode=none"));
+    assert!(create.args.iter().any(|argument| argument == "--threads=2"));
+    assert!(create.args.iter().any(|argument| argument == "--ram=4096"));
+    assert_eq!(create.working_directory.as_deref(), Some(root.path()));
+
+    let analyze = &invocations[1];
+    assert_eq!(analyze.args.first().map(String::as_str), Some("database"));
+    assert_eq!(analyze.args.get(1).map(String::as_str), Some("analyze"));
+    assert!(analyze.args.iter().any(|argument| argument == "--no-download"));
+    assert!(analyze.args.iter().any(|argument| {
+        argument == "codeql/python-queries:codeql-suites/python-security-extended.qls"
+    }));
+    let report = analyze
+        .args
+        .iter()
+        .find_map(|argument| argument.strip_prefix("--output="))
+        .map(PathBuf::from)
+        .expect("CodeQL report path");
+    assert!(!report.exists(), "owned CodeQL report must be removed after the scan");
+    assert!(
+        !PathBuf::from(&create.args[2]).exists(),
+        "owned CodeQL database must be removed after the scan"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn psalm_executes_php_taint_analysis_and_cleans_its_report() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let recorder = Arc::new(RecordingToolExecutor::with_sast_outputs());
+    let injected: Arc<dyn ToolExecutor> = recorder.clone();
+    let context = authorized_code_context_with(root.path(), AppConfig::default(), Some("php"))?
+        .with_tool_executor(injected);
+
+    let findings = scorchkit::sast_tools::psalm::PsalmModule.run(&context).await?;
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].appsec.code_flows[0].thread_flows[0].steps.len(), 2);
+    let invocation = recorder.last();
+    assert_invocation_contract("psalm", Some("psalm"), &invocation);
+    assert_eq!(invocation.exit_policy, ExitPolicy::AllowNonZero);
+    assert_eq!(invocation.environment_policy, EnvironmentPolicy::Clear);
+    assert_ne!(invocation.working_directory.as_deref(), Some(root.path()));
+    assert!(invocation.args.iter().any(|argument| argument == "--taint-analysis"));
+    let config = invocation
+        .args
+        .iter()
+        .find_map(|argument| argument.strip_prefix("--config="))
+        .map(PathBuf::from)
+        .expect("Psalm config path");
+    let report = invocation
+        .args
+        .iter()
+        .find_map(|argument| argument.strip_prefix("--report="))
+        .map(PathBuf::from)
+        .expect("Psalm report path");
+    assert_eq!(invocation.working_directory.as_deref(), config.parent());
+    assert_eq!(config.parent(), report.parent());
+    assert!(!config.exists(), "owned Psalm config must be removed after the scan");
+    assert!(!report.exists(), "owned Psalm report must be removed after the scan");
+    assert!(!invocation.environment.contains_key("COMPOSER_AUTH"));
     Ok(())
 }
 
 #[tokio::test]
 async fn scoutsuite_is_denied_before_inheriting_ambient_credentials() -> Result<()> {
-    use scorchkit::engine::code_module::CodeModule;
-
     let root = tempfile::tempdir()?;
     let recorder = Arc::new(RecordingToolExecutor::default());
     let injected: Arc<dyn ToolExecutor> = recorder.clone();

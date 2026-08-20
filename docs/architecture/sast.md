@@ -23,7 +23,7 @@ CLI: scorchkit code <path>          CLI: scorchkit run <url>           CLI: scor
     ┌────┼────────┐              ┌────────────┼────────────┐                       │
     │    │        │              │            │            │                       │
   sast  sast_tools             recon      scanner       tools                   infra
-  (1)   (21)                   (10)       (35)          (46)                    (5)
+  (1)   (23)                   (10)       (35)          (46)                    (5)
          │                                    │                                    │
          └────────────────────────────────────┴────────────────────────────────────┘
                                               │
@@ -45,7 +45,8 @@ Parallel to `ScanModule`. Adds `languages()` method for language-aware filtering
 ### `CodeContext` (`engine/code_context.rs`)
 
 - `path: PathBuf` — root directory to scan
-- `language: Option<String>` — auto-detected from manifest files
+- `language: Option<String>` — compatibility primary language
+- `languages: Vec<String>` — every explicit or root-manifest-detected language
 - `manifests: Vec<PathBuf>` — discovered lockfiles / manifests
 - `config: Arc<AppConfig>`
 - `shared_data: Arc<SharedData>` — same inter-module store as DAST
@@ -54,7 +55,8 @@ Parallel to `ScanModule`. Adds `languages()` method for language-aware filtering
 
 ### `CodeCategory` enum
 
-- `Sast` — static code analysis (Semgrep, Bandit, Gosec, PHPStan, ESLint-security, Slither, Brakeman, Snyk-code)
+- `Sast` — security-oriented source analysis (Semgrep, CodeQL, Psalm, Bandit, Gosec, ESLint-security, Slither, Brakeman, Snyk-code)
+- `Correctness` — static correctness and type analysis that does not claim vulnerability coverage (PHPStan)
 - `Sca` — software composition analysis (OSV-Scanner, Grype, cargo-audit, cargo-deny, Snyk-test, dep-audit)
 - `Secrets` — secret detection (Gitleaks)
 - `Iac` — infrastructure as code (Checkov, Hadolint, TFLint, KICS, Kubescape)
@@ -73,15 +75,16 @@ Constructs a `Target` with `file://` URL scheme from a filesystem path. This ena
 
 ## External SAST Tool Wrappers (`sast_tools/`)
 
-21 wrappers, registered in `sast_tools::register_modules()`.
+23 wrappers, registered in `sast_tools::register_modules()`.
 
-The default code catalog contains 20 of these wrappers plus the native dependency analyzer.
+The default code catalog contains 22 of these wrappers plus the native dependency analyzer.
 `scoutsuite` remains registered but requires an explicit module-ID selection because it assesses a
 cloud account rather than application source or artifacts.
 
 | Tool | Category | Languages | Output Format | Exit Code |
 |------|----------|-----------|---------------|-----------|
-| Semgrep | Sast | multi | JSON (`results`) | 0 always |
+| Semgrep | Sast, fast | multi | JSON (`results`) | strict |
+| CodeQL | Sast, deep | JavaScript/TypeScript, Python, Ruby | SARIF | strict |
 | OSV-Scanner | Sca | multi | JSON (`results.packages.vulnerabilities`) | non-zero on findings |
 | Gitleaks | Secrets | any | JSON array | non-zero on findings |
 | Bandit | Sast | python | JSON | non-zero on findings |
@@ -90,7 +93,8 @@ cloud account rather than application source or artifacts.
 | Grype | Sca / Container | any | JSON | non-zero on findings |
 | Hadolint | Iac | dockerfile | JSON | non-zero on findings |
 | ESLint-security | Sast | javascript/typescript | JSON | non-zero on findings |
-| PHPStan | Sast | php | JSON | non-zero on findings |
+| PHPStan | Correctness, fast | php | JSON | non-zero on findings |
+| Psalm | Sast, deep | php | SARIF | non-zero on findings |
 | Snyk-test | Sca | multi (auto) | JSON | non-zero on findings |
 | Snyk-code | Sast | multi (auto) | JSON | non-zero on findings |
 | cargo-audit | Sca | rust | JSON | non-zero on findings |
@@ -104,7 +108,9 @@ cloud account rather than application source or artifacts.
 | ScoutSuite | Container | aws/gcp/azure/alicloud/oci | JSON | non-zero on findings |
 
 Tools that exit non-zero for "findings found" use `ctx.run_tool_lenient()`. Strict tools use
-`ctx.run_tool()`. Both methods create an owned invocation with a timeout and 8 MiB per-stream limit.
+`ctx.run_tool()`. File-producing deep analyzers use the same context-owned invocation seam with a
+working directory, bounded output, scoped artifacts, and a bounded report read. CodeQL uses an
+owned database-create step followed by offline analysis. Psalm writes one owned SARIF report.
 
 `CodeOrchestrator` submits runnable modules to the shared job executor. The executor enforces
 `max_concurrent_modules`, a batch wall-time budget, caller cancellation, and submission-ordered
@@ -122,22 +128,39 @@ Auto-detects from manifest files in the scan root:
 | `go.mod` | go |
 | `requirements.txt` / `pyproject.toml` | python |
 | `pom.xml` / `build.gradle` | java |
-| `Gemfile.lock` | ruby |
-| `composer.lock` | php |
+| `Gemfile` / `Gemfile.lock` | ruby |
+| `composer.json` / `composer.lock` | php |
 
-Override with `--language <lang>`. Language-filtered modules (e.g. Bandit for python, Gosec for go) run only when the detected / forced language matches. Language-agnostic modules (Gitleaks, OSV-Scanner, dep-audit, Grype) always run.
+Detection records every language represented by a root manifest. Override with `--language <lang>`
+to select one explicit language. Language-specific modules stay visible through selection and emit a
+typed `not_applicable` outcome when they do not match. Language-agnostic modules remain eligible.
 
 ## Profiles
 
 | Profile | Modules | Use Case |
 |---------|---------|----------|
 | quick | Secrets + SCA only | CI gate, fast checks |
-| standard | Application code modules whose language matches | Comprehensive code analysis |
-| thorough | Application code modules whose language matches | Same selection; reserved for later depth controls |
+| standard | Fast application code modules whose language matches | Frequent application analysis |
+| thorough | Fast plus deep application code modules | Release and deep review |
+| pentest | Fast plus deep application code modules | Code side of an authorized application pentest |
 
 All implicit code profiles exclude `scoutsuite`. An explicit `--modules scoutsuite` selection keeps
 the compatibility adapter available and still requires the normal code-path, credential, process,
-and effect authorization.
+and effect authorization. A valid explicit ID can also select CodeQL or Psalm under another valid
+profile. Unknown profiles clear the selection.
+
+## Outcomes and flow evidence
+
+`ScanResult.module_outcomes` records one typed `ran`, `not_applicable`, `skipped`, or `failed`
+state for every selected code module. The legacy `modules_run` and `modules_skipped` fields remain
+available. Unsupported languages are evaluated before executable lookup so a missing unrelated tool
+cannot hide an applicability result.
+
+CodeQL and Psalm share one strict SARIF decoder. Semgrep converts its optional taint trace into the
+same code-flow model. Findings retain independent flow paths and ordered steps, redacted
+scanner-native structured evidence, rule or query identity, scanner/configuration provenance, and
+confidence. Flows enrich evidence without changing stable finding identity. SARIF reports project
+the same flow structure back to `codeFlows`.
 
 ## Security: Evidence Redaction
 

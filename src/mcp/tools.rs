@@ -28,6 +28,28 @@ use crate::runner::job::{DastJobRequest, ScanJob, ScanJobState};
 use crate::runner::orchestrator::Orchestrator;
 use crate::storage::{context, findings, metrics, projects, scans, schedules};
 
+fn redacted_top_finding(finding: &crate::engine::finding::Finding) -> serde_json::Value {
+    serde_json::json!({
+        "severity": finding.severity.to_string(),
+        "title": crate::engine::observation::redact_text(&finding.title),
+        "target": crate::engine::observation::redact_url(&finding.affected_target).0,
+    })
+}
+
+fn redacted_intelligence_finding(finding: &crate::engine::finding::Finding) -> serde_json::Value {
+    serde_json::json!({
+        "module": &finding.module_id,
+        "severity": finding.severity.to_string(),
+        "title": crate::engine::observation::redact_text(&finding.title),
+        "description": crate::engine::observation::redact_text(&finding.description),
+        "target": crate::engine::observation::redact_url(&finding.affected_target).0,
+        "evidence": finding
+            .evidence
+            .as_deref()
+            .map(crate::engine::observation::redact_text),
+    })
+}
+
 /// Helper to resolve a project by name or UUID.
 async fn resolve_project(
     pool: &sqlx::PgPool,
@@ -775,7 +797,7 @@ impl ScorchKitServer {
 
             let output = serde_json::json!({
                 "scan_id": result.scan_id,
-                "target": result.target.raw,
+                "target": crate::engine::observation::redact_url(&result.target.raw).0,
                 "profile": params.profile,
                 "project": project.name,
                 "persisted": true,
@@ -797,7 +819,7 @@ impl ScorchKitServer {
         // No project — return full scan result
         let output = serde_json::json!({
             "scan_id": result.scan_id,
-            "target": result.target.raw,
+            "target": crate::engine::observation::redact_url(&result.target.raw).0,
             "profile": params.profile,
             "persisted": false,
             "summary": {
@@ -810,13 +832,12 @@ impl ScorchKitServer {
             },
             "modules_run": result.modules_run.len(),
             "duration_seconds": (result.completed_at - result.started_at).num_seconds(),
-            "top_findings": result.findings.iter().take(5).map(|f| {
-                serde_json::json!({
-                    "severity": f.severity.to_string(),
-                    "title": &f.title,
-                    "target": &f.affected_target,
-                })
-            }).collect::<Vec<_>>(),
+            "top_findings": result
+                .findings
+                .iter()
+                .take(5)
+                .map(redacted_top_finding)
+                .collect::<Vec<_>>(),
         });
         serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
     }
@@ -846,20 +867,15 @@ impl ScorchKitServer {
         let result = orchestrator.run(true).await.map_err(|e| e.to_string())?;
 
         let output = serde_json::json!({
-            "target": result.target.raw,
+            "target": crate::engine::observation::redact_url(&result.target.raw).0,
             "recon_modules_run": result.modules_run,
             "total_findings": result.summary.total_findings,
             "duration_seconds": (result.completed_at - result.started_at).num_seconds(),
-            "intelligence": result.findings.iter().map(|f| {
-                serde_json::json!({
-                    "module": &f.module_id,
-                    "severity": f.severity.to_string(),
-                    "title": &f.title,
-                    "description": &f.description,
-                    "target": &f.affected_target,
-                    "evidence": &f.evidence,
-                })
-            }).collect::<Vec<_>>(),
+            "intelligence": result
+                .findings
+                .iter()
+                .map(redacted_intelligence_finding)
+                .collect::<Vec<_>>(),
         });
         serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
     }
@@ -967,6 +983,7 @@ impl ScorchKitServer {
                     "id": m.id(),
                     "name": m.name(),
                     "category": m.category().to_string(),
+                    "depth": m.depth(),
                     "description": m.description(),
                     "languages": m.languages(),
                     "requires_external_tool": m.requires_external_tool(),
@@ -987,6 +1004,7 @@ impl ScorchKitServer {
         &self,
         params: super::types::CodeScanParams,
     ) -> Result<String, String> {
+        crate::facade::validate_scan_profile(&params.profile).map_err(|error| error.to_string())?;
         let path = std::path::PathBuf::from(&params.path);
         if !path.exists() {
             return Err(format!("path '{}' does not exist", params.path));
@@ -1007,7 +1025,7 @@ impl ScorchKitServer {
         // Explicit module IDs may select the compatibility catalog; otherwise use the
         // application-only standard profile.
         let modules = params.modules.as_deref().map(comma_separated);
-        orchestrator.apply_selection("standard", modules.as_deref());
+        orchestrator.apply_selection(&params.profile, modules.as_deref());
         if let Some(ref skip) = params.skip {
             let ids: Vec<String> = skip.split(',').map(|s| s.trim().to_string()).collect();
             orchestrator.exclude_by_ids(&ids);
@@ -1381,7 +1399,8 @@ impl ScorchKitServer {
         given filesystem path. Auto-detects project language from manifest files (Cargo.toml, \
         package.json, go.mod, etc.). Runs built-in analyzers (dependency auditor) and external \
         tool wrappers (Semgrep, OSV-Scanner, Gitleaks, Bandit, Gosec, Checkov, Grype, etc.) \
-        based on detected language. Use 'language' to override auto-detection. Use 'modules' \
+        based on detected language and profile. Use 'language' to override auto-detection, \
+        'profile' to select fast or deep analysis, and 'modules' \
         to run only specific module IDs, or 'skip' to exclude specific ones. Returns JSON with \
         findings array and scan metadata, same format as the scan tool.")]
     async fn scan_code(
@@ -1436,6 +1455,69 @@ mod tests {
             server.config.engagement.clone().expect("job engagement"),
         )
         .with_modules(Some(vec!["headers".to_string()]))
+    }
+
+    #[test]
+    fn finding_projections_redact_public_field_mutations() {
+        let mut finding = crate::engine::finding::Finding::new(
+            "fixture",
+            crate::engine::severity::Severity::High,
+            "safe title",
+            "safe description",
+            "https://example.com",
+        );
+        finding.title = "api_key=title-fixture-secret".to_string();
+        finding.description = "password = \"description-fixture-secret\"".to_string();
+        finding.affected_target =
+            "https://user:target-fixture-secret@example.com/?token=query-fixture-secret"
+                .to_string();
+        finding.evidence = Some("secret = 'evidence-fixture-secret'".to_string());
+
+        for projection in [redacted_top_finding(&finding), redacted_intelligence_finding(&finding)]
+        {
+            let encoded = serde_json::to_string(&projection).expect("serialize projection");
+            for secret in [
+                "title-fixture-secret",
+                "description-fixture-secret",
+                "target-fixture-secret",
+                "query-fixture-secret",
+                "evidence-fixture-secret",
+            ] {
+                assert!(!encoded.contains(secret), "projection leaked {secret}");
+            }
+        }
+    }
+
+    #[test]
+    fn finding_projections_preserve_the_exact_public_schema() {
+        let finding = crate::engine::finding::Finding::new(
+            "fixture",
+            crate::engine::severity::Severity::High,
+            "safe title",
+            "safe description",
+            "https://example.com/path",
+        )
+        .with_evidence("safe evidence");
+
+        assert_eq!(
+            redacted_top_finding(&finding),
+            serde_json::json!({
+                "severity": "high",
+                "title": "safe title",
+                "target": "https://example.com/path",
+            })
+        );
+        assert_eq!(
+            redacted_intelligence_finding(&finding),
+            serde_json::json!({
+                "module": "fixture",
+                "severity": "high",
+                "title": "safe title",
+                "description": "safe description",
+                "target": "https://example.com/path",
+                "evidence": "safe evidence",
+            })
+        );
     }
 
     #[test]

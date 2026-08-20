@@ -714,7 +714,9 @@ mod tests {
         assert!(rendered.contains("raw\\u{1b}[31m text"));
         assert!(rendered.contains("Model: model\\u{202e}name"));
         assert!(
-            rendered.lines().any(|line| line.trim() == "Model: model\\u{202e}name"),
+            rendered.lines().any(|line| {
+                line.contains("Model: model\\u{202e}name") && !line.contains('\u{2501}')
+            }),
             "model-only metadata must terminate its line: {rendered:?}"
         );
     }

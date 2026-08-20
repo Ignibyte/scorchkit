@@ -144,7 +144,8 @@ impl ScorchKitServer {
                 text,
             },
             Err(message) => {
-                let message = escape_terminal_text(&message);
+                let message =
+                    escape_terminal_text(&crate::engine::observation::redact_text(&message));
                 McpToolCallResult {
                     envelope: error_envelope(
                         &context.tool,
@@ -267,5 +268,18 @@ mod tests {
         assert_eq!(error.outcome, McpToolOutcome::Error);
         assert!(error.result.is_none());
         assert_eq!(error.error.expect("error body").message, "denied\\u{1b}[31m");
+    }
+
+    #[test]
+    fn error_adapter_redacts_secret_bearing_diagnostics() {
+        let result = ScorchKitServer::mcp_tool_result(
+            McpCallContext::test("scan_code"),
+            Err("password = \"mcp-error-fixture-secret\"".to_string()),
+        )
+        .into_call_tool_result()
+        .expect("adapt MCP error result");
+        let text = result.content[0].raw.as_text().expect("error text").text.as_str();
+        assert!(!text.contains("mcp-error-fixture-secret"));
+        assert!(text.contains("REDACTED"));
     }
 }

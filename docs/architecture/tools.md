@@ -1,6 +1,8 @@
 # External Tool Wrappers
 
-Tool wrappers live in `src/tools/`. Each wrapper implements `ScanModule` with `requires_external_tool() = true` and delegates the actual scanning to an external binary.
+URL-targeted wrappers live in `src/tools/` and implement `ScanModule`. Code-targeted wrappers live
+in `src/sast_tools/` and implement `CodeModule`. Both families declare their external executable
+and delegate execution to a policy-sealed context.
 
 ## Files
 
@@ -107,6 +109,21 @@ pub async fn ScanContext::run_tool(
 Returns bounded `ToolOutput { stdout, stderr, exit_code, duration, resolved_program }` on success.
 The executor records the canonical binary path, enforces a timeout, caps stdout and stderr at 8 MiB,
 and kills the child when the timeout expires. Interactsh uses a separate long-lived session manager.
+
+## Code analyzer depth and artifacts
+
+Code descriptors add a `fast` or `deep` analysis depth. The standard profile selects fast
+application analyzers. Thorough and pentest add deep analyzers. Explicit module IDs remain eligible
+under any valid profile.
+
+`CodeContext::run_invocation` is the owned multi-step form of the same bounded process boundary.
+CodeQL uses it for a no-build database-create step followed by offline SARIF analysis. Psalm uses it
+for a PHP taint-analysis SARIF report. Each run owns a private temporary directory, reads reports
+through a 64 MiB limit, rejects symlinked reports, and removes its artifacts when the module returns.
+Semgrep materializes its embedded rule pack as an owned temporary file and records the pack digest.
+
+`ScanResult` records typed module outcomes in addition to the legacy run/skipped lists. Missing
+tools, unsupported languages, valid runs, and execution/parser failures therefore remain distinct.
 
 ## Tool Path Override
 

@@ -234,15 +234,16 @@ pub struct AiFindingInput {
 
 impl AiFindingInput {
     fn from_finding(finding_index: usize, finding: &Finding) -> Self {
+        let redact = crate::engine::observation::redact_text;
         Self {
             finding_index,
             module_id: finding.module_id.clone(),
             severity: finding.severity.to_string(),
-            title: finding.title.clone(),
-            description: finding.description.clone(),
-            affected_target: finding.affected_target.clone(),
-            evidence: finding.evidence.clone(),
-            remediation: finding.remediation.clone(),
+            title: redact(&finding.title),
+            description: redact(&finding.description),
+            affected_target: crate::engine::observation::redact_url(&finding.affected_target).0,
+            evidence: finding.evidence.as_deref().map(redact),
+            remediation: finding.remediation.as_deref().map(redact),
             confidence: finding.confidence,
             cwe_id: finding.cwe_id,
             owasp_category: finding.owasp_category.clone(),

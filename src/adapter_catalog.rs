@@ -182,6 +182,7 @@ pub const KNOWN_CODE_ADAPTER_IDS: &[&str] = &[
     "cargo_audit",
     "cargo_deny",
     "checkov",
+    "codeql",
     "dep-audit",
     "dockle",
     "eslint-security",
@@ -193,6 +194,7 @@ pub const KNOWN_CODE_ADAPTER_IDS: &[&str] = &[
     "kubescape",
     "osv-scanner",
     "phpstan",
+    "psalm",
     "scoutsuite",
     "semgrep",
     "slither",
@@ -274,7 +276,9 @@ pub fn code_adapter_contract(
         SecurityDomain::CompatibilityCloud
     } else {
         match category {
-            CodeCategory::Sast | CodeCategory::Secrets => SecurityDomain::ApplicationSource,
+            CodeCategory::Sast | CodeCategory::Correctness | CodeCategory::Secrets => {
+                SecurityDomain::ApplicationSource
+            }
             CodeCategory::Sca => SecurityDomain::ApplicationDependency,
             CodeCategory::Iac | CodeCategory::Container => SecurityDomain::ApplicationArtifact,
         }
@@ -296,19 +300,22 @@ pub fn code_adapter_contract(
         lifecycle_stage,
         target_kinds,
         strongest_effect: EffectClass::Passive,
-        output_contract: if requires_external_tool {
+        output_contract: if matches!(id, "codeql" | "psalm") {
+            AdapterOutputContract::Sarif
+        } else if requires_external_tool {
             AdapterOutputContract::Json
         } else {
             AdapterOutputContract::NativeFindings
         },
-        provenance: if id == "semgrep" {
+        provenance: if matches!(id, "semgrep" | "codeql" | "psalm") {
             ProvenanceStrategy::RuleSet
         } else if requires_external_tool {
             ProvenanceStrategy::ToolVersion
         } else {
             ProvenanceStrategy::BuiltIn
         },
-        temporary_artifacts: if matches!(id, "kics" | "scoutsuite") {
+        temporary_artifacts: if matches!(id, "codeql" | "kics" | "psalm" | "scoutsuite" | "semgrep")
+        {
             TemporaryArtifactPolicy::ScopedOwned
         } else {
             TemporaryArtifactPolicy::None

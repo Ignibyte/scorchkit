@@ -1,0 +1,72 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Psalm",
+          "semanticVersion": "6.10.0",
+          "rules": [
+            {
+              "id": "TaintedSql",
+              "name": "TaintedSql",
+              "shortDescription": {"text": "Tainted SQL input"},
+              "defaultConfiguration": {"level": "error"},
+              "properties": {
+                "precision": "high",
+                "tags": ["security", "external/cwe/cwe-089"]
+              }
+            }
+          ]
+        }
+      },
+      "invocations": [{"executionSuccessful": true}],
+      "results": [
+        {
+          "ruleId": "TaintedSql",
+          "message": {"text": "Detected tainted SQL"},
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {"uri": "src/Repository.php"},
+                "region": {"startLine": 15, "startColumn": 9}
+              }
+            }
+          ],
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {"uri": "public/index.php"},
+                          "region": {"startLine": 5, "startColumn": 12}
+                        },
+                        "message": {"text": "Source: $_GET['id']"}
+                      },
+                      "kinds": ["source"],
+                      "executionOrder": 1
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {"uri": "src/Repository.php"},
+                          "region": {"startLine": 15, "startColumn": 9}
+                        },
+                        "message": {"text": "Sink: PDO::query"}
+                      },
+                      "kinds": ["sink"],
+                      "executionOrder": 2
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

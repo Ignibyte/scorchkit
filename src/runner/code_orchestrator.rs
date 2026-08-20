@@ -12,11 +12,12 @@ use uuid::Uuid;
 
 use crate::engine::audit_log::subscribe_audit_log_if_enabled;
 use crate::engine::code_context::CodeContext;
-use crate::engine::code_module::{CodeCategory, CodeModule};
+use crate::engine::code_module::{CodeAnalysisDepth, CodeCategory, CodeModule};
 use crate::engine::error::Result;
 use crate::engine::events::ScanEvent;
 use crate::engine::finding::Finding;
-use crate::engine::scan_result::{ScanResult, ScanSummary};
+use crate::engine::observation::redact_text;
+use crate::engine::scan_result::{ModuleOutcome, ModuleOutcomeReason, ScanResult, ScanSummary};
 use crate::engine::target::Target;
 use crate::runner::job_executor::{
     cancel_on_token, ensure_not_cancelled, CancellationToken, JobExecutor,
@@ -59,6 +60,8 @@ pub struct CodeOrchestrator {
     modules: Vec<Box<dyn CodeModule>>,
     /// Lifecycle hook runner, automatically derived from context configuration.
     hook_runner: crate::engine::hook_runner::HookRunner,
+    /// Whether the operator selected exact module IDs instead of an implicit profile.
+    explicit_selection: bool,
 }
 
 impl CodeOrchestrator {
@@ -66,12 +69,13 @@ impl CodeOrchestrator {
     #[must_use]
     pub fn new(ctx: CodeContext) -> Self {
         let hook_runner = crate::engine::hook_runner::HookRunner::new(&ctx.config.hooks);
-        Self { ctx, modules: Vec::new(), hook_runner }
+        Self { ctx, modules: Vec::new(), hook_runner, explicit_selection: false }
     }
 
     /// Register all available code analysis modules.
     pub fn register_default_modules(&mut self) {
         self.modules = all_code_modules();
+        self.explicit_selection = false;
     }
 
     /// Add one trusted module to this policy-sealed code runner.
@@ -86,6 +90,7 @@ impl CodeOrchestrator {
 
     /// Keep only modules with IDs in the given list.
     pub fn filter_by_ids(&mut self, ids: &[String]) {
+        self.explicit_selection = true;
         self.modules.retain(|m| ids.iter().any(|id| id == m.id()));
     }
 
@@ -107,24 +112,23 @@ impl CodeOrchestrator {
         }
     }
 
-    /// Filter modules to those supporting the given language.
+    /// Select one explicit project language for applicability evaluation.
     ///
-    /// Modules with an empty `languages()` list are considered language-agnostic
-    /// and are always retained.
+    /// Modules remain selected until execution so unsupported analyzers can produce a typed
+    /// not-applicable outcome instead of disappearing from the coverage record.
     pub fn filter_by_language(&mut self, language: &str) {
-        self.modules.retain(|m| {
-            let langs = m.languages();
-            langs.is_empty() || langs.iter().any(|l| l.eq_ignore_ascii_case(language))
-        });
+        self.ctx.language = Some(language.to_string());
+        self.ctx.languages = vec![language.to_string()];
     }
 
     /// Apply a code scan profile.
     ///
     /// - `quick`: secrets + SCA only (Gitleaks + OSV-Scanner)
-    /// - `standard`: all application code modules (default)
-    /// - `thorough`: all application code modules
-    /// - `pentest`: all application code modules
+    /// - `standard`: fast application code modules (default)
+    /// - `thorough`: fast and deep application code modules
+    /// - `pentest`: fast and deep application code modules
     pub fn apply_profile(&mut self, profile: &str) {
+        self.explicit_selection = false;
         if !matches!(profile, "quick" | "standard" | "thorough" | "pentest") {
             self.modules.clear();
             return;
@@ -133,6 +137,8 @@ impl CodeOrchestrator {
         if profile == "quick" {
             self.modules
                 .retain(|m| matches!(m.category(), CodeCategory::Secrets | CodeCategory::Sca));
+        } else if profile == "standard" {
+            self.modules.retain(|module| module.depth() == CodeAnalysisDepth::Fast);
         }
     }
 
@@ -207,10 +213,25 @@ impl CodeOrchestrator {
         let mut all_findings: Vec<Finding> = Vec::new();
         let mut modules_run: Vec<String> = Vec::new();
         let mut modules_skipped: Vec<(String, String)> = Vec::new();
+        let mut module_outcomes: Vec<ModuleOutcome> = Vec::new();
 
-        // Check tool availability and filter
+        // Check target applicability and tool availability before submitting work.
         let mut runnable: Vec<&dyn CodeModule> = Vec::new();
         for module in &self.modules {
+            if let Some((reason, detail)) = language_not_applicable(
+                module.as_ref(),
+                &self.ctx.languages,
+                self.explicit_selection,
+            ) {
+                self.ctx.events.publish(ScanEvent::ModuleSkipped {
+                    scan_id: scan_id.clone(),
+                    module_id: module.id().to_string(),
+                    reason: detail.clone(),
+                });
+                modules_skipped.push((module.id().to_string(), detail));
+                module_outcomes.push(ModuleOutcome::not_applicable(module.id(), reason));
+                continue;
+            }
             if let Some(tool) =
                 missing_required_tool(module.requires_external_tool(), module.required_tool())
             {
@@ -229,6 +250,10 @@ impl CodeOrchestrator {
                     reason: reason.clone(),
                 });
                 modules_skipped.push((module.id().to_string(), reason));
+                module_outcomes.push(ModuleOutcome::skipped(
+                    module.id(),
+                    ModuleOutcomeReason::MissingTool { tool: tool.to_string() },
+                ));
                 continue;
             }
             runnable.push(module.as_ref());
@@ -293,7 +318,11 @@ impl CodeOrchestrator {
                         }
                         Err(error) => {
                             if let Some(spinner) = &spinner {
-                                progress::finish_error(spinner, &module_name, &error.to_string());
+                                progress::finish_error(
+                                    spinner,
+                                    &module_name,
+                                    &redact_text(&error.to_string()),
+                                );
                             }
                         }
                     }
@@ -357,16 +386,22 @@ impl CodeOrchestrator {
                         findings_count: findings.len(),
                         duration_ms,
                     });
+                    let findings_count = findings.len();
                     all_findings.extend(findings);
+                    module_outcomes.push(ModuleOutcome::ran(&module_id, findings_count));
                     modules_run.push(module_id);
                 }
                 Err(e) => {
-                    let err_str = e.to_string();
+                    let err_str = redact_text(&e.to_string());
                     self.ctx.events.publish(ScanEvent::ModuleError {
                         scan_id: scan_id.clone(),
                         module_id: module_id.clone(),
                         error: err_str.clone(),
                     });
+                    module_outcomes.push(ModuleOutcome::failed(
+                        &module_id,
+                        ModuleOutcomeReason::ExecutionFailed { message: err_str.clone() },
+                    ));
                     modules_skipped.push((module_id, err_str));
                 }
             }
@@ -404,7 +439,7 @@ impl CodeOrchestrator {
             duration_ms: total_duration_ms,
         });
 
-        Ok(ScanResult {
+        let mut result = ScanResult {
             scan_id,
             target,
             started_at,
@@ -412,9 +447,60 @@ impl CodeOrchestrator {
             findings: all_findings,
             modules_run,
             modules_skipped,
+            module_outcomes,
+            execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
             summary,
-        })
+        };
+        result.refresh_execution_status();
+        Ok(result)
     }
+}
+
+fn language_not_applicable(
+    module: &dyn CodeModule,
+    detected_languages: &[String],
+    allow_undetected_explicit_selection: bool,
+) -> Option<(ModuleOutcomeReason, String)> {
+    let supported = module.languages();
+    if supported.is_empty() {
+        return None;
+    }
+
+    let mut supported_languages: Vec<String> =
+        supported.iter().map(|language| (*language).to_string()).collect();
+    supported_languages.sort();
+    supported_languages.dedup();
+    if detected_languages.is_empty() {
+        if allow_undetected_explicit_selection {
+            return None;
+        }
+        let detail = format!(
+            "not applicable: project language was not detected; supports {}",
+            supported_languages.join(", ")
+        );
+        return Some((
+            ModuleOutcomeReason::LanguageUndetected { supported: supported_languages },
+            detail,
+        ));
+    }
+    if detected_languages.iter().any(|detected| {
+        supported_languages.iter().any(|supported| supported.eq_ignore_ascii_case(detected))
+    }) {
+        return None;
+    }
+
+    let mut detected = detected_languages.to_vec();
+    detected.sort();
+    detected.dedup();
+    let detail = format!(
+        "not applicable: detected {}; supports {}",
+        detected.join(", "),
+        supported_languages.join(", ")
+    );
+    Some((
+        ModuleOutcomeReason::UnsupportedLanguage { detected, supported: supported_languages },
+        detail,
+    ))
 }
 
 #[cfg(test)]
@@ -427,8 +513,35 @@ mod tests {
     struct StubModule {
         module_id: &'static str,
         category: CodeCategory,
+        depth: CodeAnalysisDepth,
+        languages: &'static [&'static str],
         required_tool: Option<&'static str>,
         findings: usize,
+    }
+
+    struct FailingModule;
+
+    #[async_trait::async_trait]
+    impl CodeModule for FailingModule {
+        fn name(&self) -> &'static str {
+            "failing stub"
+        }
+
+        fn id(&self) -> &'static str {
+            "failing"
+        }
+
+        fn category(&self) -> CodeCategory {
+            CodeCategory::Sast
+        }
+
+        fn description(&self) -> &'static str {
+            "code orchestrator failure contract fixture"
+        }
+
+        async fn run(&self, _ctx: &CodeContext) -> Result<Vec<Finding>> {
+            Err(crate::engine::error::ScorchError::Config("fixture execution failed".to_string()))
+        }
     }
 
     #[async_trait::async_trait]
@@ -443,6 +556,14 @@ mod tests {
 
         fn category(&self) -> CodeCategory {
             self.category
+        }
+
+        fn depth(&self) -> CodeAnalysisDepth {
+            self.depth
+        }
+
+        fn languages(&self) -> &'static [&'static str] {
+            self.languages
         }
 
         fn description(&self) -> &'static str {
@@ -487,12 +608,24 @@ mod tests {
         orchestrator.add_module(Box::new(StubModule {
             module_id: "secrets",
             category: CodeCategory::Secrets,
+            depth: CodeAnalysisDepth::Fast,
+            languages: &[],
             required_tool: None,
             findings: 0,
         }));
         orchestrator.add_module(Box::new(StubModule {
             module_id: "sast",
             category: CodeCategory::Sast,
+            depth: CodeAnalysisDepth::Fast,
+            languages: &[],
+            required_tool: None,
+            findings: 0,
+        }));
+        orchestrator.add_module(Box::new(StubModule {
+            module_id: "deep-sast",
+            category: CodeCategory::Sast,
+            depth: CodeAnalysisDepth::Deep,
+            languages: &[],
             required_tool: None,
             findings: 0,
         }));
@@ -525,12 +658,19 @@ mod tests {
         quick.apply_profile("quick");
         assert_eq!(quick.modules.iter().map(|module| module.id()).collect::<Vec<_>>(), ["secrets"]);
 
-        for profile in ["standard", "thorough", "pentest"] {
-            let mut orchestrator = profile_fixture(root.path());
-            orchestrator.apply_profile(profile);
+        let mut standard = profile_fixture(root.path());
+        standard.apply_profile("standard");
+        assert_eq!(
+            standard.modules.iter().map(|module| module.id()).collect::<Vec<_>>(),
+            ["secrets", "sast"]
+        );
+
+        for profile in ["thorough", "pentest"] {
+            let mut deep = profile_fixture(root.path());
+            deep.apply_profile(profile);
             assert_eq!(
-                orchestrator.modules.iter().map(|module| module.id()).collect::<Vec<_>>(),
-                ["secrets", "sast"],
+                deep.modules.iter().map(|module| module.id()).collect::<Vec<_>>(),
+                ["secrets", "sast", "deep-sast"],
                 "profile {profile}"
             );
         }
@@ -553,6 +693,15 @@ mod tests {
             ["scoutsuite"]
         );
 
+        let mut explicit_deep = fixture(root.path());
+        explicit_deep.register_default_modules();
+        explicit_deep.apply_selection("standard", Some(&["codeql".to_string()]));
+        assert_eq!(
+            explicit_deep.modules.iter().map(|module| module.id()).collect::<Vec<_>>(),
+            ["codeql"],
+            "a valid explicit ID may select a deep analyzer under the standard profile"
+        );
+
         let mut unknown = fixture(root.path());
         unknown.register_default_modules();
         unknown.apply_selection("unknown", Some(&["scoutsuite".to_string()]));
@@ -566,6 +715,8 @@ mod tests {
         orchestrator.add_module(Box::new(StubModule {
             module_id: "missing",
             category: CodeCategory::Sast,
+            depth: CodeAnalysisDepth::Fast,
+            languages: &[],
             required_tool: Some("scorchkit-code-tool-that-does-not-exist"),
             findings: 1,
         }));
@@ -575,6 +726,97 @@ mod tests {
         assert!(result.modules_run.is_empty());
         assert_eq!(result.modules_skipped.len(), 1);
         assert_eq!(result.modules_skipped[0].0, "missing");
+        assert!(matches!(
+            result.module_outcomes[0].reason,
+            Some(ModuleOutcomeReason::MissingTool { .. })
+        ));
         assert!(result.findings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unsupported_language_is_typed_not_applicable_before_tool_lookup() {
+        let root = tempfile::tempdir().expect("code fixture root");
+        let mut orchestrator = fixture(root.path());
+        orchestrator.add_module(Box::new(StubModule {
+            module_id: "php-deep",
+            category: CodeCategory::Sast,
+            depth: CodeAnalysisDepth::Deep,
+            languages: &["php"],
+            required_tool: Some("missing-php-tool"),
+            findings: 1,
+        }));
+
+        let result = orchestrator.run_quiet(true).await.expect("code scan");
+
+        assert!(result.modules_run.is_empty());
+        assert_eq!(result.modules_skipped[0].0, "php-deep");
+        assert_eq!(
+            result.module_outcomes[0].status,
+            scorchkit_core::ModuleOutcomeStatus::NotApplicable
+        );
+        assert!(matches!(
+            result.module_outcomes[0].reason,
+            Some(ModuleOutcomeReason::UnsupportedLanguage { ref detected, ref supported })
+                if detected == &["rust"] && supported == &["php"]
+        ));
+    }
+
+    #[tokio::test]
+    async fn execution_failure_has_a_typed_failed_outcome() {
+        let root = tempfile::tempdir().expect("code fixture root");
+        let mut orchestrator = fixture(root.path());
+        orchestrator.add_module(Box::new(FailingModule));
+
+        let result = orchestrator.run_quiet(true).await.expect("code scan");
+
+        assert!(result.modules_run.is_empty());
+        assert_eq!(result.modules_skipped[0].0, "failing");
+        assert_eq!(result.module_outcomes[0].status, scorchkit_core::ModuleOutcomeStatus::Failed);
+        assert!(matches!(
+            result.module_outcomes[0].reason,
+            Some(ModuleOutcomeReason::ExecutionFailed { ref message })
+                if message == "configuration error: fixture execution failed"
+        ));
+        assert_eq!(
+            result.execution_status,
+            crate::engine::scan_result::ScanExecutionStatus::Degraded
+        );
+        assert!(!result.execution_successful());
+    }
+
+    #[tokio::test]
+    async fn explicit_selection_runs_when_language_is_undetected() {
+        let root = tempfile::tempdir().expect("code fixture root");
+        let context = CodeContext::new(
+            root.path().to_path_buf(),
+            None,
+            Arc::new(AppConfig::default()),
+            Vec::new(),
+        );
+        let mut orchestrator = CodeOrchestrator::new(context);
+        orchestrator.add_module(Box::new(StubModule {
+            module_id: "terraform-explicit",
+            category: CodeCategory::Sast,
+            depth: CodeAnalysisDepth::Fast,
+            languages: &["terraform"],
+            required_tool: None,
+            findings: 0,
+        }));
+        orchestrator.apply_selection("standard", Some(&["terraform-explicit".to_string()]));
+
+        let result = orchestrator.run_quiet(true).await.expect("explicit code scan");
+        assert_eq!(result.modules_run, ["terraform-explicit"]);
+        assert_eq!(result.module_outcomes[0].status, scorchkit_core::ModuleOutcomeStatus::Ran);
+    }
+
+    #[test]
+    fn explicit_language_filter_replaces_primary_and_detected_languages() {
+        let root = tempfile::tempdir().expect("code fixture root");
+        let mut orchestrator = fixture(root.path());
+
+        orchestrator.filter_by_language("python");
+
+        assert_eq!(orchestrator.ctx.language.as_deref(), Some("python"));
+        assert_eq!(orchestrator.ctx.languages, ["python"]);
     }
 }

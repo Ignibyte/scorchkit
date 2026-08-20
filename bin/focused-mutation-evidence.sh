@@ -385,14 +385,22 @@ verify_evidence() {
             type == "array" and length > 0
             and all(.[]; (.name | type == "string" and length > 0)
                 and (.file | type == "string" and length > 0)
-                and (.function.function_name | type == "string" and length > 0))
+                and (has("function")
+                    and ((.function == null)
+                        or ((.function | type == "object")
+                            and (.function.function_name
+                                | type == "string" and length > 0)))))
             and ([.[].name] | length == (unique | length))
         ' "$initial_mutants" >/dev/null \
         || ! jq -e '
             type == "array" and length > 0
             and all(.[]; (.name | type == "string" and length > 0)
                 and (.file | type == "string" and length > 0)
-                and (.function.function_name | type == "string" and length > 0))
+                and (has("function")
+                    and ((.function == null)
+                        or ((.function | type == "object")
+                            and (.function.function_name
+                                | type == "string" and length > 0)))))
             and ([.[].name] | length == (unique | length))
         ' "$recheck_mutants" >/dev/null \
         || ! jq -e '
@@ -426,7 +434,11 @@ verify_evidence() {
                 type == "array" and length > 0
                 and all(.[]; (.name | type == "string" and length > 0)
                     and (.file | type == "string" and length > 0)
-                    and (.function.function_name | type == "string" and length > 0))
+                    and (has("function")
+                        and ((.function == null)
+                            or ((.function | type == "object")
+                                and (.function.function_name
+                                    | type == "string" and length > 0)))))
                 and ([.[].name] | length == (unique | length))
             ' "$followup_mutants" >/dev/null \
             || ! jq -e '
@@ -481,9 +493,12 @@ verify_evidence() {
     final_score="$(jq -r '.final_outcome.mutation_score_percent' "$summary")"
     required_score="$(jq -r '.final_outcome.required_score_percent' "$summary")"
     actual_files="$(jq -r '[.[].file] | unique | length' "$initial_mutants")"
-    actual_functions="$(jq -r '[.[].function.function_name] | unique | length' "$initial_mutants")"
+    actual_functions="$(jq -r \
+        '[.[] | (.function.function_name // "<module>")] | unique | length' \
+        "$initial_mutants")"
     actual_recheck_files="$(jq -r '[.[].file] | unique | length' "$recheck_mutants")"
-    actual_recheck_functions="$(jq -r '[.[].function.function_name] | unique | length' \
+    actual_recheck_functions="$(jq -r \
+        '[.[] | (.function.function_name // "<module>")] | unique | length' \
         "$recheck_mutants")"
     initial_version="$(jq -r '.cargo_mutants_version' "$initial_outcomes")"
     recheck_version="$(jq -r '.cargo_mutants_version' "$recheck_outcomes")"
@@ -503,7 +518,8 @@ verify_evidence() {
         summary_followup_files="$(jq -r '.focused_followup.files' "$summary")"
         followup_base_input="$(jq -r '.focused_followup.base_mutation_input_sha256' "$summary")"
         followup_actual_files="$(jq -r '[.[].file] | unique | length' "$followup_mutants")"
-        followup_actual_functions="$(jq -r '[.[].function.function_name] | unique | length' \
+        followup_actual_functions="$(jq -r \
+            '[.[] | (.function.function_name // "<module>")] | unique | length' \
             "$followup_mutants")"
         followup_score="$(jq -r '.focused_followup.mutation_score_percent' "$summary")"
     fi
@@ -638,7 +654,8 @@ verify_evidence() {
             echo "follow-up mutation inventory does not match follow-up outcomes" >&2
             return 1
         fi
-        jq -r '[.[].function.function_name] | unique[]' "$followup_mutants" \
+        jq -r '[.[] | (.function.function_name // "<module>")] | unique[]' \
+            "$followup_mutants" \
             | LC_ALL=C sort > "$followup_functions"
         jq -r '.focused_followup.functions[]' "$summary" \
             | LC_ALL=C sort > "$followup_expected_functions"
@@ -865,7 +882,7 @@ selftest() {
     mkdir -p "$evidence/initial" "$evidence/recheck"
     mutant_name='src/lib.rs:1:1: replace probe -> bool with false'
 
-    printf '[{"name":"%s","file":"src/lib.rs","function":{"function_name":"probe"}}]\n' \
+    printf '[{"name":"%s","file":"src/lib.rs","function":null}]\n' \
         "$mutant_name" > "$evidence/initial/mutants.json"
     cp "$evidence/initial/mutants.json" "$evidence/recheck/mutants.json"
     printf '%s\n' \

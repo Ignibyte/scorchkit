@@ -507,6 +507,30 @@ fn tool_specs() -> Vec<ToolSpec> {
             remediation: "Install: pip install semgrep",
         },
         ToolSpec {
+            binary: "codeql",
+            name: "CodeQL CLI bundle",
+            category: "Deep SAST",
+            version_flag: Some("version"),
+            min_version: None,
+            remediation: "Install the complete CodeQL CLI bundle from GitHub and review its license",
+        },
+        ToolSpec {
+            binary: "psalm",
+            name: "Psalm",
+            category: "PHP Taint Analysis",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: composer require --dev vimeo/psalm",
+        },
+        ToolSpec {
+            binary: "phpstan",
+            name: "PHPStan",
+            category: "PHP Correctness",
+            version_flag: Some("--version"),
+            min_version: None,
+            remediation: "Install: composer require --dev phpstan/phpstan",
+        },
+        ToolSpec {
             binary: "osv-scanner",
             name: "OSV-Scanner",
             category: "SCA",
@@ -859,34 +883,25 @@ fn render_tool_result(result: &ToolCheckResult, deep: bool) -> String {
 
 fn render_doctor_summary(summary: &DoctorSummary, deep: bool) -> String {
     let mut output = String::from("\n");
-    let _ = writeln!(
-        output,
-        "  {}/{} tools installed",
-        summary.installed.to_string().green().bold(),
-        summary.total()
-    );
+    let installed =
+        format!("{}/{} tools installed", summary.installed, summary.total()).green().bold();
+    let _ = writeln!(output, "  {installed}");
 
     if deep {
         let checked = summary.version_checked();
         if checked > 0 {
-            let _ = writeln!(
-                output,
-                "  {}/{} version checks passed",
-                summary.version_pass.to_string().green().bold(),
-                checked
-            );
+            let passed = format!("{}/{} version checks passed", summary.version_pass, checked)
+                .green()
+                .bold();
+            let _ = writeln!(output, "  {passed}");
         }
         if summary.version_fail > 0 {
-            let _ = writeln!(
-                output,
-                "  {} {}",
-                summary.version_fail.to_string().red().bold(),
-                "version(s) below minimum".red()
-            );
+            let below = format!("{} version(s) below minimum", summary.version_fail).red().bold();
+            let _ = writeln!(output, "  {below}");
         }
         if summary.warnings > 0 {
-            let _ =
-                writeln!(output, "  {} warning(s)", summary.warnings.to_string().yellow().bold());
+            let warnings = format!("{} warning(s)", summary.warnings).yellow().bold();
+            let _ = writeln!(output, "  {warnings}");
         }
     }
 

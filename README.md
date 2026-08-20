@@ -15,10 +15,10 @@ permission to test. A project target, prompt, or agent approval does not replace
 | Family | Registered modules | Notes |
 |---|---:|---|
 | DAST and recon | 91 | 69 application modules by default; 22 explicit compatibility modules |
-| SAST | 22 | 21 application modules by default; ScoutSuite is explicit cloud-account compatibility |
+| SAST | 24 | 23 application modules by default; ScoutSuite is explicit cloud-account compatibility |
 | Infrastructure | Up to 5 | Explicit compatibility family: 4 core probes plus optional CVE correlation |
 | Cloud | 5 | Explicit compatibility family of bounded tool adapters; native provider SDK modules remain quarantined |
-| Maximum | 123 | All production registries, including optional CVE correlation |
+| Maximum | 125 | All production registries, including optional CVE correlation |
 
 The [application-security catalog](docs/architecture/application-security-catalog.md) explains the
 default and compatibility split. The source registries remain authoritative for the complete
@@ -76,13 +76,28 @@ no authorization and cannot start a scan until an engagement is added.
 Broader profiles are never inferred from installed tools. Expand the engagement deliberately and
 review the resulting scope before using them.
 
+Code scans use the same profile names with code-specific selection:
+
+| Code profile | Selection |
+|---|---|
+| `quick` | Secret and source-dependency analysis |
+| `standard` | Fast application source, correctness, secret, dependency, IaC, and artifact modules |
+| `thorough` | Standard modules plus CodeQL and Psalm where their languages apply |
+| `pentest` | The same deep code selection; runtime effects remain separately authorized |
+
+CodeQL supports JavaScript/TypeScript, Python, and Ruby in no-build mode. Psalm supplies PHP taint
+analysis. Unsupported languages, missing tools, successful runs, and failures remain distinct in
+the returned module outcomes. Semgrep uses an embedded digest-identified rule pack and never selects
+`--config auto`.
+
 Common commands:
 
 ```bash
 scorchkit doctor
 scorchkit modules --check-tools
 scorchkit modules --include-compatibility
-scorchkit code ./src
+scorchkit code ./src --profile standard
+scorchkit code ./src --profile thorough
 scorchkit infra 192.0.2.10
 scorchkit assess --url https://owned.example --code ./src --infra 192.0.2.10
 scorchkit diff baseline.json current.json

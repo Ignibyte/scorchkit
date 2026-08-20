@@ -19,6 +19,9 @@ pub struct AppConfig {
     pub scan: ScanConfig,
     pub auth: AuthConfig,
     pub tools: ToolsConfig,
+    /// Reproducible static-analysis configuration.
+    #[serde(default)]
+    pub sast: SastConfig,
     pub ai: AiConfig,
     pub report: ReportConfig,
     pub database: DatabaseConfig,
@@ -255,6 +258,24 @@ pub struct ToolsConfig {
     pub hydra: Option<String>,
     // Exploit
     pub msfconsole: Option<String>,
+}
+
+/// Reproducible static-analysis configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct SastConfig {
+    /// Semgrep rule-pack selection.
+    pub semgrep: SemgrepConfig,
+}
+
+/// Semgrep rule source. The default uses the rule pack embedded in `ScorchKit`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct SemgrepConfig {
+    /// Absolute local rule file. Requires `local_rule_sha256`.
+    pub local_rule_file: Option<PathBuf>,
+    /// Expected lowercase SHA-256 for `local_rule_file`.
+    pub local_rule_sha256: Option<String>,
 }
 
 impl ToolsConfig {
@@ -661,6 +682,30 @@ rate_limit = 17
         assert_eq!(
             format!("{auth:?}"),
             "AuthConfig { bearer_token: Some(\"***\"), cookies: Some(\"***\"), username: Some(\"fixture-user\"), password: Some(\"***\"), custom_header: Some(\"X-Fixture-Key\"), custom_header_value: Some(\"***\") }"
+        );
+    }
+
+    #[test]
+    fn sast_config_defaults_and_pinned_semgrep_fields_round_trip() {
+        let legacy: AppConfig = toml::from_str("").expect("read legacy config");
+        assert!(legacy.sast.semgrep.local_rule_file.is_none());
+        assert!(legacy.sast.semgrep.local_rule_sha256.is_none());
+
+        let configured: AppConfig = toml::from_str(
+            r#"
+[sast.semgrep]
+local_rule_file = "/opt/scorchkit/application-rules.yml"
+local_rule_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+"#,
+        )
+        .expect("read pinned Semgrep config");
+        assert_eq!(
+            configured.sast.semgrep.local_rule_file.as_deref(),
+            Some(std::path::Path::new("/opt/scorchkit/application-rules.yml"))
+        );
+        assert_eq!(
+            configured.sast.semgrep.local_rule_sha256.as_deref(),
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
         );
     }
 

@@ -99,7 +99,7 @@ pub fn build_dashboard(
         .map(|(i, score)| {
             let f = &findings[*i];
             TopFinding {
-                title: f.title.clone(),
+                title: crate::engine::observation::redact_text(&f.title),
                 module_id: f.module_id.clone(),
                 risk_score: *score,
                 severity: f.severity.to_string(),
@@ -237,5 +237,15 @@ mod tests {
         let dash = build_dashboard(&[], None, &[]);
         let json = serde_json::to_string(&dash).expect("serialize");
         assert!(json.contains("risk_grade"));
+    }
+
+    #[test]
+    fn dashboard_redacts_mutated_finding_titles() {
+        let mut finding = test_finding(Severity::High, "safe");
+        finding.title = "password = \"dashboard-fixture-secret\"".to_string();
+        let dashboard = build_dashboard(&[finding], None, &[]);
+        let encoded = serde_json::to_string(&dashboard).expect("serialize dashboard");
+        assert!(!encoded.contains("dashboard-fixture-secret"));
+        assert!(encoded.contains("REDACTED"));
     }
 }

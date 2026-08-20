@@ -19,7 +19,7 @@ pub use crate::engine::severity::Severity;
 pub use crate::engine::target::Target;
 
 // Module traits
-pub use crate::engine::code_module::{CodeCategory, CodeModule};
+pub use crate::engine::code_module::{CodeAnalysisDepth, CodeCategory, CodeModule};
 pub use crate::engine::module_trait::{ModuleCategory, ScanModule};
 
 // Contexts

@@ -5,6 +5,13 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Deep SAST and pinned rule provenance (TICKET-011 / SK-036)** — Replaced Semgrep's network
+  `auto` rules with an embedded digest-identified application pack and optional exact-digest local
+  overrides. Added offline no-build CodeQL analysis for JavaScript/TypeScript, Python, and Ruby,
+  Psalm PHP taint analysis, fast/deep code profiles, multi-language detection, and typed per-module
+  outcomes. CodeQL and Psalm share a strict bounded SARIF decoder. Finding v2 and SARIF reports now
+  preserve every code-flow path and step plus recursively redacted structured scanner evidence.
+  PHPStan is now a correctness signal without invented OWASP or CWE metadata.
 - **Versioned application-security evidence (TICKET-010 / SK-035)** — Added the provider-neutral
   `scorchkit.finding/v2` observation contract with typed source, runtime, package, artifact, and
   legacy locations. It records scanner provenance, deterministic finding and evidence identities,
@@ -64,8 +71,9 @@ All notable changes to ScorchKit will be documented in this file.
   boundaries. HTTP redirects, DNS answers, native protocol connections, and WebSocket handshakes are
   reauthorized before an effect occurs.
 - **Shared bounded tool executor** — Added typed invocations, explicit exit policy, timeouts, 8 MiB
-  per-stream limits, injectable test execution, and Unix process-group cleanup for 45 DAST and 21
-  SAST one-shot adapters. Interactsh uses the same process owner through its session lifecycle.
+  per-stream limits, injectable test execution, and Unix process-group cleanup for 45 DAST
+  one-shot adapters and 23 SAST adapters. CodeQL owns two bounded steps. Interactsh uses the same
+  process owner through its session lifecycle.
 - **Focused mutation repair workflow** — Preserved the broad survivor inventory, extracted 42
   observable seams across 14 files, and reran only those repaired functions. The final focused
   repair result caught 162/162 viable mutations with nine unviable variants. A post-archive

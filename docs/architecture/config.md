@@ -38,6 +38,7 @@ engagement and therefore authorizes no scan.
 | `scan` | timeout, concurrency, user agent, redirect limit, rate limit, profile, proxy, headers, and legacy display scope |
 | `auth` | web bearer, cookie, basic, or custom-header credentials |
 | `tools` | external executable overrides |
+| `sast` | reproducible static-analysis settings, including pinned local Semgrep rules |
 | `ai` | optional provider adapter |
 | `report` | artifact directory and evidence/remediation inclusion |
 | `database` | connection URL, pool size, and migration behavior |
@@ -94,6 +95,21 @@ auto_analyze = false
 
 `provider = "claude"` selects the compatibility adapter. `max_budget_usd` applies only to that
 adapter. Legacy `claude_binary` remains readable but should not appear in new files.
+
+## Static analysis
+
+The embedded Semgrep pack needs no configuration. A reviewed local replacement must use an absolute
+path and exact lowercase SHA-256 digest:
+
+```toml
+[sast.semgrep]
+local_rule_file = "/absolute/path/to/application-rules.yml"
+local_rule_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+```
+
+The two fields are an atomic pair. ScorchKit validates the path, size, YAML structure, prohibited
+network validators, and digest before starting Semgrep. There is no configuration form for
+`--config auto`, registry names, or URLs.
 
 ## CVE providers
 

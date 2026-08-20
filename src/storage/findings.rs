@@ -11,7 +11,7 @@ use uuid::Uuid;
 use super::models::{FindingEvidence, StoredAgentAnalysis, TrackedFinding, VulnStatus};
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
-use crate::engine::observation::FindingRecordV2;
+use crate::engine::observation::{redact_text, redact_url, FindingRecordV2};
 
 struct FindingWrite<'a> {
     finding: &'a Finding,
@@ -20,6 +20,10 @@ struct FindingWrite<'a> {
     raw_json: serde_json::Value,
     correlation_keys: serde_json::Value,
     evidence: Option<String>,
+    title: String,
+    description: String,
+    affected_target: String,
+    remediation: Option<String>,
 }
 
 impl<'a> FindingWrite<'a> {
@@ -29,15 +33,25 @@ impl<'a> FindingWrite<'a> {
             .map_err(|e| ScorchError::Database(format!("serialize finding: {e}")))?;
         let correlation_keys = serde_json::to_value(&appsec.correlation_keys)
             .map_err(|e| ScorchError::Database(format!("serialize correlation keys: {e}")))?;
-        let evidence = finding.evidence.as_deref().map(crate::engine::observation::redact_text);
+        let evidence = finding.evidence.as_deref().map(redact_text);
+        let title = redact_text(&finding.title);
+        let description = redact_text(&finding.description);
+        let affected_target = redact_url(&finding.affected_target).0;
+        let remediation = finding.remediation.as_deref().map(redact_text);
+        let legacy_fingerprint =
+            legacy_fingerprint_parts(&finding.module_id, &title, &affected_target);
 
         Ok(Self {
             finding,
             appsec,
-            legacy_fingerprint: legacy_fingerprint(finding),
+            legacy_fingerprint,
             raw_json,
             correlation_keys,
             evidence,
+            title,
+            description,
+            affected_target,
+            remediation,
         })
     }
 }
@@ -50,13 +64,13 @@ pub fn fingerprint(finding: &Finding) -> String {
     finding.canonical_appsec().identity.value
 }
 
-fn legacy_fingerprint(finding: &Finding) -> String {
+fn legacy_fingerprint_parts(module_id: &str, title: &str, affected_target: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(finding.module_id.as_bytes());
+    hasher.update(module_id.as_bytes());
     hasher.update(b"|");
-    hasher.update(finding.title.as_bytes());
+    hasher.update(title.as_bytes());
     hasher.update(b"|");
-    hasher.update(finding.affected_target.as_bytes());
+    hasher.update(affected_target.as_bytes());
     format!("{:x}", hasher.finalize())
 }
 
@@ -189,11 +203,11 @@ async fn upsert_tracked_finding(
     .bind(&write.correlation_keys)
     .bind(&finding.module_id)
     .bind(finding.severity.to_string())
-    .bind(&finding.title)
-    .bind(&finding.description)
-    .bind(&finding.affected_target)
+    .bind(&write.title)
+    .bind(&write.description)
+    .bind(&write.affected_target)
     .bind(&write.evidence)
-    .bind(&finding.remediation)
+    .bind(&write.remediation)
     .bind(&finding.owasp_category)
     .bind(finding.cwe_id.map(u32::cast_signed))
     .bind(&write.raw_json)
@@ -229,11 +243,11 @@ async fn update_tracked_finding(
     .bind(&write.correlation_keys)
     .bind(&finding.module_id)
     .bind(finding.severity.to_string())
-    .bind(&finding.title)
-    .bind(&finding.description)
-    .bind(&finding.affected_target)
+    .bind(&write.title)
+    .bind(&write.description)
+    .bind(&write.affected_target)
     .bind(&write.evidence)
-    .bind(&finding.remediation)
+    .bind(&write.remediation)
     .bind(&finding.owasp_category)
     .bind(finding.cwe_id.map(u32::cast_signed))
     .bind(&write.raw_json)
@@ -542,5 +556,13 @@ mod tests {
         .with_evidence("evidence 2");
 
         assert_eq!(fingerprint(&f1), fingerprint(&f2));
+    }
+
+    #[test]
+    fn legacy_fingerprint_hash_is_exact_and_stable() {
+        assert_eq!(
+            legacy_fingerprint_parts("scanner", "Rule", "src/lib.rs:7"),
+            "c4826eac151b1a297d89b40dd98157d6a328d4018a487a82545934290115813f"
+        );
     }
 }

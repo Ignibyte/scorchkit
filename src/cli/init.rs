@@ -347,16 +347,13 @@ fn render_recommendation(recommendation: &InitRecommendation) -> String {
     use std::fmt::Write;
 
     let mut output = String::new();
+    let tools =
+        format!("{}/{}", recommendation.available_tool_count, recommendation.total_tool_count)
+            .green();
     let _ = writeln!(output);
     let _ = writeln!(output, "  {}", "Recommendation:".bold());
     let _ = writeln!(output, "    {} {}", "Profile:".dimmed(), recommendation.profile.cyan());
-    let _ = writeln!(
-        output,
-        "    {} {}/{}",
-        "Tools:".dimmed(),
-        recommendation.available_tool_count.to_string().green(),
-        recommendation.total_tool_count
-    );
+    let _ = writeln!(output, "    {} {tools}", "Tools:".dimmed());
     for note in &recommendation.notes {
         let _ = writeln!(output, "    {} {}", ">>".dimmed(), note.dimmed());
     }

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::config::ReportConfig;
 use crate::engine::error::Result;
-use crate::engine::observation::ObservationLocation;
+use crate::engine::observation::{redact_text, redact_url, ObservationLocation};
 use crate::engine::scan_result::ScanResult;
 use crate::engine::severity::Severity;
 
@@ -27,15 +27,18 @@ pub fn save_report(result: &ScanResult, config: &ReportConfig) -> Result<PathBuf
 }
 
 fn build_sarif(result: &ScanResult) -> serde_json::Value {
+    let execution_status = projected_execution_status(result);
     let rules: Vec<serde_json::Value> = result
         .findings
         .iter()
         .map(|f| {
+            let title = redact_text(&f.title);
+            let description = redact_text(&f.description);
             let mut rule = serde_json::json!({
                 "id": format!("scorchkit/{}", f.module_id),
-                "name": f.title,
-                "shortDescription": { "text": f.title },
-                "fullDescription": { "text": f.description },
+                "name": title,
+                "shortDescription": { "text": title },
+                "fullDescription": { "text": description },
                 "defaultConfiguration": {
                     "level": severity_to_sarif_level(f.severity)
                 },
@@ -67,11 +70,13 @@ fn build_sarif(result: &ScanResult) -> serde_json::Value {
         .iter()
         .map(|f| {
             let appsec = f.canonical_appsec();
+            let description = redact_text(&f.description);
+            let affected_target = redact_url(&f.affected_target).0;
             let mut r = serde_json::json!({
                 "ruleId": format!("scorchkit/{}", f.module_id),
                 "level": severity_to_sarif_level(f.severity),
-                "message": { "text": f.description },
-                "locations": [sarif_location(&appsec.location, &f.affected_target)],
+                "message": { "text": description },
+                "locations": [sarif_location(&appsec.location, &affected_target)],
                 "partialFingerprints": {
                     "scorchkitFinding/v2": appsec.identity.value,
                 },
@@ -83,6 +88,11 @@ fn build_sarif(result: &ScanResult) -> serde_json::Value {
                     "scorchkit/agentAnalysis": appsec.agent_analysis,
                 },
             });
+            if !appsec.code_flows.is_empty() {
+                r["codeFlows"] = serde_json::Value::Array(
+                    appsec.code_flows.iter().map(sarif_code_flow).collect(),
+                );
+            }
 
             // SARIF rank: confidence mapped to 0–100 integer scale
             // JUSTIFICATION: confidence is 0.0–1.0, result fits in u8
@@ -91,6 +101,7 @@ fn build_sarif(result: &ScanResult) -> serde_json::Value {
             r["rank"] = serde_json::json!(rank);
 
             if let Some(ref remediation) = f.remediation {
+                let remediation = redact_text(remediation);
                 r["fixes"] = serde_json::json!([{
                     "description": { "text": remediation }
                 }]);
@@ -114,12 +125,70 @@ fn build_sarif(result: &ScanResult) -> serde_json::Value {
             },
             "results": results,
             "invocations": [{
-                "executionSuccessful": true,
+                "executionSuccessful": result.execution_successful(),
                 "startTimeUtc": result.started_at.to_rfc3339(),
                 "endTimeUtc": result.completed_at.to_rfc3339(),
+                "properties": {
+                    "scorchkit/executionStatus": execution_status,
+                    "scorchkit/moduleOutcomes": result.module_outcomes,
+                },
             }]
         }]
     })
+}
+
+fn projected_execution_status(
+    result: &ScanResult,
+) -> crate::engine::scan_result::ScanExecutionStatus {
+    if result.execution_successful() {
+        crate::engine::scan_result::ScanExecutionStatus::Complete
+    } else {
+        crate::engine::scan_result::ScanExecutionStatus::Degraded
+    }
+}
+
+fn sarif_code_flow(flow: &crate::engine::observation::CodeFlow) -> serde_json::Value {
+    let mut encoded = serde_json::json!({
+        "threadFlows": flow
+            .thread_flows
+            .iter()
+            .map(|thread| {
+                let mut encoded = serde_json::json!({
+                    "locations": thread
+                        .steps
+                        .iter()
+                        .map(|step| {
+                            let mut encoded = serde_json::json!({
+                                "location": sarif_location(&step.location, "source://unknown"),
+                            });
+                            if let Some(message) = &step.message {
+                                encoded["location"]["message"] =
+                                    serde_json::json!({ "text": message });
+                            }
+                            if !step.kinds.is_empty() {
+                                encoded["kinds"] = serde_json::json!(step.kinds);
+                            }
+                            if let Some(level) = step.nesting_level {
+                                encoded["nestingLevel"] = serde_json::json!(level);
+                            }
+                            if let Some(order) = step.execution_order {
+                                encoded["executionOrder"] = serde_json::json!(order);
+                            }
+                            encoded
+                        })
+                        .collect::<Vec<_>>(),
+                });
+                if let Some(message) = &thread.message {
+                    encoded["message"] = serde_json::json!({ "text": message });
+                }
+                encoded
+            })
+            .collect::<Vec<_>>(),
+    });
+    if let Some(message) = &flow.message {
+        encoded["message"] = serde_json::json!({ "text": message });
+    }
+    encoded
 }
 
 fn sarif_location(location: &ObservationLocation, fallback: &str) -> serde_json::Value {
@@ -191,7 +260,9 @@ mod tests {
 
     use super::*;
     use crate::engine::finding::Finding;
-    use crate::engine::observation::{AgentAnalysisRecord, ObservationLocation, SourceRegion};
+    use crate::engine::observation::{
+        AgentAnalysisRecord, CodeFlow, CodeFlowStep, ObservationLocation, SourceRegion, ThreadFlow,
+    };
     use crate::engine::scan_result::ScanResult;
     use crate::engine::severity::Severity;
     use crate::engine::target::Target;
@@ -251,5 +322,90 @@ mod tests {
         assert!(!encoded.contains("\"fingerprints\""));
         assert!(encoded.contains("scorchkit/agentAnalysis"));
         assert!(encoded.contains("codex-security"));
+    }
+
+    #[test]
+    fn sarif_marks_failed_module_results_degraded_and_keeps_outcomes() {
+        let mut result = result_with(Finding::new(
+            "semgrep",
+            Severity::Low,
+            "Rule",
+            "Description",
+            "src/main.rs:1",
+        ));
+        result.module_outcomes = vec![crate::engine::scan_result::ModuleOutcome::failed(
+            "codeql",
+            crate::engine::scan_result::ModuleOutcomeReason::ExecutionFailed {
+                message: "api_key=sarif-secret".to_string(),
+            },
+        )];
+        result.refresh_execution_status();
+
+        let sarif = build_sarif(&result);
+        let invocation = &sarif["runs"][0]["invocations"][0];
+        assert_eq!(invocation["executionSuccessful"], false);
+        assert_eq!(invocation["properties"]["scorchkit/executionStatus"], "degraded");
+        assert_eq!(invocation["properties"]["scorchkit/moduleOutcomes"][0]["status"], "failed");
+        assert!(!serde_json::to_string(&sarif).expect("serialize SARIF").contains("sarif-secret"));
+    }
+
+    #[test]
+    fn sarif_redacts_mutated_finding_text_fields() {
+        let mut finding =
+            Finding::new("semgrep", Severity::High, "Rule", "Description", "src/main.rs:1");
+        finding.title = "api_key=title-secret".to_string();
+        finding.description = "password = \"description-secret\"".to_string();
+        finding.remediation = Some("token='remediation-secret'".to_string());
+
+        let encoded =
+            serde_json::to_string(&build_sarif(&result_with(finding))).expect("serialize SARIF");
+        assert!(!encoded.contains("title-secret"));
+        assert!(!encoded.contains("description-secret"));
+        assert!(!encoded.contains("remediation-secret"));
+    }
+
+    #[test]
+    fn sarif_projects_every_flow_path_step_and_order_field() {
+        let mut source = CodeFlowStep::new(ObservationLocation::Source {
+            path: "src/input.rs".to_string(),
+            region: Some(SourceRegion::new(4)),
+        });
+        source.message = Some("request input".to_string());
+        source.kinds = vec!["source".to_string()];
+        source.execution_order = Some(0);
+        let mut sink = CodeFlowStep::new(ObservationLocation::Source {
+            path: "src/query.rs".to_string(),
+            region: Some(SourceRegion::new(18)),
+        });
+        sink.kinds = vec!["sink".to_string()];
+        sink.execution_order = Some(1);
+        let finding = Finding::new(
+            "codeql",
+            Severity::High,
+            "SQL injection",
+            "Tainted input reaches SQL",
+            "src/query.rs:18",
+        )
+        .with_code_flows(vec![CodeFlow {
+            message: Some("request to query".to_string()),
+            thread_flows: vec![ThreadFlow {
+                message: Some("primary path".to_string()),
+                steps: vec![source, sink],
+            }],
+        }]);
+
+        let sarif = build_sarif(&result_with(finding));
+        let flow = &sarif["runs"][0]["results"][0]["codeFlows"][0];
+        assert_eq!(flow["message"]["text"], "request to query");
+        assert_eq!(flow["threadFlows"][0]["message"]["text"], "primary path");
+        let steps = flow["threadFlows"][0]["locations"].as_array().expect("flow locations");
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0]["kinds"], serde_json::json!(["source"]));
+        assert_eq!(steps[0]["executionOrder"], 0);
+        assert_eq!(
+            steps[1]["location"]["physicalLocation"]["artifactLocation"]["uri"],
+            "src/query.rs"
+        );
+        assert_eq!(steps[1]["executionOrder"], 1);
     }
 }

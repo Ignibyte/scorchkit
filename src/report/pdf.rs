@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use crate::config::ReportConfig;
 use crate::engine::error::Result;
+use crate::engine::observation::{redact_text, redact_url};
 use crate::engine::scan_result::ScanResult;
 use crate::runner::subprocess::{SystemToolExecutor, ToolExecutor, ToolInvocation};
 
@@ -62,12 +63,13 @@ pub async fn save_report(result: &ScanResult, config: &ReportConfig) -> Result<P
 #[allow(clippy::too_many_lines)] // JUSTIFICATION: one cohesive six-section HTML template.
 pub fn render_pdf_html(result: &ScanResult) -> String {
     let s = &result.summary;
-    let target = html_escape(&result.target.raw);
+    let target = html_escape(&redact_url(&result.target.raw).0);
     let scan_id = &result.scan_id;
     let date = result.started_at.format("%Y-%m-%d %H:%M:%S UTC").to_string();
     let duration = format_duration(result.started_at, result.completed_at);
     let version = env!("CARGO_PKG_VERSION");
     let module_count = result.modules_run.len();
+    let execution_status = if result.execution_successful() { "Complete" } else { "Degraded" };
 
     let risk_rating = overall_risk_rating(s.critical, s.high, s.medium);
 
@@ -134,6 +136,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
     <tr><th>Target</th><td>{target}</td></tr>
     <tr><th>Scan Duration</th><td>{duration}</td></tr>
     <tr><th>Modules Executed</th><td>{module_count}</td></tr>
+    <tr><th>Execution Status</th><td>{execution_status}</td></tr>
     <tr><th>Profile</th><td>Standard</td></tr>
     <tr><th>Tool Version</th><td>ScorchKit v{version}</td></tr>
   </table>
@@ -168,6 +171,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
         date = date,
         version = version,
         module_count = module_count,
+        execution_status = execution_status,
         total = s.total_findings,
         categories = count_categories(s.critical, s.high, s.medium, s.low, s.info),
         risk_rating = risk_rating,
@@ -189,8 +193,11 @@ fn render_findings(findings: &[crate::engine::finding::Finding]) -> String {
         .iter()
         .enumerate()
         .map(|(i, f)| {
-            let evidence = f.evidence.as_deref().unwrap_or("");
-            let remediation = f.remediation.as_deref().unwrap_or("");
+            let evidence = f.evidence.as_deref().map(redact_text).unwrap_or_default();
+            let remediation = f.remediation.as_deref().map(redact_text).unwrap_or_default();
+            let title = redact_text(&f.title);
+            let description = redact_text(&f.description);
+            let affected_target = redact_url(&f.affected_target).0;
             let owasp = f.owasp_category.as_deref().unwrap_or("—");
             let cwe = f.cwe_id.map_or_else(|| "—".to_string(), |c| format!("CWE-{c}"));
             let analysis_rows = f.canonical_appsec().agent_analysis.iter().fold(
@@ -238,9 +245,9 @@ fn render_findings(findings: &[crate::engine::finding::Finding]) -> String {
                 sev = sev,
                 sev_class = sev_class,
                 confidence = confidence_pct,
-                title = html_escape(&f.title),
-                desc = html_escape(&f.description),
-                target = html_escape(&f.affected_target),
+                title = html_escape(&title),
+                desc = html_escape(&description),
+                target = html_escape(&affected_target),
                 owasp = html_escape(owasp),
                 cwe = cwe,
                 evidence_row = if evidence.is_empty() {
@@ -248,7 +255,7 @@ fn render_findings(findings: &[crate::engine::finding::Finding]) -> String {
                 } else {
                     format!(
                         "<tr><th>Evidence</th><td><code>{}</code></td></tr>",
-                        html_escape(evidence)
+                        html_escape(&evidence)
                     )
                 },
                 analysis_rows = analysis_rows,
@@ -257,7 +264,7 @@ fn render_findings(findings: &[crate::engine::finding::Finding]) -> String {
                 } else {
                     format!(
                         "<div class=\"remediation-box\"><strong>Remediation:</strong> {}</div>",
-                        html_escape(remediation)
+                        html_escape(&remediation)
                     )
                 },
             )
@@ -417,6 +424,8 @@ mod tests {
             completed_at: now + chrono::Duration::seconds(42),
             modules_run: vec!["headers".to_string(), "injection".to_string()],
             modules_skipped: Vec::new(),
+            module_outcomes: Vec::new(),
+            execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
             findings,
             summary: ScanSummary {
                 total_findings: 2,

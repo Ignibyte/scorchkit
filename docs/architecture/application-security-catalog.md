@@ -12,7 +12,7 @@ effect.
 | Catalog | Domains | Current modules | Selection |
 |---|---|---:|---|
 | Application web | source, artifact, runtime, attack path | 69 | Default CLI, MCP, AI, agent, and named DAST profiles |
-| Application code | source, dependency, artifact | 21 | Default code profiles and MCP code catalog |
+| Application code | source, dependency, artifact | 23 | Default code profiles and MCP code catalog |
 | Web compatibility | network, enterprise, cloud account | 22 | Explicit module IDs or the `compatibility` template |
 | Code compatibility | cloud account | 1 (`scoutsuite`) | Explicit module ID |
 
@@ -36,10 +36,16 @@ The root composition package assigns concrete module IDs to these fields. Family
 shared descriptor shape, and agent, CLI, MCP, and orchestrator code read the resulting descriptor.
 Scanner IDs and serialized findings are unchanged.
 
-Nuclei and Semgrep are the first adapters migrated to the typed parser outcome. Their execution
-paths distinguish a valid empty result from malformed output and return a parse error for the
-latter. Legacy parser helpers used by existing callers keep their previous empty-vector behavior.
-Later adapter tickets should use the same outcome instead of adding another parser result type.
+Nuclei, Semgrep, PHPStan, CodeQL, and Psalm use typed parser outcomes. Their execution paths
+distinguish a valid empty result from malformed or scanner-failed output and return a parse error for
+the latter. CodeQL and Psalm share one strict SARIF decoder. Legacy parser helpers used by existing
+callers keep their previous empty-vector behavior. Later adapter tickets should use the same outcome
+instead of adding another parser result type.
+
+Code descriptors also declare `fast` or `deep` analysis. `standard` keeps fast application
+modules, while `thorough` and `pentest` add CodeQL and Psalm. PHPStan is a correctness module;
+its findings do not receive invented vulnerability classifications. The MCP code catalog exposes
+category and depth.
 
 Temporary output belongs to the adapter that created it. Scoped temporary files and directories
 are removed by their ownership guards. Adapters do not share fixed output directories.

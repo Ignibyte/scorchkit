@@ -1,5 +1,6 @@
 use colored::Colorize;
 
+use crate::engine::observation::redact_text;
 use crate::engine::scan_result::ScanResult;
 use crate::report::terminal::escape_terminal_text;
 
@@ -84,7 +85,7 @@ pub fn print_diff(baseline: &ScanResult, current: &ScanResult) {
                 "    {} [{}] {}",
                 "+".green(),
                 f.severity.colored_str(),
-                escape_terminal_text(&f.title)
+                escape_terminal_text(&redact_text(&f.title))
             );
         }
     }
@@ -103,7 +104,7 @@ pub fn print_diff(baseline: &ScanResult, current: &ScanResult) {
                 "    {} [{}] {}",
                 "-".red(),
                 f.severity.to_string().dimmed(),
-                escape_terminal_text(&f.title).dimmed()
+                escape_terminal_text(&redact_text(&f.title)).dimmed()
             );
         }
     }

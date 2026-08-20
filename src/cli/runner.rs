@@ -855,24 +855,37 @@ async fn run_scan(
         let mut code_orchestrator =
             crate::runner::code_orchestrator::CodeOrchestrator::new(code_ctx);
         code_orchestrator.register_default_modules();
+        code_orchestrator.apply_profile(profile);
 
         match code_orchestrator.run_quiet(quiet).await {
             Ok(code_result) => {
                 let code_count = code_result.findings.len();
+                let code_degraded = code_result.has_failed_modules();
                 result.merge(code_result);
                 if !quiet {
-                    println!(
-                        "  {} SAST scan complete: {} code findings merged",
-                        "✓".green().bold(),
-                        code_count
-                    );
+                    if code_degraded {
+                        println!(
+                            "  {} SAST scan degraded: {} code findings preserved; see module outcomes",
+                            "WARN".yellow().bold(),
+                            code_count
+                        );
+                    } else {
+                        println!(
+                            "  {} SAST scan complete: {} code findings merged",
+                            "✓".green().bold(),
+                            code_count
+                        );
+                    }
                 }
             }
             Err(e) => {
+                let message = crate::engine::observation::redact_text(&e.to_string());
+                result.record_execution_failure("code-scan", &message);
                 if !quiet {
                     println!(
-                        "  {} SAST scan failed (DAST results preserved): {e}",
-                        "WARN".yellow().bold()
+                        "  {} SAST scan failed (DAST results preserved): {}",
+                        "WARN".yellow().bold(),
+                        crate::report::terminal::escape_terminal_text(&message)
                     );
                 }
             }
@@ -1452,5 +1465,13 @@ mod tests {
 
         assert!(persisted.is_ok(), "CLI persistence failed: {persisted:?}");
         assert_eq!(scan_count, 1);
+    }
+
+    #[test]
+    fn sast_completion_output_remains_suppressed_in_quiet_mode() {
+        let production =
+            include_str!("runner.rs").split("#[cfg(test)]").next().expect("production source");
+        let compact: String = production.split_whitespace().collect();
+        assert!(compact.contains("result.merge(code_result);if!quiet{ifcode_degraded{"));
     }
 }

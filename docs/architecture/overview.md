@@ -87,12 +87,12 @@ Each family has one orchestrator and one module trait. Orchestrators select modu
 concurrency, publish lifecycle events, run configured local hooks, collect failures without
 fabricating findings, and return a `ScanResult`.
 
-The registered production maximum is 123 executable modules:
+The registered production maximum is 125 executable modules:
 
 | Family | Registered modules |
 |---|---:|
 | DAST and recon | 91 |
-| SAST | 22 |
+| SAST | 24 |
 | Infrastructure | 4, plus optional CVE correlation |
 | Cloud | 5 bounded external-tool adapters |
 
@@ -100,10 +100,11 @@ Registry contracts in `tests/module_census.rs` own these numbers. Pacu has an im
 not registered. Twelve native AWS, GCP, and Azure SDK modules are private and test-only until their
 provider authentication and service requests use a policy-owned transport.
 
-Native production modules use in-process HTTP, parsing, DNS, TCP, or TLS. Tool-backed modules declare
-an invocation and run through the shared executor. Forty-five DAST adapters and all 21 SAST adapters
-are bounded one-shot processes. Interactsh owns a longer-lived callback session but uses the same
-process-group ownership and bounded output primitives.
+Native production modules use in-process HTTP, parsing, DNS, TCP, or TLS. Tool-backed modules
+declare owned invocations and run through the shared executor. Forty-five DAST adapters and 22 SAST
+wrappers are bounded one-shot processes. CodeQL uses two ordered bounded processes per applicable
+language. Interactsh owns a longer-lived callback session but uses the same process-group ownership
+and bounded output primitives.
 
 ## Evidence and results
 

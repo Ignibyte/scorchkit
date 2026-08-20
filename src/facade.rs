@@ -160,7 +160,8 @@ impl Engine {
     ///
     /// Runs DAST and SAST concurrently, then merges findings into a single
     /// `ScanResult`. The DAST target is the primary — SAST findings are
-    /// appended. If SAST fails, only DAST results are returned.
+    /// appended. If SAST fails before it can return a partial result, DAST findings are preserved
+    /// and the combined result is marked degraded with a redacted code-scan failure outcome.
     ///
     /// # Errors
     ///
@@ -170,8 +171,9 @@ impl Engine {
 
         let mut result = dast_result?;
 
-        if let Ok(code_result) = sast_result {
-            result.merge(code_result);
+        match sast_result {
+            Ok(code_result) => result.merge(code_result),
+            Err(error) => result.record_execution_failure("code-scan", error.to_string()),
         }
 
         Ok(result)
@@ -610,11 +612,18 @@ impl Engine {
         // cloud last as it is the newest family).
         let mut base: Option<ScanResult> = None;
         let mut first_err: Option<ScorchError> = None;
+        let mut failures = Vec::new();
 
-        absorb_outcome(dast, &mut base, &mut first_err);
-        absorb_outcome(sast, &mut base, &mut first_err);
-        absorb_outcome(infra, &mut base, &mut first_err);
-        absorb_outcome(cloud, &mut base, &mut first_err);
+        absorb_outcome("dast-scan", dast, &mut base, &mut first_err, &mut failures);
+        absorb_outcome("code-scan", sast, &mut base, &mut first_err, &mut failures);
+        absorb_outcome("infra-scan", infra, &mut base, &mut first_err, &mut failures);
+        absorb_outcome("cloud-scan", cloud, &mut base, &mut first_err, &mut failures);
+
+        if let Some(result) = base.as_mut() {
+            for (family, message) in failures {
+                result.record_execution_failure(family, message);
+            }
+        }
 
         base.ok_or_else(|| {
             first_err.unwrap_or_else(|| ScorchError::Config("assess: no results".into()))
@@ -860,9 +869,11 @@ fn profile_policy_requirements(profile: &str) -> Result<ProfilePolicyRequirement
 /// `first_err` for the fallback error path.
 #[cfg(feature = "infra")]
 fn absorb_outcome(
+    family: &'static str,
     outcome: Option<Result<ScanResult>>,
     base: &mut Option<ScanResult>,
     first_err: &mut Option<crate::engine::error::ScorchError>,
+    failures: &mut Vec<(&'static str, String)>,
 ) {
     let Some(result) = outcome else {
         return;
@@ -873,7 +884,9 @@ fn absorb_outcome(
             None => *base = Some(r),
         },
         Err(e) => {
-            tracing::warn!("assess: domain failed: {e}");
+            let message = crate::engine::observation::redact_text(&e.to_string());
+            tracing::warn!(family, %message, "assess: domain failed");
+            failures.push((family, message));
             if first_err.is_none() {
                 *first_err = Some(e);
             }
@@ -1023,6 +1036,44 @@ mod tests {
         let pentest = profile_policy_requirements("pentest").expect("pentest profile");
         assert!(pentest.credential_testing && pentest.exploitation);
         assert!(profile_policy_requirements("unknown").is_err());
+    }
+
+    #[cfg(feature = "infra")]
+    #[test]
+    fn partial_assessment_records_failed_family_after_another_family_succeeds() {
+        let mut base = None;
+        let mut first_err = None;
+        let mut failures = Vec::new();
+        absorb_outcome(
+            "code-scan",
+            Some(Err(ScorchError::Config("api_key=assessment-fixture-secret".to_string()))),
+            &mut base,
+            &mut first_err,
+            &mut failures,
+        );
+
+        let target = Target::parse("https://example.com").expect("fixture target");
+        let clean = ScanResult::new(
+            "dast-fixture".to_string(),
+            target,
+            chrono::Utc::now(),
+            Vec::new(),
+            vec!["headers".to_string()],
+            Vec::new(),
+        );
+        absorb_outcome("dast-scan", Some(Ok(clean)), &mut base, &mut first_err, &mut failures);
+        let mut result = base.expect("partial assessment result");
+        for (family, message) in failures {
+            result.record_execution_failure(family, message);
+        }
+
+        assert!(first_err.is_some());
+        assert!(!result.execution_successful());
+        assert!(result.modules_run.iter().any(|module| module == "headers"));
+        let encoded = serde_json::to_string(&result).expect("serialize partial assessment");
+        assert!(!encoded.contains("assessment-fixture-secret"));
+        assert!(encoded.contains("code-scan"));
+        assert!(encoded.contains("degraded"));
     }
 
     #[test]

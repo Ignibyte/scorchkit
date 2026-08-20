@@ -46,13 +46,13 @@ pub fn build_remediation_walk(findings: &[Finding]) -> Vec<RemediationStep> {
             let f = &findings[*idx];
             RemediationStep {
                 step: step_num + 1,
-                finding_title: f.title.clone(),
+                finding_title: crate::engine::observation::redact_text(&f.title),
                 module_id: f.module_id.clone(),
                 risk_score: *score,
-                guidance: f
-                    .remediation
-                    .clone()
-                    .unwrap_or_else(|| "Review and remediate this finding.".into()),
+                guidance: f.remediation.as_deref().map_or_else(
+                    || "Review and remediate this finding.".into(),
+                    crate::engine::observation::redact_text,
+                ),
                 effort: estimate_effort(f),
             }
         })
@@ -250,6 +250,18 @@ mod tests {
         assert!(text.contains("Remediation Walk"));
         assert!(text.contains("XSS Found"));
         assert!(text.contains("Fix this issue"));
+    }
+
+    #[test]
+    fn deterministic_walk_redacts_mutated_finding_fields() {
+        let mut finding = finding("xss", "safe", Severity::High);
+        finding.title = "api_key=title-fixture-secret".to_string();
+        finding.remediation = Some("token = 'guidance-fixture-secret'".to_string());
+        let encoded = serde_json::to_string(&build_remediation_walk(&[finding]))
+            .expect("serialize remediation walk");
+        assert!(!encoded.contains("title-fixture-secret"));
+        assert!(!encoded.contains("guidance-fixture-secret"));
+        assert!(encoded.contains("REDACTED"));
     }
 
     #[tokio::test]

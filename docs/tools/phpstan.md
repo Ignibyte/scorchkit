@@ -1,40 +1,40 @@
 # PHPStan
 
-PHP static analysis — finds bugs, type errors, and some security-relevant issues (undefined methods, mistyped parameters, dead code). License: MIT (upstream: [phpstan/phpstan](https://github.com/phpstan/phpstan)).
+PHPStan is a PHP correctness and type analyzer. ScorchKit reports its output as correctness
+evidence. It does not label every PHPStan message as an injection vulnerability and does not invent
+an OWASP category or CWE.
 
 ## Install
 
-```
+```bash
 composer global require phpstan/phpstan
-# or: curl -L https://github.com/phpstan/phpstan/releases/latest/download/phpstan.phar -o /usr/local/bin/phpstan && chmod +x /usr/local/bin/phpstan
+phpstan --version
 ```
 
-Verify with `scorchkit doctor`.
+The `phpstan` executable must be on `PATH`. Run `scorchkit doctor` after installation.
 
-## What ScorchKit surfaces
+## Execution and findings
 
-The wrapper runs `phpstan analyse --error-format json --no-progress <path>` and walks `files.<path>.messages[]`. Every message becomes a **Medium** finding:
+The wrapper runs:
 
-- **Title**: `PHPStan: <message>`
-- **Description**: PHPStan's `message` field
-- **Affected**: `<file>:<line>`
-- **OWASP**: A03:2021 Injection (generic — PHPStan reports bugs not specific vulns)
-- **Remediation**: PHPStan's `tip` field when present, else a generic "review and fix"
-- **Confidence**: 0.7
-
-Severity is flat Medium because PHPStan doesn't differentiate — everything it reports is a potential defect.
-
-## How to run
-
-```
-scorchkit code /path/to/php/project --modules phpstan
+```text
+phpstan analyse --error-format json --no-progress <source-root>
 ```
 
-300s timeout. PHPStan needs a working PHP environment and (for deeper analysis) a `phpstan.neon` config file in the target.
+The process has a five-minute timeout and accepts PHPStan's normal nonzero finding exit. Each valid
+message becomes an Info-severity correctness finding with its file, positive line number, optional
+PHPStan identifier, optional tip, and redacted structured message. Empty `files` or empty message
+lists are clean. Invalid JSON, missing file/message shapes, invalid line numbers, and PHPStan
+analysis errors fail the module.
 
-## Limitations vs alternatives
+## Selection
 
-- **Bugs, not vulnerabilities**. PHPStan is a type-checker first, security tool second. For PHP SAST, pair with `semgrep` PHP rules (or paid tools like Snyk Code, Psalm security plugin).
-- **Analysis level matters** — PHPStan runs at level 0 (loosest) to 9 (strictest). Without a project config, it uses the default (usually 0); the wrapper doesn't override. For deep analysis, configure `phpstan.neon` in the target.
-- **Framework extensions required** for Laravel / Symfony / Doctrine awareness (`phpstan/phpstan-laravel`, etc.). The wrapper uses the stock binary.
-- **Hardcoded OWASP A03** — often wrong. Treat the injection tag as a placeholder, not an assertion.
+```bash
+scorchkit code /path/to/php/project --profile standard --modules phpstan
+```
+
+PHPStan is a fast PHP analyzer and is eligible for the `standard` profile. Project configuration
+still controls PHPStan's analysis level and framework extensions.
+
+Use Psalm for PHP security taint analysis. Running both is intentional: PHPStan supplies correctness
+signals while Psalm supplies source-to-sink security evidence.

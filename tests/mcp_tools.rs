@@ -213,11 +213,23 @@ async fn test_tool_list_code_modules_uses_application_catalog() {
     let server = test_server_without_database();
     let result = server.do_list_code_modules();
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
-    assert_eq!(parsed.len(), 21);
+    assert_eq!(parsed.len(), 23);
     assert!(parsed
         .iter()
         .all(|module| module["adapter"]["schemaVersion"] == scorchkit_core::ADAPTER_CONTRACT_V1));
     assert!(!parsed.iter().any(|module| module["id"] == "scoutsuite"));
+    assert_eq!(
+        parsed.iter().find(|module| module["id"] == "semgrep").map(|module| &module["depth"]),
+        Some(&serde_json::json!("fast"))
+    );
+    assert_eq!(
+        parsed.iter().find(|module| module["id"] == "codeql").map(|module| &module["depth"]),
+        Some(&serde_json::json!("deep"))
+    );
+    assert_eq!(
+        parsed.iter().find(|module| module["id"] == "psalm").map(|module| &module["depth"]),
+        Some(&serde_json::json!("deep"))
+    );
 }
 
 /// Verify `check_tools` returns a JSON array of tool status.
@@ -520,6 +532,7 @@ async fn composite_effect_tools_deny_without_engagement() {
         .do_scan_code(CodeScanParams {
             path: code_path.display().to_string(),
             language: Some("rust".to_string()),
+            profile: "standard".to_string(),
             modules: None,
             skip: None,
         })
@@ -1248,6 +1261,17 @@ fn test_tool_auto_scan() {
     let params: AutoScanParams = serde_json::from_str(json_with_project).expect("deserialize");
     assert_eq!(params.profile, "quick");
     assert_eq!(params.project.as_deref(), Some("test-proj"));
+}
+
+#[test]
+fn code_scan_params_default_to_fast_and_accept_deep_profiles() {
+    let defaulted: CodeScanParams =
+        serde_json::from_str(r#"{"path":"."}"#).expect("default code profile");
+    assert_eq!(defaulted.profile, "standard");
+
+    let deep: CodeScanParams =
+        serde_json::from_str(r#"{"path":".","profile":"thorough"}"#).expect("deep code profile");
+    assert_eq!(deep.profile, "thorough");
 }
 
 /// Verify `target_intelligence` params deserialize.

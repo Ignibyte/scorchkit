@@ -274,6 +274,8 @@ impl CloudOrchestrator {
             findings: all_findings,
             modules_run,
             modules_skipped,
+            module_outcomes: Vec::new(),
+            execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
             summary,
         })
     }

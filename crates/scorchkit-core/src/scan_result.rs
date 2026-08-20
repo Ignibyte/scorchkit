@@ -1,9 +1,175 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::finding::Finding;
 use super::severity::Severity;
 use super::target::Target;
+
+/// Overall execution integrity of a scan result.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanExecutionStatus {
+    /// Every selected module either ran or had a non-failure coverage disposition.
+    #[default]
+    Complete,
+    /// At least one selected module failed during execution or output validation.
+    Degraded,
+}
+
+/// Typed execution state for one selected scan module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModuleOutcomeStatus {
+    /// The module ran to completion, with or without findings.
+    Ran,
+    /// The module does not apply to the detected target or language.
+    NotApplicable,
+    /// The module was eligible but could not start, such as when a tool is absent.
+    Skipped,
+    /// The module started but execution or output validation failed.
+    Failed,
+}
+
+/// Machine-readable reason for a module that did not produce a normal run outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModuleOutcomeReason {
+    /// None of the detected languages is supported by the selected analyzer.
+    UnsupportedLanguage {
+        /// Explicitly selected or detected project languages.
+        detected: Vec<String>,
+        /// Languages declared by the analyzer.
+        supported: Vec<String>,
+    },
+    /// No project language could be determined for a language-specific analyzer.
+    LanguageUndetected {
+        /// Languages declared by the analyzer.
+        supported: Vec<String>,
+    },
+    /// The declared external tool could not be resolved.
+    MissingTool {
+        /// Executable name declared by the adapter.
+        tool: String,
+    },
+    /// The module failed during execution or output validation.
+    ExecutionFailed {
+        /// Existing human-readable failure detail.
+        #[serde(
+            serialize_with = "serialize_redacted_message",
+            deserialize_with = "deserialize_redacted_message"
+        )]
+        message: String,
+    },
+}
+
+fn serialize_redacted_message<S>(message: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&crate::observation::redact_text(message))
+}
+
+fn deserialize_redacted_message<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(|message| crate::observation::redact_text(&message))
+}
+
+fn serialize_redacted_skips<S>(
+    skipped: &[(String, String)],
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let redacted: Vec<(&str, String)> = skipped
+        .iter()
+        .map(|(module_id, reason)| (module_id.as_str(), crate::observation::redact_text(reason)))
+        .collect();
+    redacted.serialize(serializer)
+}
+
+fn deserialize_redacted_skips<'de, D>(deserializer: D) -> Result<Vec<(String, String)>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Vec::<(String, String)>::deserialize(deserializer).map(|skipped| {
+        skipped
+            .into_iter()
+            .map(|(module_id, reason)| (module_id, crate::observation::redact_text(&reason)))
+            .collect()
+    })
+}
+
+/// Typed coverage and execution result for one selected module.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModuleOutcome {
+    /// Stable module identifier.
+    pub module_id: String,
+    /// Terminal execution state.
+    pub status: ModuleOutcomeStatus,
+    /// Finding count for successful runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub findings_count: Option<usize>,
+    /// Machine-readable reason for non-run states.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<ModuleOutcomeReason>,
+}
+
+impl ModuleOutcome {
+    /// Record one completed module run.
+    #[must_use]
+    pub fn ran(module_id: impl Into<String>, findings_count: usize) -> Self {
+        Self {
+            module_id: module_id.into(),
+            status: ModuleOutcomeStatus::Ran,
+            findings_count: Some(findings_count),
+            reason: None,
+        }
+    }
+
+    /// Record one module that was not applicable to the target.
+    #[must_use]
+    pub fn not_applicable(module_id: impl Into<String>, reason: ModuleOutcomeReason) -> Self {
+        Self {
+            module_id: module_id.into(),
+            status: ModuleOutcomeStatus::NotApplicable,
+            findings_count: None,
+            reason: Some(reason),
+        }
+    }
+
+    /// Record one eligible module whose external prerequisite was absent.
+    #[must_use]
+    pub fn skipped(module_id: impl Into<String>, reason: ModuleOutcomeReason) -> Self {
+        Self {
+            module_id: module_id.into(),
+            status: ModuleOutcomeStatus::Skipped,
+            findings_count: None,
+            reason: Some(reason),
+        }
+    }
+
+    /// Record one module execution or parser failure.
+    #[must_use]
+    pub fn failed(module_id: impl Into<String>, reason: ModuleOutcomeReason) -> Self {
+        let reason = match reason {
+            ModuleOutcomeReason::ExecutionFailed { message } => {
+                ModuleOutcomeReason::ExecutionFailed {
+                    message: crate::observation::redact_text(&message),
+                }
+            }
+            other => other,
+        };
+        Self {
+            module_id: module_id.into(),
+            status: ModuleOutcomeStatus::Failed,
+            findings_count: None,
+            reason: Some(reason),
+        }
+    }
+}
 
 /// Aggregated results from a complete scan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,7 +187,17 @@ pub struct ScanResult {
     /// Which modules were run.
     pub modules_run: Vec<String>,
     /// Which modules were skipped (`module_id`, reason).
+    #[serde(
+        serialize_with = "serialize_redacted_skips",
+        deserialize_with = "deserialize_redacted_skips"
+    )]
     pub modules_skipped: Vec<(String, String)>,
+    /// Typed per-module coverage and execution outcomes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub module_outcomes: Vec<ModuleOutcome>,
+    /// Overall status derived from the typed module outcomes.
+    #[serde(default)]
+    pub execution_status: ScanExecutionStatus,
     /// Summary statistics.
     pub summary: ScanSummary,
 }
@@ -82,8 +258,59 @@ impl ScanResult {
             findings,
             modules_run,
             modules_skipped,
+            module_outcomes: Vec::new(),
+            execution_status: ScanExecutionStatus::Complete,
             summary,
         }
+    }
+
+    /// Replace typed outcomes and derive the overall execution status from them.
+    #[must_use]
+    pub fn with_module_outcomes(mut self, module_outcomes: Vec<ModuleOutcome>) -> Self {
+        self.module_outcomes = module_outcomes;
+        self.refresh_execution_status();
+        self
+    }
+
+    /// Return whether at least one selected module failed to execute or validate its output.
+    #[must_use]
+    pub fn has_failed_modules(&self) -> bool {
+        self.module_outcomes.iter().any(|outcome| outcome.status == ModuleOutcomeStatus::Failed)
+    }
+
+    /// Return the SARIF-compatible execution-success value for this result.
+    #[must_use]
+    pub fn execution_successful(&self) -> bool {
+        !self.has_failed_modules() && self.execution_status == ScanExecutionStatus::Complete
+    }
+
+    /// Recompute the top-level status after outcome collection or merge.
+    pub fn refresh_execution_status(&mut self) {
+        self.execution_status = if self.has_failed_modules() {
+            ScanExecutionStatus::Degraded
+        } else {
+            ScanExecutionStatus::Complete
+        };
+    }
+
+    /// Preserve a fatal module or scan-family failure in a partial result.
+    ///
+    /// The diagnostic is redacted before it reaches either the legacy skipped-module field or the
+    /// typed outcome. This keeps partial findings available while making incomplete coverage
+    /// explicit to JSON, MCP, CLI, and report consumers.
+    pub fn record_execution_failure(
+        &mut self,
+        module_id: impl Into<String>,
+        message: impl AsRef<str>,
+    ) {
+        let module_id = module_id.into();
+        let message = crate::observation::redact_text(message.as_ref());
+        self.modules_skipped.push((module_id.clone(), message.clone()));
+        self.module_outcomes.push(ModuleOutcome::failed(
+            module_id,
+            ModuleOutcomeReason::ExecutionFailed { message },
+        ));
+        self.refresh_execution_status();
     }
 
     /// Remove findings below the given confidence threshold and recompute the summary.
@@ -105,6 +332,8 @@ impl ScanResult {
         self.findings.extend(other.findings);
         self.modules_run.extend(other.modules_run);
         self.modules_skipped.extend(other.modules_skipped);
+        self.module_outcomes.extend(other.module_outcomes);
+        self.refresh_execution_status();
         self.summary = ScanSummary::from_findings(&self.findings);
     }
 }
@@ -133,6 +362,8 @@ mod tests {
             completed_at: now,
             modules_run: vec!["test".to_string()],
             modules_skipped: Vec::new(),
+            module_outcomes: Vec::new(),
+            execution_status: ScanExecutionStatus::Complete,
             summary: ScanSummary::from_findings(&findings),
             findings,
         }
@@ -193,6 +424,13 @@ mod tests {
                 test_result_with_confidences(&[(Severity::Critical, 0.85), (Severity::Low, 0.6)]);
             r.modules_run = vec!["semgrep".to_string(), "dep-audit".to_string()];
             r.modules_skipped = vec![("bandit".to_string(), "not installed".to_string())];
+            r.module_outcomes = vec![
+                ModuleOutcome::ran("semgrep", 1),
+                ModuleOutcome::skipped(
+                    "bandit",
+                    ModuleOutcomeReason::MissingTool { tool: "bandit".to_string() },
+                ),
+            ];
             r
         };
 
@@ -201,6 +439,9 @@ mod tests {
         assert_eq!(dast.findings.len(), 4);
         assert_eq!(dast.modules_run.len(), 4);
         assert_eq!(dast.modules_skipped.len(), 1);
+        assert_eq!(dast.module_outcomes.len(), 2);
+        assert_eq!(dast.execution_status, ScanExecutionStatus::Complete);
+        assert_eq!(dast.module_outcomes[0], ModuleOutcome::ran("semgrep", 1));
         assert_eq!(dast.summary.total_findings, 4);
         assert_eq!(dast.summary.critical, 1);
         assert_eq!(dast.summary.high, 1);
@@ -227,5 +468,122 @@ mod tests {
         result.merge(empty);
         assert_eq!(result.findings.len(), original_count);
         assert_eq!(result.modules_run.len(), original_modules);
+    }
+
+    #[test]
+    fn legacy_scan_result_without_typed_outcomes_remains_readable() {
+        let result = test_result_with_confidences(&[(Severity::High, 0.9)]);
+        let mut value = serde_json::to_value(result).expect("serialize result");
+        value.as_object_mut().expect("scan result object").remove("module_outcomes");
+
+        let restored: ScanResult = serde_json::from_value(value).expect("read legacy result");
+        assert!(restored.module_outcomes.is_empty());
+        assert_eq!(restored.modules_run, ["test"]);
+    }
+
+    #[test]
+    fn typed_outcome_reason_has_a_stable_serialized_shape() {
+        let outcome = ModuleOutcome::not_applicable(
+            "codeql",
+            ModuleOutcomeReason::UnsupportedLanguage {
+                detected: vec!["php".to_string()],
+                supported: vec!["javascript".to_string(), "python".to_string()],
+            },
+        );
+        let value = serde_json::to_value(outcome).expect("serialize module outcome");
+        assert_eq!(value["status"], "not_applicable");
+        assert_eq!(value["reason"]["kind"], "unsupported_language");
+        assert_eq!(value["reason"]["detected"], serde_json::json!(["php"]));
+        assert_eq!(value["reason"]["supported"], serde_json::json!(["javascript", "python"]));
+    }
+
+    #[test]
+    fn failed_module_degrades_serialized_scan_and_merge() {
+        let failed = ModuleOutcome::failed(
+            "codeql",
+            ModuleOutcomeReason::ExecutionFailed { message: "redacted failure".to_string() },
+        );
+        let mut result = test_result_with_confidences(&[]).with_module_outcomes(vec![failed]);
+
+        assert!(result.has_failed_modules());
+        assert!(!result.execution_successful());
+        assert_eq!(result.execution_status, ScanExecutionStatus::Degraded);
+        let encoded = serde_json::to_value(&result).expect("serialize degraded scan");
+        assert_eq!(encoded["execution_status"], "degraded");
+
+        let clean = test_result_with_confidences(&[]);
+        result.execution_status = ScanExecutionStatus::Complete;
+        result.merge(clean);
+        assert_eq!(result.execution_status, ScanExecutionStatus::Degraded);
+    }
+
+    #[test]
+    fn recording_partial_failure_updates_legacy_and_typed_status_without_leaking() {
+        let mut result = test_result_with_confidences(&[]);
+        result.record_execution_failure("code-scan", "api_key=family-fixture-secret");
+
+        assert_eq!(result.execution_status, ScanExecutionStatus::Degraded);
+        assert!(!result.execution_successful());
+        assert_eq!(result.modules_skipped.len(), 1);
+        assert_eq!(result.modules_skipped[0].0, "code-scan");
+        assert!(!result.modules_skipped[0].1.contains("family-fixture-secret"));
+        assert_eq!(result.module_outcomes.len(), 1);
+        assert_eq!(result.module_outcomes[0].status, ModuleOutcomeStatus::Failed);
+
+        let encoded = serde_json::to_string(&result).expect("serialize partial result");
+        assert!(!encoded.contains("family-fixture-secret"));
+        assert!(encoded.contains("REDACTED"));
+    }
+
+    #[test]
+    fn legacy_scan_without_execution_status_defaults_complete() {
+        let result = test_result_with_confidences(&[]);
+        let mut value = serde_json::to_value(&result).expect("serialize scan");
+        value.as_object_mut().expect("scan object").remove("execution_status");
+        let restored: ScanResult = serde_json::from_value(value).expect("deserialize legacy scan");
+        assert_eq!(restored.execution_status, ScanExecutionStatus::Complete);
+        assert!(restored.execution_successful());
+    }
+
+    #[test]
+    fn failed_outcome_redacts_diagnostics_on_construction_and_wire_boundaries() {
+        let mut outcome = ModuleOutcome::failed(
+            "codeql",
+            ModuleOutcomeReason::ExecutionFailed {
+                message: "api_key=constructor-secret".to_string(),
+            },
+        );
+        let encoded = serde_json::to_string(&outcome).expect("serialize failed outcome");
+        assert!(!encoded.contains("constructor-secret"));
+
+        outcome.reason = Some(ModuleOutcomeReason::ExecutionFailed {
+            message: "password = \"mutated-secret\"".to_string(),
+        });
+        let encoded = serde_json::to_string(&outcome).expect("serialize mutated outcome");
+        assert!(!encoded.contains("mutated-secret"));
+        let restored: ModuleOutcome = serde_json::from_str(&encoded).expect("deserialize outcome");
+        let Some(ModuleOutcomeReason::ExecutionFailed { message }) = restored.reason else {
+            panic!("expected execution failure reason");
+        };
+        assert!(!message.contains("secret"));
+    }
+
+    #[test]
+    fn failed_outcome_deserialization_preserves_safe_context_while_redacting() {
+        let raw = serde_json::json!({
+            "module_id": "codeql",
+            "status": "failed",
+            "reason": {
+                "kind": "execution_failed",
+                "message": "prefix api_key=wire-secret suffix"
+            }
+        });
+        let restored: ModuleOutcome = serde_json::from_value(raw).expect("deserialize outcome");
+        let Some(ModuleOutcomeReason::ExecutionFailed { message }) = restored.reason else {
+            panic!("expected execution failure reason");
+        };
+        assert_eq!(message, crate::observation::redact_text("prefix api_key=wire-secret suffix"));
+        assert!(message.starts_with("prefix "));
+        assert!(message.ends_with(" suffix"));
     }
 }

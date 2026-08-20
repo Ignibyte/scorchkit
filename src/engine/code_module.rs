@@ -5,7 +5,7 @@ use super::error::Result;
 use super::finding::Finding;
 use async_trait::async_trait;
 
-pub use scorchkit_code::{CodeCategory, CodeModuleDescriptor};
+pub use scorchkit_code::{CodeAnalysisDepth, CodeCategory, CodeModuleDescriptor};
 
 /// Trait for static code analysis modules.
 ///
@@ -24,6 +24,7 @@ pub trait CodeModule: Send + Sync {
             name: self.name(),
             id: self.id(),
             category: self.category(),
+            depth: self.depth(),
             description: self.description(),
             languages: self.languages(),
             requires_external_tool: self.requires_external_tool(),
@@ -37,6 +38,10 @@ pub trait CodeModule: Send + Sync {
     fn id(&self) -> &str;
     /// Category this module belongs to.
     fn category(&self) -> CodeCategory;
+    /// Relative cost used by implicit code profiles.
+    fn depth(&self) -> CodeAnalysisDepth {
+        CodeAnalysisDepth::Fast
+    }
     /// Brief description of what this module checks.
     fn description(&self) -> &str;
     /// Languages this module supports. Empty slice means language-agnostic.
@@ -63,6 +68,7 @@ mod tests {
     #[test]
     fn test_code_category_display() {
         assert_eq!(CodeCategory::Sast.to_string(), "sast");
+        assert_eq!(CodeCategory::Correctness.to_string(), "correctness");
         assert_eq!(CodeCategory::Sca.to_string(), "sca");
         assert_eq!(CodeCategory::Secrets.to_string(), "secrets");
         assert_eq!(CodeCategory::Iac.to_string(), "iac");

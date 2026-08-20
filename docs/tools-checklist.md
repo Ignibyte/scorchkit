@@ -99,6 +99,9 @@ Run `scorchkit doctor` (or `scorchkit doctor --deep` for version checks) to see 
 | Tool | Binary | Min version | Install |
 |------|--------|-------------|---------|
 | Semgrep | `semgrep` | 1.0.0 | `pip install semgrep` |
+| CodeQL CLI bundle | `codeql` | — | Download the complete bundle from [GitHub](https://github.com/github/codeql-cli-binaries/releases) and review its license |
+| PHPStan | `phpstan` | — | `composer global require phpstan/phpstan` |
+| Psalm | `psalm` | — | `composer require --dev vimeo/psalm`; expose the project binary on `PATH` |
 | Slither | `slither` | — | `pipx install slither-analyzer` |
 | Brakeman | `brakeman` | — | `gem install brakeman` |
 | OSV-Scanner | `osv-scanner` | — | `go install github.com/google/osv-scanner/cmd/osv-scanner@latest` |
@@ -168,6 +171,10 @@ pipx install droopescan arjun paramspider wapiti3 commix xsstrike linkfinder \
 # Ruby-based
 gem install wpscan cewl brakeman
 
+# PHP project tools
+composer global require phpstan/phpstan
+# Install Psalm in the assessed project: composer require --dev vimeo/psalm
+
 # Rust-based
 cargo install feroxbuster cargo-audit cargo-deny
 
@@ -177,6 +184,10 @@ sudo snap install zaproxy --classic
 ```
 
 After install, run `scorchkit doctor --deep` to verify versions.
+
+CodeQL is intentionally absent from the bulk installer. Install the complete CLI bundle manually,
+review its license, and keep its bundled extractors and query packs together. ScorchKit never
+downloads CodeQL packs during a scan.
 
 ## Config Path Overrides
 

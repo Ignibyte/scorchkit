@@ -257,6 +257,10 @@ pub struct CodeScanParams {
     /// Valid values: "rust", "python", "javascript", "go", "php", "java", "ruby".
     /// If omitted, auto-detected from manifest files.
     pub language: Option<String>,
+    /// Code scan profile: "quick" for secrets/dependencies, "standard" for fast application
+    /// analysis, or "thorough"/"pentest" to add deep analyzers. Defaults to "standard".
+    #[serde(default = "default_profile")]
+    pub profile: String,
     /// Comma-separated list of specific code module IDs to run, ignoring defaults.
     /// Get valid IDs from `list_code_modules`. Example: "semgrep,dep-audit".
     pub modules: Option<String>,

@@ -1,0 +1,94 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "semanticVersion": "2.23.0",
+          "rules": [
+            {
+              "id": "js/sql-injection",
+              "name": "SqlInjection",
+              "shortDescription": {"text": "Database query built from user-controlled sources"},
+              "defaultConfiguration": {"level": "error"},
+              "properties": {
+                "security-severity": "8.8",
+                "precision": "high",
+                "tags": ["security", "external/cwe/cwe-089"]
+              }
+            }
+          ]
+        }
+      },
+      "automationDetails": {"id": "javascript-security-extended"},
+      "versionControlProvenance": [{"revisionId": "0123456789abcdef"}],
+      "invocations": [{"executionSuccessful": true}],
+      "artifacts": [
+        {"location": {"uri": "src/request.js"}},
+        {"location": {"uri": "src/query.js"}}
+      ],
+      "results": [
+        {
+          "ruleId": "js/sql-injection",
+          "level": "error",
+          "message": {"text": "User-controlled data reaches a SQL query"},
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {"uri": "src/query.js"},
+                "region": {"startLine": 19, "startColumn": 3, "endLine": 19, "endColumn": 22}
+              }
+            }
+          ],
+          "codeFlows": [
+            {
+              "message": {"text": "Request parameter to database query"},
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {"index": 0},
+                          "region": {"startLine": 4, "startColumn": 17}
+                        },
+                        "message": {"text": "Source: request.query.id"}
+                      },
+                      "kinds": ["source"],
+                      "executionOrder": 1
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {"index": 1},
+                          "region": {"startLine": 13, "startColumn": 9}
+                        },
+                        "message": {"text": "Flow through query builder"}
+                      },
+                      "kinds": ["path"],
+                      "nestingLevel": 1,
+                      "executionOrder": 2
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {"uri": "src/query.js"},
+                          "region": {"startLine": 19, "startColumn": 3}
+                        },
+                        "message": {"text": "Sink: database.execute"}
+                      },
+                      "kinds": ["sink"],
+                      "executionOrder": 3
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "properties": {"scannerSpecific": {"traceId": "trace-001"}}
+        }
+      ]
+    }
+  ]
+}

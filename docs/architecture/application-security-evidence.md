@@ -14,6 +14,8 @@ Scanner observations and agent interpretation are different data classes:
   keys;
 - evidence records preserve redacted scanner output or HTTP request/response material and have
   their own deterministic identities;
+- code flows preserve each independent thread and every ordered source, propagation, and sink
+  location without becoming finding-identity input;
 - agent analyses name their provider/model and reference the finding or evidence they interpret.
 
 An agent analysis never mutates scanner evidence and is never used as a scanner fingerprint. Raw
@@ -53,6 +55,11 @@ Redaction is repeated when evidence is attached or legacy JSON is upgraded. Repo
 therefore consume already-redacted domain data rather than independently guessing which fields are
 safe.
 
+Structured scanner evidence is canonicalized recursively so JSON object order cannot alter evidence
+identity. Sensitive keyed values and sensitive key/value strings nested inside scanner output are
+redacted before hashing and serialization. Flow and thread messages pass through the same redaction
+boundary.
+
 ## Storage and reports
 
 `tracked_findings` stores the stable v2 identity, schema, correlation keys, and the latest
@@ -64,8 +71,14 @@ JSON serializes the canonical v2 companion alongside legacy fields. SARIF uses s
 redacted evidence, provenance, correlation keys, and labeled analysis in namespaced properties.
 Raw evidence is never a fingerprint.
 
+SARIF `codeFlows` are projected from the canonical flow model with thread messages, ordered
+locations, kinds, nesting levels, and execution order intact. Flow changes enrich proof for an
+existing finding. They do not create a different finding identity for the same weakness and sink.
+
 ## Producer migration
 
-Semgrep supplies a source region and rule provenance. Nuclei supplies a runtime location and
-template provenance. Other adapters receive a conservative typed or legacy location through
-`Finding::new` and can migrate independently without changing execution or authorization behavior.
+Semgrep supplies a source region, pinned rule-pack provenance, structured result, and optional taint
+flow. CodeQL and Psalm supply strict SARIF source paths, rule/query provenance, structured evidence,
+and complete flows. Nuclei supplies a runtime location and template provenance. Other adapters
+receive a conservative typed or legacy location through `Finding::new` and can migrate independently
+without changing execution or authorization behavior.

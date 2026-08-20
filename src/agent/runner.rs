@@ -163,12 +163,16 @@ pub async fn run_autonomous(
     let modules_run = scan_result.modules_run.len();
     let modules_skipped = scan_result.modules_skipped.len();
 
-    print!(
-        "{}",
-        render_phase_result(&PhaseResult::Pass(format!(
+    let scan_phase = if scan_result.has_failed_modules() {
+        PhaseResult::Warn(format!(
+            "degraded: {modules_run} modules run, {modules_skipped} skipped or failed, {total_findings} findings"
+        ))
+    } else {
+        PhaseResult::Pass(format!(
             "{modules_run} modules run, {modules_skipped} skipped, {total_findings} findings"
-        )))
-    );
+        ))
+    };
+    print!("{}", render_phase_result(&scan_phase));
 
     // Print finding severity summary
     if let Some(summary) = render_finding_summary(&scan_result) {
@@ -428,6 +432,8 @@ mod tests {
             findings,
             modules_run: vec!["fixture".to_string()],
             modules_skipped: vec![],
+            module_outcomes: vec![],
+            execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
         }
     }
 

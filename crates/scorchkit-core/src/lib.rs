@@ -41,11 +41,14 @@ pub use error::{Result, ScorchError};
 pub use evidence::HttpEvidence;
 pub use finding::Finding;
 pub use observation::{
-    AgentAnalysisRecord, CorrelationKey, EvidencePayload, EvidenceRecord, FindingIdentity,
-    FindingRecordV2, HttpParameterIdentity, ObservationLocation, RedactionMetadata,
-    ScannerProvenance, SourceRegion, AGENT_ANALYSIS_SCHEMA_V1, EVIDENCE_SCHEMA_V2,
-    FINDING_IDENTITY_SCHEMA_V1, FINDING_SCHEMA_V2,
+    canonical_json_sha256, sha256_hex, AgentAnalysisRecord, CodeFlow, CodeFlowStep, CorrelationKey,
+    EvidencePayload, EvidenceRecord, FindingIdentity, FindingRecordV2, HttpParameterIdentity,
+    ObservationLocation, RedactionMetadata, ScannerProvenance, SourceRegion, ThreadFlow,
+    AGENT_ANALYSIS_SCHEMA_V1, EVIDENCE_SCHEMA_V2, FINDING_IDENTITY_SCHEMA_V1, FINDING_SCHEMA_V2,
 };
-pub use scan_result::{ScanResult, ScanSummary};
+pub use scan_result::{
+    ModuleOutcome, ModuleOutcomeReason, ModuleOutcomeStatus, ScanExecutionStatus, ScanResult,
+    ScanSummary,
+};
 pub use severity::Severity;
 pub use target::Target;

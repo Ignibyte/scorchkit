@@ -6,7 +6,7 @@ and storage surfaces, but each family receives a context sealed for its target a
 | Family | Trait | Context | Production registry |
 |---|---|---|---:|
 | DAST and reconnaissance | `ScanModule` | `ScanContext` | 91 |
-| SAST | `CodeModule` | `CodeContext` | 22 |
+| SAST | `CodeModule` | `CodeContext` | 24 |
 | Infrastructure | `InfraModule` | `InfraContext` | 4, plus optional CVE correlation |
 | Cloud | `CloudModule` | `CloudContext` | 5 |
 
@@ -71,9 +71,11 @@ exit policy, and process-tree cleanup. They are trusted configuration, not a san
 
 ## External-tool modules
 
-One-shot tool modules declare a `ToolInvocation` and call a context-owned executor. The registry-wide
-contract test checks the declared program, arguments, timeout, output cap, exit behavior, and parser
-result for all 45 DAST and 21 SAST wrappers.
+Tool modules declare owned `ToolInvocation` values and call a context-owned executor. The
+registry-wide contract test checks the declared program, arguments, timeout, output cap, exit
+behavior, and parser result for all 45 DAST and 23 SAST wrappers. Twenty-two SAST wrappers are
+one-shot. CodeQL creates and analyzes a scoped database through two ordered invocations for each
+applicable language.
 
 Interactsh is deliberately separate because it owns a long-lived callback session. It still uses the
 shared process-group owner, bounded reader, and cleanup behavior for stop, failure, timeout, overflow,

@@ -8,6 +8,7 @@ pub mod brakeman;
 pub mod cargo_audit;
 pub mod cargo_deny;
 pub mod checkov;
+pub mod codeql;
 pub mod dockle;
 pub mod eslint_security;
 pub mod gitleaks;
@@ -18,6 +19,8 @@ pub mod kics;
 pub mod kubescape;
 pub mod osv_scanner;
 pub mod phpstan;
+pub mod psalm;
+mod sarif;
 pub mod scoutsuite;
 pub mod semgrep;
 pub mod slither;
@@ -32,6 +35,7 @@ use crate::engine::code_module::CodeModule;
 pub fn register_modules() -> Vec<Box<dyn CodeModule>> {
     vec![
         Box::new(semgrep::SemgrepModule),
+        Box::new(codeql::CodeqlModule),
         Box::new(osv_scanner::OsvScannerModule),
         Box::new(gitleaks::GitleaksModule),
         Box::new(bandit::BanditModule),
@@ -41,6 +45,7 @@ pub fn register_modules() -> Vec<Box<dyn CodeModule>> {
         Box::new(hadolint::HadolintModule),
         Box::new(eslint_security::EslintSecurityModule),
         Box::new(phpstan::PhpstanModule),
+        Box::new(psalm::PsalmModule),
         Box::new(snyk_test::SnykTestModule),
         Box::new(snyk_code::SnykCodeModule),
         // WORK-113: SAST expansion batch

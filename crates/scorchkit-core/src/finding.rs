@@ -3,8 +3,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::evidence::HttpEvidence;
 use super::observation::{
-    redact_text, redact_url, AgentAnalysisRecord, CorrelationKey, EvidenceRecord, FindingRecordV2,
-    ObservationLocation, ScannerProvenance,
+    redact_text, redact_url, AgentAnalysisRecord, CodeFlow, CorrelationKey, EvidenceRecord,
+    FindingRecordV2, ObservationLocation, ScannerProvenance,
 };
 use super::severity::Severity;
 
@@ -59,7 +59,8 @@ impl Finding {
         affected_target: impl Into<String>,
     ) -> Self {
         let module_id = module_id.into();
-        let title = title.into();
+        let title = redact_text(&title.into());
+        let description = redact_text(&description.into());
         let affected_target = redact_url(&affected_target.into()).0;
         let timestamp = Utc::now();
         let appsec =
@@ -68,7 +69,7 @@ impl Finding {
             module_id,
             severity,
             title,
-            description: description.into(),
+            description,
             affected_target,
             evidence: None,
             remediation: None,
@@ -92,7 +93,7 @@ impl Finding {
 
     #[must_use]
     pub fn with_remediation(mut self, remediation: impl Into<String>) -> Self {
-        self.remediation = Some(remediation.into());
+        self.remediation = Some(redact_text(&remediation.into()));
         self
     }
 
@@ -124,6 +125,22 @@ impl Finding {
             .evidence
             .push(EvidenceRecord::http(evidence.clone(), self.appsec.provenance.clone()));
         self.http_evidence = Some(evidence);
+        self
+    }
+
+    /// Attach scanner-native structured evidence after recursive redaction.
+    #[must_use]
+    pub fn with_structured_evidence(mut self, evidence: serde_json::Value) -> Self {
+        self.appsec
+            .evidence
+            .push(EvidenceRecord::structured(evidence, self.appsec.provenance.clone()));
+        self
+    }
+
+    /// Attach scanner-reported source-to-sink flows without changing finding identity.
+    #[must_use]
+    pub fn with_code_flows(mut self, flows: Vec<CodeFlow>) -> Self {
+        self.appsec.code_flows = flows.into_iter().map(CodeFlow::normalized).collect();
         self
     }
 
@@ -171,6 +188,7 @@ impl Finding {
     #[must_use]
     pub fn canonical_appsec(&self) -> FindingRecordV2 {
         let mut record = self.appsec.clone();
+        let title = redact_text(&self.title);
         if record.provenance.scanner_id.is_empty() {
             record.provenance.scanner_id.clone_from(&self.module_id);
         }
@@ -180,6 +198,7 @@ impl Finding {
             }
         }
         record.location = record.location.redacted();
+        record.code_flows = record.code_flows.into_iter().map(CodeFlow::normalized).collect();
 
         record.evidence = record.evidence.into_iter().map(EvidenceRecord::normalized).collect();
         if let Some(evidence) = &self.evidence {
@@ -194,7 +213,7 @@ impl Finding {
             record.agent_analysis.into_iter().map(AgentAnalysisRecord::normalized).collect();
         record.agent_analysis.sort_by(|left, right| left.identity.cmp(&right.identity));
         record.agent_analysis.dedup_by(|left, right| left.identity == right.identity);
-        record.refresh_identity(&self.module_id, &self.title, self.cwe_id);
+        record.refresh_identity(&self.module_id, &title, self.cwe_id);
         record
     }
 
@@ -238,16 +257,19 @@ impl Serialize for Finding {
     where
         S: Serializer,
     {
+        let title = redact_text(&self.title);
+        let description = redact_text(&self.description);
         let evidence = self.evidence.as_deref().map(redact_text);
+        let remediation = self.remediation.as_deref().map(redact_text);
         let affected_target = redact_url(&self.affected_target).0;
         FindingSerialize {
             module_id: &self.module_id,
             severity: self.severity,
-            title: &self.title,
-            description: &self.description,
+            title: &title,
+            description: &description,
             affected_target: &affected_target,
             evidence: evidence.as_deref(),
-            remediation: self.remediation.as_deref(),
+            remediation: remediation.as_deref(),
             owasp_category: self.owasp_category.as_deref(),
             cwe_id: self.cwe_id,
             compliance: self.compliance.as_ref(),
@@ -286,13 +308,16 @@ impl<'de> Deserialize<'de> for Finding {
         D: Deserializer<'de>,
     {
         let wire = FindingDeserialize::deserialize(deserializer)?;
+        let title = redact_text(&wire.title);
+        let description = redact_text(&wire.description);
         let evidence = wire.evidence.map(|value| redact_text(&value));
+        let remediation = wire.remediation.map(|value| redact_text(&value));
         let affected_target = redact_url(&wire.affected_target).0;
         let http_evidence = wire.http_evidence.map(HttpEvidence::redacted);
         let appsec = wire.appsec.unwrap_or_else(|| {
             FindingRecordV2::from_legacy(
                 &wire.module_id,
-                &wire.title,
+                &title,
                 &affected_target,
                 wire.cwe_id,
                 wire.timestamp,
@@ -301,11 +326,11 @@ impl<'de> Deserialize<'de> for Finding {
         let mut finding = Self {
             module_id: wire.module_id,
             severity: wire.severity,
-            title: wire.title,
-            description: wire.description,
+            title,
+            description,
             affected_target,
             evidence,
-            remediation: wire.remediation,
+            remediation,
             owasp_category: wire.owasp_category,
             cwe_id: wire.cwe_id,
             compliance: wire.compliance,
@@ -322,6 +347,7 @@ impl<'de> Deserialize<'de> for Finding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observation::{CodeFlowStep, SourceRegion, ThreadFlow};
 
     /// Verify the full builder chain sets all fields correctly,
     /// including the new confidence score.
@@ -493,5 +519,62 @@ mod tests {
         let canonical = finding.canonical_appsec();
         assert_eq!(canonical.evidence.len(), 1);
         assert_eq!(canonical.agent_analysis.len(), 1);
+    }
+
+    #[test]
+    fn attaching_code_flows_does_not_change_finding_identity() {
+        let finding = Finding::new(
+            "codeql",
+            Severity::High,
+            "SQL injection",
+            "Tainted input reaches a query",
+            "src/db.rs:18",
+        )
+        .with_cwe(89);
+        let identity = finding.canonical_appsec().identity;
+        let with_flow = finding.with_code_flows(vec![CodeFlow {
+            message: Some("source to sink".to_string()),
+            thread_flows: vec![ThreadFlow {
+                message: None,
+                steps: vec![CodeFlowStep::new(ObservationLocation::Source {
+                    path: "src/input.rs".to_string(),
+                    region: Some(SourceRegion::new(4)),
+                })],
+            }],
+        }]);
+
+        assert_eq!(with_flow.canonical_appsec().identity, identity);
+        assert_eq!(with_flow.canonical_appsec().code_flows.len(), 1);
+    }
+
+    #[test]
+    fn finding_text_fields_are_redacted_at_every_public_boundary() {
+        let finding = Finding::new(
+            "semgrep",
+            Severity::High,
+            "api_key=title-secret",
+            "eval(password = \"description-secret\")",
+            "src/main.py:1",
+        )
+        .with_remediation("token = 'remediation-secret'");
+
+        assert!(!finding.title.contains("title-secret"));
+        assert!(!finding.description.contains("description-secret"));
+        assert!(!finding.remediation.as_deref().unwrap_or_default().contains("remediation-secret"));
+
+        let mut mutated = finding;
+        mutated.title = "api_key=mutated-title-secret".to_string();
+        mutated.description = "password = \"mutated-description-secret\"".to_string();
+        mutated.remediation = Some("token='mutated-remediation-secret'".to_string());
+        let encoded = serde_json::to_string(&mutated).expect("serialize finding");
+        assert!(!encoded.contains("mutated-title-secret"));
+        assert!(!encoded.contains("mutated-description-secret"));
+        assert!(!encoded.contains("mutated-remediation-secret"));
+
+        let restored: Finding = serde_json::from_str(&encoded).expect("deserialize finding");
+        assert!(!restored.title.contains("secret"));
+        assert!(!restored.description.contains("secret"));
+        assert!(!restored.remediation.as_deref().unwrap_or_default().contains("secret"));
+        assert_eq!(restored.appsec.identity, restored.canonical_appsec().identity);
     }
 }

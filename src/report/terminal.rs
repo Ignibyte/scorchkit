@@ -1,11 +1,12 @@
 use colored::Colorize;
 
+use crate::engine::observation::{redact_text, redact_url};
 use crate::engine::scan_result::ScanResult;
 
 /// Escape terminal control and bidirectional-format characters in untrusted text.
 ///
-/// This operates only at presentation sinks. Structured findings and evidence
-/// remain byte-for-byte unchanged for JSON, SARIF, storage, and later analysis.
+/// This operates only at presentation sinks. Secret redaction is a separate canonicalization step
+/// applied before untrusted finding and diagnostic text reaches any output boundary.
 #[must_use]
 pub fn escape_terminal_text(input: &str) -> String {
     let mut escaped = String::with_capacity(input.len());
@@ -40,6 +41,7 @@ pub fn print_report(result: &ScanResult) {
 
     // Summary
     let s = &result.summary;
+    print_execution_status(result);
     println!(
         "  {} findings across {} modules",
         s.total_findings.to_string().bold(),
@@ -97,13 +99,16 @@ pub fn print_report(result: &ScanResult) {
                 format!("#{}", i + 1).dimmed(),
                 finding.severity.colored_str(),
                 conf_pct.to_string().dimmed(),
-                escape_terminal_text(&finding.title).bold()
+                escape_terminal_text(&redact_text(&finding.title)).bold()
             );
-            println!("  {}", escape_terminal_text(&finding.description).dimmed());
-            println!("  Target: {}", escape_terminal_text(&finding.affected_target).cyan());
+            println!("  {}", escape_terminal_text(&redact_text(&finding.description)).dimmed());
+            println!(
+                "  Target: {}",
+                escape_terminal_text(&redact_url(&finding.affected_target).0).cyan()
+            );
 
             if let Some(evidence) = &finding.evidence {
-                println!("  Evidence: {}", escape_terminal_text(evidence).yellow());
+                println!("  Evidence: {}", escape_terminal_text(&redact_text(evidence)).yellow());
             }
 
             for analysis in &finding.canonical_appsec().agent_analysis {
@@ -118,7 +123,7 @@ pub fn print_report(result: &ScanResult) {
             }
 
             if let Some(remediation) = &finding.remediation {
-                println!("  Fix: {}", escape_terminal_text(remediation).green());
+                println!("  Fix: {}", escape_terminal_text(&redact_text(remediation)).green());
             }
 
             if let Some(owasp) = &finding.owasp_category {
@@ -139,6 +144,25 @@ pub fn print_report(result: &ScanResult) {
     println!("  Duration: {}", format_duration(result.started_at, result.completed_at).dimmed());
     println!("{}", "━".repeat(60).dimmed());
     println!();
+}
+
+fn print_execution_status(result: &ScanResult) {
+    if result.execution_successful() {
+        println!("  {} Complete", "Status:".bold());
+        return;
+    }
+    let failures = result
+        .module_outcomes
+        .iter()
+        .filter(|outcome| outcome.status == crate::engine::scan_result::ModuleOutcomeStatus::Failed)
+        .count();
+    println!(
+        "  {} {} ({} analyzer failure{})",
+        "Status:".bold(),
+        "DEGRADED".yellow().bold(),
+        failures,
+        if failures == 1 { "" } else { "s" }
+    );
 }
 
 fn format_duration(
@@ -176,5 +200,78 @@ mod tests {
             escape_terminal_text("SQL injection at /search?q=1"),
             "SQL injection at /search?q=1"
         );
+    }
+
+    #[test]
+    fn execution_status_contract_distinguishes_failed_modules() {
+        let mut result = crate::engine::scan_result::ScanResult::new(
+            "terminal-status".to_string(),
+            crate::engine::target::Target::parse("https://example.com").expect("target"),
+            chrono::Utc::now(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        assert_eq!(
+            result.execution_status,
+            crate::engine::scan_result::ScanExecutionStatus::Complete
+        );
+        result.module_outcomes.push(crate::engine::scan_result::ModuleOutcome::failed(
+            "codeql",
+            crate::engine::scan_result::ModuleOutcomeReason::ExecutionFailed {
+                message: "fixture".to_string(),
+            },
+        ));
+        result.refresh_execution_status();
+        assert_eq!(
+            result.execution_status,
+            crate::engine::scan_result::ScanExecutionStatus::Degraded
+        );
+    }
+
+    fn one_failure_result() -> ScanResult {
+        let mut result = crate::engine::scan_result::ScanResult::new(
+            "terminal-status-output".to_string(),
+            crate::engine::target::Target::parse("https://example.com").expect("target"),
+            chrono::Utc::now(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        result.module_outcomes.push(crate::engine::scan_result::ModuleOutcome::failed(
+            "codeql",
+            crate::engine::scan_result::ModuleOutcomeReason::ExecutionFailed {
+                message: "fixture".to_string(),
+            },
+        ));
+        result.refresh_execution_status();
+        result
+    }
+
+    #[test]
+    fn execution_status_capture_helper() {
+        if std::env::var_os("SCORCHKIT_TERMINAL_STATUS_CAPTURE").is_none() {
+            return;
+        }
+        print_execution_status(&one_failure_result());
+    }
+
+    #[test]
+    fn one_execution_failure_is_rendered_in_the_singular() {
+        let output =
+            std::process::Command::new(std::env::current_exe().expect("current test binary"))
+                .args([
+                    "--exact",
+                    "report::terminal::tests::execution_status_capture_helper",
+                    "--nocapture",
+                ])
+                .env("SCORCHKIT_TERMINAL_STATUS_CAPTURE", "1")
+                .env("NO_COLOR", "1")
+                .output()
+                .expect("run terminal capture helper");
+        assert!(output.status.success(), "capture helper failed: {output:?}");
+        let stdout = String::from_utf8(output.stdout).expect("UTF-8 test output");
+        assert!(stdout.contains("(1 analyzer failure)"), "unexpected output: {stdout:?}");
+        assert!(!stdout.contains("(1 analyzer failures)"), "unexpected output: {stdout:?}");
     }
 }

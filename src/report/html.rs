@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::config::ReportConfig;
 use crate::engine::error::Result;
+use crate::engine::observation::{redact_text, redact_url};
 use crate::engine::scan_result::ScanResult;
 
 /// Save a scan result as a self-contained HTML file.
@@ -28,8 +29,11 @@ fn render_findings_html(result: &ScanResult) -> String {
     let mut findings_html = String::new();
     for (i, f) in result.findings.iter().enumerate() {
         let sev_class = f.severity.to_string();
-        let evidence = f.evidence.as_deref().unwrap_or("");
-        let remediation = f.remediation.as_deref().unwrap_or("");
+        let evidence = f.evidence.as_deref().map(redact_text).unwrap_or_default();
+        let remediation = f.remediation.as_deref().map(redact_text).unwrap_or_default();
+        let title = redact_text(&f.title);
+        let description = redact_text(&f.description);
+        let affected_target = redact_url(&f.affected_target).0;
         let owasp = f.owasp_category.as_deref().unwrap_or("");
         let cwe = f.cwe_id.map_or(String::new(), |c| format!("CWE-{c}"));
         let agent_analysis_html = f
@@ -76,15 +80,15 @@ fn render_findings_html(result: &ScanResult) -> String {
             num = i + 1,
             severity = f.severity.to_string().to_uppercase(),
             confidence = confidence_pct,
-            title = html_escape(&f.title),
-            desc = html_escape(&f.description),
-            target = html_escape(&f.affected_target),
+            title = html_escape(&title),
+            desc = html_escape(&description),
+            target = html_escape(&affected_target),
             evidence_html = if evidence.is_empty() {
                 String::new()
             } else {
                 format!(
                     "<div><strong>Evidence:</strong> <code>{}</code></div>",
-                    html_escape(evidence)
+                    html_escape(&evidence)
                 )
             },
             agent_analysis_html = agent_analysis_html,
@@ -93,7 +97,7 @@ fn render_findings_html(result: &ScanResult) -> String {
             } else {
                 format!(
                     "<div class=\"remediation\"><strong>Fix:</strong> {}</div>",
-                    html_escape(remediation)
+                    html_escape(&remediation)
                 )
             },
         );
@@ -104,6 +108,7 @@ fn render_findings_html(result: &ScanResult) -> String {
 fn render_html(result: &ScanResult) -> String {
     let s = &result.summary;
     let findings_html = render_findings_html(result);
+    let execution_status = if result.execution_successful() { "complete" } else { "degraded" };
 
     format!(
         r#"<!DOCTYPE html>
@@ -158,7 +163,7 @@ fn render_html(result: &ScanResult) -> String {
 <div class="container">
   <h1>ScorchKit Security Report</h1>
   <div class="meta">
-    Target: {target} | Scan ID: {scan_id} | Date: {date}
+    Target: {target} | Scan ID: {scan_id} | Date: {date} | Execution: {execution_status}
   </div>
 
   <div class="summary">
@@ -178,9 +183,10 @@ fn render_html(result: &ScanResult) -> String {
 </div>
 </body>
 </html>"#,
-        target = html_escape(&result.target.raw),
+        target = html_escape(&redact_url(&result.target.raw).0),
         scan_id = &result.scan_id,
         date = result.started_at.format("%Y-%m-%d %H:%M:%S UTC"),
+        execution_status = execution_status,
         critical = s.critical,
         high = s.high,
         medium = s.medium,

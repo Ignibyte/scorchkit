@@ -71,6 +71,12 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-public-evidence-revalidation-001` | Reapply redaction and normalization whenever public compatibility evidence crosses serialization, finding, report, or persistence boundaries. | `AAR-010-appsec-evidence-v2` |
 | `PR-scorchkit-finding-observation-transaction-001` | Serialize equivalent finding identities and append distinct evidence/analysis inside one transaction guarded by the identity lock. | `AAR-010-appsec-evidence-v2` |
 | `PR-scorchkit-mutation-branch-directness-001` | Kill a repaired mutation with an assertion on the immediate branch contract before relying on downstream round trips. | `AAR-010-appsec-evidence-v2` |
+| `PR-scorchkit-untrusted-finding-channel-redaction-001` | Normalize and redact every untrusted description, evidence value, flow message, and tool diagnostic at construction and each durable/public projection. | `AAR-011-deep-sast-adapters` |
+| `PR-scorchkit-analyzer-applicability-artifact-detection-001` | Derive applicability from bounded source/artifact discovery plus exact adapter capabilities; missing root manifests and empty declarations are not proof of coverage. | `AAR-011-deep-sast-adapters` |
+| `PR-scorchkit-scan-coverage-projection-parity-001` | Project canonical module outcomes and degraded status through CLI, MCP, JSON, reports, and SARIF. | `AAR-011-deep-sast-adapters` |
+| `PR-scorchkit-passive-analyzer-config-isolation-001` | Isolate passive analyzers with ScorchKit-owned configuration, state, environment, and outputs and disable target plugin/config discovery. | `AAR-011-deep-sast-adapters` |
+| `PR-scorchkit-verified-artifact-single-read-001` | Make file-consuming scanners use an owned copy of the same bounded bytes whose identity and schema were verified. | `AAR-011-deep-sast-adapters` |
+| `PR-scorchkit-module-mutation-evidence-001` | Preserve module-level cargo-mutants records and use `<module>` only for nonempty scope accounting. | `AAR-011-deep-sast-adapters` |
 
 ## Register
 
@@ -124,3 +130,11 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-correlation-delimiter-collision-001` | identity-integrity bug | `AAR-010-appsec-evidence-v2` |
 | `BF-scorchkit-public-evidence-redaction-bypass-001` | secret-handling bug | `AAR-010-appsec-evidence-v2` |
 | `BF-scorchkit-mutation-incidental-normalization-001` | test-gap bug | `AAR-010-appsec-evidence-v2` |
+| `BF-scorchkit-finding-channel-redaction-gaps-001` | secret-handling bug | `AAR-011-deep-sast-adapters` |
+| `BF-scorchkit-manifest-only-analyzer-applicability-001` | coverage-integrity bug | `AAR-011-deep-sast-adapters` |
+| `BF-scorchkit-unsupported-language-clean-coverage-001` | coverage-integrity bug | `AAR-011-deep-sast-adapters` |
+| `BF-scorchkit-failed-scan-success-projection-001` | evidence-integrity bug | `AAR-011-deep-sast-adapters` |
+| `BF-scorchkit-passive-analyzer-target-config-001` | process-isolation bug | `AAR-011-deep-sast-adapters` |
+| `BF-scorchkit-parser-empty-failure-conflation-001` | evidence-integrity bug | `AAR-011-deep-sast-adapters` |
+| `BF-scorchkit-pinned-rule-reopen-race-001` | provenance-integrity bug | `AAR-011-deep-sast-adapters` |
+| `BF-scorchkit-module-mutation-function-null-001` | verification bug | `AAR-011-deep-sast-adapters` |
