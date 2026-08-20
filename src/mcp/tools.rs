@@ -17,7 +17,8 @@ use super::types::{
     AnalyzeFindingsParams, AutoScanParams, CorrelateFindingsParams, FindingListParams,
     FindingRefParams, FindingUpdateStatusParams, PlanScanParams, ProjectCreateParams,
     ProjectDeleteParams, ProjectRefParams, ProjectScanParams, ProjectStatusParams,
-    ScanJobRefParams, ScanParams, ScanProgressParams, ScheduleScanParams, TargetAddParams,
+    ScanJobRefParams, ScanParams, ScanProgressParams, ScheduleScanParams,
+    SupplyChainCacheRefreshParams, SupplyChainScanParams, TargetAddParams,
     TargetIntelligenceParams, TargetRemoveParams,
 };
 use crate::engine::error::ScorchError;
@@ -330,7 +331,7 @@ impl ScorchKitServer {
             result.modules_skipped.iter().map(|(id, _)| id.clone()).collect();
         let summary_json = serde_json::to_value(&result.summary).map_err(|e| e.to_string())?;
 
-        let scan = scans::save_scan(
+        let scan = scans::save_scan_with_evidence(
             self.require_pool()?,
             project.id,
             result.target.url.as_str(),
@@ -340,6 +341,7 @@ impl ScorchKitServer {
             &modules_run,
             &modules_skipped,
             &summary_json,
+            &scans::execution_evidence(&result),
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -773,7 +775,7 @@ impl ScorchKitServer {
                 .collect();
             let summary_json = serde_json::to_value(&result.summary).map_err(|e| e.to_string())?;
 
-            let scan_record = scans::save_scan(
+            let scan_record = scans::save_scan_with_evidence(
                 self.require_pool()?,
                 project.id,
                 result.target.url.as_str(),
@@ -783,6 +785,7 @@ impl ScorchKitServer {
                 &modules_run,
                 &modules_skipped,
                 &summary_json,
+                &scans::execution_evidence(&result),
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -1010,9 +1013,9 @@ impl ScorchKitServer {
             return Err(format!("path '{}' does not exist", params.path));
         }
 
-        let ctx = Engine::new(Arc::clone(&self.config))
-            .code_context(&path, params.language.as_deref())
-            .map_err(|e| e.to_string())?;
+        let engine = Engine::new(Arc::clone(&self.config));
+        let ctx =
+            engine.code_context(&path, params.language.as_deref()).map_err(|e| e.to_string())?;
 
         let mut orchestrator = crate::runner::code_orchestrator::CodeOrchestrator::new(ctx);
         orchestrator.register_default_modules();
@@ -1031,10 +1034,127 @@ impl ScorchKitServer {
             orchestrator.exclude_by_ids(&ids);
         }
 
-        let result = orchestrator.run().await.map_err(|e| e.to_string())?;
+        let mut result = orchestrator.run().await.map_err(|e| e.to_string())?;
+        let supply_chain = engine
+            .supply_chain_scan_with_profile(
+                &path,
+                scorchkit_core::SupplyChainTargetKind::SourceDirectory,
+                &params.profile,
+                None,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        result.merge(supply_chain);
 
         serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
     }
+
+    /// Run the explicit ordered offline supply-chain pipeline against one local target.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed message when the target kind, policy, scan, or result serialization fails.
+    pub async fn do_supply_chain_scan(
+        &self,
+        params: SupplyChainScanParams,
+    ) -> Result<String, String> {
+        let kind = parse_supply_chain_target_kind(&params.kind)?;
+        let result = Engine::new(Arc::clone(&self.config))
+            .supply_chain_scan_with_profile(
+                std::path::Path::new(&params.path),
+                kind,
+                &params.profile,
+                params.revision,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&result).map_err(|error| error.to_string())
+    }
+
+    /// Return typed status for every immutable local supply-chain provider snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed message when cache authorization, inspection, or serialization fails.
+    pub fn do_supply_chain_cache_status(&self) -> Result<String, String> {
+        let snapshots = Engine::new(Arc::clone(&self.config))
+            .supply_chain_cache_status()
+            .map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&snapshots).map_err(|error| error.to_string())
+    }
+
+    /// Perform one explicitly described provider refresh outside scan-time execution.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed message when request validation, authorization, refresh, or serialization
+    /// fails.
+    pub async fn do_supply_chain_cache_refresh(
+        &self,
+        params: SupplyChainCacheRefreshParams,
+    ) -> Result<String, String> {
+        let request = parse_provider_refresh_request(params)?;
+        let snapshot = Engine::new(Arc::clone(&self.config))
+            .supply_chain_cache_refresh(&request)
+            .await
+            .map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&snapshot).map_err(|error| error.to_string())
+    }
+}
+
+fn parse_supply_chain_target_kind(
+    kind: &str,
+) -> Result<scorchkit_core::SupplyChainTargetKind, String> {
+    match kind {
+        "source_directory" => Ok(scorchkit_core::SupplyChainTargetKind::SourceDirectory),
+        "directory_artifact" => Ok(scorchkit_core::SupplyChainTargetKind::DirectoryArtifact),
+        "file_artifact" => Ok(scorchkit_core::SupplyChainTargetKind::FileArtifact),
+        "oci_archive" => Ok(scorchkit_core::SupplyChainTargetKind::OciArchive),
+        "oci_layout" => Ok(scorchkit_core::SupplyChainTargetKind::OciLayout),
+        "cyclonedx_sbom" => Ok(scorchkit_core::SupplyChainTargetKind::CycloneDxSbom),
+        _ => Err(format!(
+            "unknown supply-chain target kind '{kind}'; expected source_directory, directory_artifact, file_artifact, oci_archive, oci_layout, or cyclonedx_sbom"
+        )),
+    }
+}
+
+fn parse_provider_refresh_request(
+    params: SupplyChainCacheRefreshParams,
+) -> Result<crate::supply_chain::ProviderRefreshRequest, String> {
+    let provider = match params.provider.as_str() {
+        "osv" => crate::supply_chain::SupplyChainProvider::Osv,
+        "grype" => crate::supply_chain::SupplyChainProvider::Grype,
+        "trivy" => crate::supply_chain::SupplyChainProvider::Trivy,
+        provider => return Err(format!("unknown supply-chain provider '{provider}'")),
+    };
+    let downloads = params
+        .downloads
+        .into_iter()
+        .map(|download| {
+            Ok(crate::supply_chain::ProviderDownload {
+                url: url::Url::parse(&download.url)
+                    .map_err(|error| format!("invalid provider URL '{}': {error}", download.url))?,
+                relative_path: std::path::PathBuf::from(download.relative_path),
+                sha256: download.sha256,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let upstream_built_at = params
+        .upstream_built_at
+        .map(|timestamp| {
+            chrono::DateTime::parse_from_rfc3339(&timestamp)
+                .map(|value| value.with_timezone(&chrono::Utc))
+                .map_err(|error| format!("invalid upstream build time '{timestamp}': {error}"))
+        })
+        .transpose()?;
+    Ok(crate::supply_chain::ProviderRefreshRequest {
+        provider,
+        snapshot_id: params.snapshot_id,
+        schema_version: params.schema_version,
+        downloads,
+        upstream_built_at,
+        maximum_age_seconds: params.maximum_age_seconds,
+    })
 }
 
 /// `#[tool_router]` — thin wrappers that delegate to `do_*` public methods.
@@ -1410,6 +1530,35 @@ impl ScorchKitServer {
     ) -> McpToolCallResult {
         Self::mcp_tool_result(context, self.do_scan_code(params.0).await)
     }
+
+    #[tool(
+        description = "Run the ordered offline application supply-chain pipeline against one explicit local source directory, artifact, OCI layout/archive, or CycloneDX 1.6 SBOM. The target kind is never inferred as a registry or daemon target. Returns typed complete, incomplete, or degraded coverage with exact SBOM and provider provenance."
+    )]
+    async fn supply_chain_scan(
+        &self,
+        context: McpCallContext,
+        params: Parameters<SupplyChainScanParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_supply_chain_scan(params.0).await)
+    }
+
+    #[tool(
+        description = "Show typed missing, stale, invalid, or ready status for every immutable local application supply-chain provider snapshot."
+    )]
+    async fn supply_chain_cache_status(&self, context: McpCallContext) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_supply_chain_cache_status())
+    }
+
+    #[tool(
+        description = "Refresh one explicitly described application supply-chain provider snapshot outside scan-time execution. Every URL, relative path, digest, version, and maximum age must be supplied; policy, size, integrity, validation, and atomic-promotion checks apply."
+    )]
+    async fn supply_chain_cache_refresh(
+        &self,
+        context: McpCallContext,
+        params: Parameters<SupplyChainCacheRefreshParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_supply_chain_cache_refresh(params.0).await)
+    }
 }
 
 async fn require_registered_project_target(
@@ -1518,6 +1667,37 @@ mod tests {
                 "evidence": "safe evidence",
             })
         );
+    }
+
+    #[test]
+    fn supply_chain_target_kind_parser_covers_every_public_kind() {
+        for (input, expected) in [
+            ("source_directory", scorchkit_core::SupplyChainTargetKind::SourceDirectory),
+            ("directory_artifact", scorchkit_core::SupplyChainTargetKind::DirectoryArtifact),
+            ("file_artifact", scorchkit_core::SupplyChainTargetKind::FileArtifact),
+            ("oci_archive", scorchkit_core::SupplyChainTargetKind::OciArchive),
+            ("oci_layout", scorchkit_core::SupplyChainTargetKind::OciLayout),
+            ("cyclonedx_sbom", scorchkit_core::SupplyChainTargetKind::CycloneDxSbom),
+        ] {
+            assert_eq!(parse_supply_chain_target_kind(input), Ok(expected));
+        }
+        assert!(parse_supply_chain_target_kind("registry_reference").is_err());
+    }
+
+    #[tokio::test]
+    async fn supply_chain_cache_refresh_rejects_an_unknown_provider() {
+        let server = ScorchKitServer::new_stateless(Arc::new(AppConfig::default()));
+        let result = server
+            .do_supply_chain_cache_refresh(SupplyChainCacheRefreshParams {
+                provider: "unknown".to_string(),
+                snapshot_id: "fixture".to_string(),
+                schema_version: "v1".to_string(),
+                downloads: Vec::new(),
+                upstream_built_at: None,
+                maximum_age_seconds: 60,
+            })
+            .await;
+        assert_eq!(result, Err("unknown supply-chain provider 'unknown'".to_string()));
     }
 
     #[test]

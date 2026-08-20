@@ -87,9 +87,64 @@ fn test_server_without_database() -> ScorchKitServer {
     ScorchKitServer::new_stateless(Arc::new(config))
 }
 
+fn supply_chain_test_server(
+    cache_root: &std::path::Path,
+) -> scorchkit::engine::error::Result<ScorchKitServer> {
+    let code_root = std::env::current_dir()?;
+    let policy = EngagementPolicy::default()
+        .allow_scope(ScopeRule::path_prefix(&code_root)?)
+        .allow_scope(ScopeRule::path_prefix(cache_root)?)
+        .allow_capability(Capability::CodeScan)
+        .allow_capability(Capability::LocalState)
+        .allow_effect(EffectClass::Passive);
+    let config = AppConfig {
+        engagement: Some(Engagement::new("mcp-supply-chain-tests", policy)),
+        supply_chain: scorchkit::config::SupplyChainConfig {
+            cache_root: cache_root.to_path_buf(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    Ok(ScorchKitServer::new_stateless(Arc::new(config)))
+}
+
 /// Build a server with no engagement to prove effectful tools fail closed.
 fn unconfigured_test_server() -> ScorchKitServer {
     ScorchKitServer::new_stateless(Arc::new(AppConfig::default()))
+}
+
+#[tokio::test]
+async fn supply_chain_mcp_status_and_target_kind_contracts_are_typed(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let cache = tempfile::tempdir().expect("private cache root");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(cache.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("owner-only cache root");
+    }
+    let server = supply_chain_test_server(cache.path())?;
+
+    let status_json = server.do_supply_chain_cache_status().expect("cache status");
+    let statuses: Vec<scorchkit::ProviderSnapshot> =
+        serde_json::from_str(&status_json).expect("decode cache status");
+    assert_eq!(statuses.len(), 3);
+    assert!(statuses
+        .iter()
+        .all(|snapshot| snapshot.state == scorchkit::ProviderSnapshotState::Missing));
+
+    let error = server
+        .do_supply_chain_scan(SupplyChainScanParams {
+            path: cache.path().display().to_string(),
+            kind: "registry_image".to_string(),
+            profile: "standard".to_string(),
+            revision: None,
+        })
+        .await
+        .expect_err("remote-like target kind must be rejected");
+    assert!(error.contains("unknown supply-chain target kind"));
+    Ok(())
 }
 
 /// Start a loopback server that accepts every bounded scan request.
@@ -200,7 +255,7 @@ async fn test_tool_list_modules() {
     let server = test_server_without_database();
     let result = server.do_list_modules();
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
-    assert_eq!(parsed.len(), 69);
+    assert_eq!(parsed.len(), 68);
     assert!(parsed
         .iter()
         .all(|module| module["adapter"]["schemaVersion"] == scorchkit_core::ADAPTER_CONTRACT_V1));
@@ -213,7 +268,7 @@ async fn test_tool_list_code_modules_uses_application_catalog() {
     let server = test_server_without_database();
     let result = server.do_list_code_modules();
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
-    assert_eq!(parsed.len(), 23);
+    assert_eq!(parsed.len(), 21);
     assert!(parsed
         .iter()
         .all(|module| module["adapter"]["schemaVersion"] == scorchkit_core::ADAPTER_CONTRACT_V1));
@@ -344,7 +399,7 @@ async fn stateless_job_runs_through_mcp_transport_without_database() {
     });
     let client = ().serve(client_transport).await.expect("initialize MCP client");
     let tools = client.list_all_tools().await.expect("list MCP tools");
-    assert_eq!(tools.len(), 30, "every routed MCP tool has a canonical contract");
+    assert_eq!(tools.len(), 33, "every routed MCP tool has a canonical contract");
     let expected_output_schema: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/mcp/tool-output-schema-v1.json"))
             .expect("decode output schema fixture");

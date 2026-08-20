@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn tool_inventory_is_sorted_unique_and_classified() {
-        assert_eq!(TOOL_CONTRACTS.len(), 30);
+        assert_eq!(TOOL_CONTRACTS.len(), 33);
         assert_eq!(tool_title("scan_job_start"), "Scan Job Start");
         assert!(TOOL_CONTRACTS.windows(2).all(|pair| pair[0].name < pair[1].name));
         assert!(TOOL_CONTRACTS.iter().all(|entry| {
@@ -217,7 +217,7 @@ mod tests {
         router.remove_route("scan");
         assert_eq!(
             decorate_tool_router(&mut router).expect_err("missing route must fail"),
-            "MCP tool router has 29 routes but contract inventory has 30"
+            "MCP tool router has 32 routes but contract inventory has 33"
         );
     }
 

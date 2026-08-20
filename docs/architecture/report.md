@@ -72,7 +72,9 @@ pub fn print_report(result: &ScanResult)
 2. **Findings** - each finding with severity badge, title, description, target, evidence, remediation, OWASP/CWE
 3. **Footer** - scan ID and duration
 
-Skipped modules are listed with their skip reason (e.g., "external tool 'nmap' not found").
+Skipped modules are listed with their skip reason (e.g., "external tool 'nmap' not found"). The
+header distinguishes `complete`, `incomplete`, and `degraded` execution. When supply-chain evidence
+is present, terminal output lists its source/artifact coverage and every typed gap.
 
 ### Duration Formatting
 
@@ -142,6 +144,8 @@ Optional compatibility fields (`evidence`, `remediation`, `owasp_category`, `cwe
 when absent. Every finding also carries its canonical `scorchkit.finding/v2` companion with typed
 location, scanner provenance, stable identity, correlation keys, redacted evidence records, and
 separately labeled agent analysis. Legacy report JSON without that companion is upgraded when read.
+The optional `supply_chain` object preserves the exact target identity, SBOM digest and producer,
+provider snapshots, source and artifact observations, correlations, and typed coverage gaps.
 
 ## SARIF report (`sarif.rs`)
 
@@ -150,10 +154,16 @@ SARIF uses typed source/runtime/package/artifact locations and writes the stable
 and labeled agent analysis are placed in namespaced result properties. Evidence content is never a
 fingerprint.
 
+SARIF also preserves the exact scan execution state and module outcomes. Its
+`executionSuccessful` property is false for both incomplete and degraded coverage; an empty results
+array therefore cannot imply that every requested analyzer completed. The canonical supply-chain
+assessment is included in namespaced run properties.
+
 ## HTML and PDF reports
 
 The human-readable reports generate:
 - Styled finding cards with severity color coding
 - Summary chart (findings by severity)
 - Redacted evidence and separately labeled agent-analysis sections
+- Exact complete/incomplete/degraded status plus supply-chain coverage and gaps
 - Print-friendly CSS

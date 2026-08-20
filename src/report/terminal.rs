@@ -147,22 +147,59 @@ pub fn print_report(result: &ScanResult) {
 }
 
 fn print_execution_status(result: &ScanResult) {
-    if result.execution_successful() {
-        println!("  {} Complete", "Status:".bold());
-        return;
-    }
+    use crate::engine::scan_result::ScanExecutionStatus;
+
     let failures = result
         .module_outcomes
         .iter()
         .filter(|outcome| outcome.status == crate::engine::scan_result::ModuleOutcomeStatus::Failed)
         .count();
-    println!(
-        "  {} {} ({} analyzer failure{})",
-        "Status:".bold(),
-        "DEGRADED".yellow().bold(),
-        failures,
-        if failures == 1 { "" } else { "s" }
-    );
+    match result.execution_status {
+        ScanExecutionStatus::Complete => println!("  {} Complete", "Status:".bold()),
+        ScanExecutionStatus::Incomplete => {
+            let skipped = result
+                .module_outcomes
+                .iter()
+                .filter(|outcome| {
+                    outcome.status == crate::engine::scan_result::ModuleOutcomeStatus::Skipped
+                })
+                .count();
+            println!(
+                "  {} {} ({} coverage gap{})",
+                "Status:".bold(),
+                "INCOMPLETE".yellow().bold(),
+                skipped,
+                if skipped == 1 { "" } else { "s" }
+            );
+        }
+        ScanExecutionStatus::Degraded => println!(
+            "  {} {} ({} analyzer failure{})",
+            "Status:".bold(),
+            "DEGRADED".yellow().bold(),
+            failures,
+            if failures == 1 { "" } else { "s" }
+        ),
+    }
+    if let Some(assessment) = &result.supply_chain {
+        println!(
+            "  {} {} ({} gap{})",
+            "Supply chain:".bold(),
+            assessment.coverage_status.as_str(),
+            assessment.gaps.len(),
+            if assessment.gaps.len() == 1 { "" } else { "s" }
+        );
+        for gap in &assessment.gaps {
+            println!(
+                "    - {}/{}{}: {}",
+                gap.phase.as_str(),
+                gap.kind.as_str(),
+                gap.component
+                    .as_deref()
+                    .map_or_else(String::new, |component| format!(" [{component}]")),
+                escape_terminal_text(&gap.detail)
+            );
+        }
+    }
 }
 
 fn format_duration(

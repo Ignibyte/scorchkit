@@ -36,7 +36,7 @@ tools/
   subfinder.rs     Passive subdomain discovery
   testssl.rs       Comprehensive TLS/SSL testing
   theharvester.rs  Email and subdomain harvesting
-  trivy.rs         Container and dependency vulnerability scanning
+  trivy.rs         Legacy compatibility module; ordered application scans use the supply-chain service
   trufflehog.rs    Secret scanning for credentials
   wafw00f.rs       WAF detection
   wpscan.rs        WordPress vulnerability scanning
@@ -124,6 +124,12 @@ Semgrep materializes its embedded rule pack as an owned temporary file and recor
 
 `ScanResult` records typed module outcomes in addition to the legacy run/skipped lists. Missing
 tools, unsupported languages, valid runs, and execution/parser failures therefore remain distinct.
+
+Application supply-chain execution is deliberately not another unordered code-module batch. The
+ordered service runs OSV Scanner against source lockfiles, creates or imports one exact CycloneDX
+1.6 SBOM, then passes those verified bytes to Grype and Trivy. The old independent OSV, Grype, and
+web-target Trivy registrations are quarantined from production catalogs. See
+[Application supply-chain evidence](application-supply-chain.md).
 
 ## Tool Path Override
 
@@ -218,5 +224,5 @@ When implementing a wrapper, check `ctx.config.tools.<tool>` for a custom path b
 | ID | Name | Binary | Description |
 |----|------|--------|-------------|
 | `prowler` | Prowler Cloud Scanner | `prowler` | Cloud infrastructure security assessment via Prowler (AWS, Azure, GCP) |
-| `trivy` | Trivy Vulnerability Scanner | `trivy` | Container image and dependency vulnerability scanning via Trivy |
+| `trivy` | Trivy Vulnerability Scanner | `trivy` | Legacy compatibility wrapper; application artifact scanning uses the ordered offline supply-chain service |
 | `enum4linux` | enum4linux SMB Enumerator | `enum4linux` | SMB share, user, group, and password policy enumeration via enum4linux |

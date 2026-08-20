@@ -104,7 +104,9 @@ Run `scorchkit doctor` (or `scorchkit doctor --deep` for version checks) to see 
 | Psalm | `psalm` | — | `composer require --dev vimeo/psalm`; expose the project binary on `PATH` |
 | Slither | `slither` | — | `pipx install slither-analyzer` |
 | Brakeman | `brakeman` | — | `gem install brakeman` |
-| OSV-Scanner | `osv-scanner` | — | `go install github.com/google/osv-scanner/cmd/osv-scanner@latest` |
+| OSV Scanner | `osv-scanner` | 2.3.8 exact | Install the `v2.3.8` native release binary and verify its published SHA-256 |
+| Syft | `syft` | 1.50.0 exact | Install the `v1.50.0` native release archive and verify its published SHA-256 |
+| Grype | `grype` | 0.116.1 exact | Install the `v0.116.1` native release archive and verify its published SHA-256 |
 | cargo-audit | `cargo-audit` | — | `cargo install cargo-audit` |
 | cargo-deny | `cargo-deny` | — | `cargo install cargo-deny` |
 | Gitleaks | `gitleaks` | 8.0.0 | `go install github.com/gitleaks/gitleaks/v8@latest` |
@@ -121,7 +123,7 @@ Run `scorchkit doctor` (or `scorchkit doctor --deep` for version checks) to see 
 
 | Tool | Binary | Min version | Install |
 |------|--------|-------------|---------|
-| Trivy | `trivy` | 0.50.0 | see [trivy install guide](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) |
+| Trivy | `trivy` | 0.74.0 exact | Install the native `v0.74.0` release archive; Docker/socket wrappers are not accepted |
 | dockle | `dockle` | — | `brew install goodwithtech/r/dockle` or [releases](https://github.com/goodwithtech/dockle/releases) |
 | kubescape | `kubescape` | — | `curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh \| /bin/bash` |
 | Prowler | `prowler` | — | `pip install prowler` |
@@ -157,7 +159,6 @@ for pkg in \
   github.com/lc/gau/v2/cmd/gau@latest \
   github.com/trufflesecurity/trufflehog/v3@latest \
   github.com/gitleaks/gitleaks/v8@latest \
-  github.com/google/osv-scanner/cmd/osv-scanner@latest \
   github.com/ropnop/kerbrute@latest \
   github.com/praetorian-inc/vespasian/cmd/vespasian@latest; do
     go install "$pkg"
@@ -178,12 +179,25 @@ composer global require phpstan/phpstan
 # Rust-based
 cargo install feroxbuster cargo-audit cargo-deny
 
-# ZAP + Trivy (via package manager where available)
+# ZAP (supply-chain binaries use the exact native releases below)
 sudo snap install zaproxy --classic
 # or: sudo apt install zaproxy
 ```
 
 After install, run `scorchkit doctor --deep` to verify versions.
+
+The ordered application supply-chain service pins the Linux amd64 artifacts below. Verify the
+download before installation and retain the release checksum document with provisioning evidence.
+
+| Artifact | SHA-256 |
+|---|---|
+| `syft_1.50.0_linux_amd64.tar.gz` | `bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788` |
+| `osv-scanner_linux_amd64` 2.3.8 | `bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc` |
+| `grype_0.116.1_linux_amd64.tar.gz` | `0122df7b655981abe547ad3d2190d65551dac6a2bfc80b4dc2a989b5d0587458` |
+| `trivy_0.74.0_Linux-64bit.tar.gz` | `2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a` |
+
+See [Application supply-chain evidence](architecture/application-supply-chain.md) for the offline
+database lifecycle and explicit local-target boundary.
 
 CodeQL is intentionally absent from the bulk installer. Install the complete CLI bundle manually,
 review its license, and keep its bundled extractors and query packs together. ScorchKit never

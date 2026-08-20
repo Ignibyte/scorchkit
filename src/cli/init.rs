@@ -115,7 +115,6 @@ const TOOL_BINARIES: &[&str] = &[
     "hydra",
     "gobuster",
     "katana",
-    "trivy",
     "trufflehog",
     "dnsx",
 ];
@@ -663,7 +662,7 @@ mod tests {
             suggested_modules: vec![],
             notes: vec![],
             available_tool_count: 10,
-            total_tool_count: 20,
+            total_tool_count: 19,
         };
         let config = generate_config(
             "https://example.com/app",
@@ -715,14 +714,14 @@ mod tests {
             suggested_modules: vec!["wpscan".to_string(), "nuclei".to_string()],
             notes: vec!["first note".to_string(), "second note".to_string()],
             available_tool_count: 7,
-            total_tool_count: 20,
+            total_tool_count: 19,
         };
         let rendered = render_recommendation(&full);
         for expected in [
             "Recommendation:",
             "Profile:",
             "standard",
-            "7/20",
+            "7/19",
             "first note",
             "second note",
             "Suggested:",
@@ -736,11 +735,11 @@ mod tests {
             suggested_modules: Vec::new(),
             notes: Vec::new(),
             available_tool_count: 0,
-            total_tool_count: 20,
+            total_tool_count: 19,
         };
         let rendered = render_recommendation(&empty);
         assert!(rendered.contains("quick"));
-        assert!(rendered.contains("0/20"));
+        assert!(rendered.contains("0/19"));
         assert!(!rendered.contains("Suggested:"));
         assert!(!rendered.contains(">>"));
     }
@@ -753,7 +752,7 @@ mod tests {
             suggested_modules: vec![],
             notes: vec![],
             available_tool_count: 10,
-            total_tool_count: 20,
+            total_tool_count: 19,
         };
         let config =
             generate_config("https://example.com", &fp, &rec, &[]).expect("should generate");

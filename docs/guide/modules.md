@@ -1,6 +1,6 @@
 # Module Reference
 
-ScorchKit registers **91 web and DAST modules**. Implicit profiles use the 69-module
+ScorchKit registers **90 web and DAST modules**. Implicit profiles use the 68-module
 application-security catalog; the other 22 network, enterprise, and cloud-account adapters require
 explicit compatibility selection.
 
@@ -98,7 +98,7 @@ scorchkit run https://target.com --profile thorough
 
 ### pentest
 
-Runs all 69 application modules, including Commix, when the engagement grants the required
+Runs all 68 application modules, including Commix, when the engagement grants the required
 intrusive, external-tool, and exploit effects. It does not implicitly add compatibility modules.
 
 Use an explicit module ID or the `compatibility` template for compatibility selection. Selection

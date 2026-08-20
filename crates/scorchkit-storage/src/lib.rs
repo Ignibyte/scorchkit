@@ -66,6 +66,8 @@ pub struct ScanRecord {
     pub modules_skipped: Vec<String>,
     /// Summary statistics as JSON.
     pub summary: serde_json::Value,
+    /// Versioned typed execution, coverage, and provider evidence.
+    pub execution_evidence: serde_json::Value,
     /// When this record was created.
     pub created_at: DateTime<Utc>,
 }

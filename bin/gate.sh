@@ -402,7 +402,6 @@ nextest_gate() {
     allowlisted_empty_suites="$(printf '%s\n' \
         scorchkit-cli \
         scorchkit-cloud \
-        scorchkit-code \
         scorchkit-executor \
         scorchkit-infra \
         scorchkit-web \

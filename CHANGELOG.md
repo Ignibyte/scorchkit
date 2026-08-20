@@ -5,6 +5,14 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Ordered offline application supply-chain evidence (TICKET-012 / SK-037)** — Added explicit
+  local source, artifact, OCI-layout/archive, and CycloneDX 1.6 targets; separate OSV source-lockfile
+  coverage; one Syft-produced or imported SBOM reused byte-for-byte by Grype and Trivy; conservative
+  PURL/advisory correlation; and typed complete, incomplete, and degraded coverage. Provider data now
+  uses immutable digest-verified snapshots with a separate policy-owned bounded refresh operation.
+  Scans cannot update databases, contact registries or daemons, run target builds or package
+  managers, or inherit ambient credentials. CLI, MCP, reports, PostgreSQL execution evidence, doctor,
+  and the Codex workflow expose the same provenance and gap contract.
 - **Deep SAST and pinned rule provenance (TICKET-011 / SK-036)** — Replaced Semgrep's network
   `auto` rules with an embedded digest-identified application pack and optional exact-digest local
   overrides. Added offline no-build CodeQL analysis for JavaScript/TypeScript, Python, and Ruby,

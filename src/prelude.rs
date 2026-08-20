@@ -17,6 +17,14 @@ pub use crate::engine::scan_result::ScanResult;
 pub use crate::engine::scope::ScopeRule;
 pub use crate::engine::severity::Severity;
 pub use crate::engine::target::Target;
+pub use crate::{
+    AdvisoryIdentity, DependencyEvidenceKind, PackageIdentity, ProviderDownload,
+    ProviderRefreshRequest, ProviderSnapshot, ProviderSnapshotState, SbomArtifact,
+    SupplyChainAssessment, SupplyChainCorrelation, SupplyChainCoverageGap,
+    SupplyChainCoverageStatus, SupplyChainGapKind, SupplyChainObservation, SupplyChainPhase,
+    SupplyChainProfile, SupplyChainProvider, SupplyChainTarget, SupplyChainTargetKind,
+    SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
+};
 
 // Module traits
 pub use crate::engine::code_module::{CodeAnalysisDepth, CodeCategory, CodeModule};

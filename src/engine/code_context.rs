@@ -8,7 +8,7 @@ use crate::config::AppConfig;
 use crate::runner::subprocess::{SystemToolExecutor, ToolExecutor, ToolInvocation, ToolOutput};
 
 use super::error::Result;
-use super::events::EventBus;
+use super::events::{EventBus, ScanEvent};
 use super::policy::{AuthorizationDecision, Capability, EffectClass, PolicyTarget};
 use super::shared_data::SharedData;
 
@@ -177,6 +177,15 @@ impl CodeContext {
     /// bounded invocation fields without gaining access to the underlying executor.
     pub(crate) async fn run_invocation(&self, invocation: ToolInvocation) -> Result<ToolOutput> {
         self.require_tool_authorization()?;
+        self.events.publish(ScanEvent::Custom {
+            kind: "effect.subprocess_started".to_string(),
+            data: serde_json::json!({
+                "target": self.path,
+                "program": crate::engine::observation::redact_text(&invocation.program),
+                "capability": "external-tool",
+                "effect": "passive",
+            }),
+        });
         self.tool_executor.execute(invocation).await
     }
 

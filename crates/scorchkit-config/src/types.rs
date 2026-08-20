@@ -22,6 +22,9 @@ pub struct AppConfig {
     /// Reproducible static-analysis configuration.
     #[serde(default)]
     pub sast: SastConfig,
+    /// Offline application supply-chain scanner and provider-cache configuration.
+    #[serde(default)]
+    pub supply_chain: SupplyChainConfig,
     pub ai: AiConfig,
     pub report: ReportConfig,
     pub database: DatabaseConfig,
@@ -258,6 +261,42 @@ pub struct ToolsConfig {
     pub hydra: Option<String>,
     // Exploit
     pub msfconsole: Option<String>,
+    // Application supply-chain
+    pub syft: Option<String>,
+    pub osv_scanner: Option<String>,
+    pub grype: Option<String>,
+    pub trivy: Option<String>,
+}
+
+/// Offline application supply-chain configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SupplyChainConfig {
+    /// Root containing immutable provider snapshots and per-run owned state.
+    pub cache_root: PathBuf,
+    /// Maximum retained SBOM or individual scanner report size.
+    pub artifact_limit_bytes: usize,
+    /// Maximum bytes accepted from one response and from the complete provider refresh.
+    pub provider_download_limit_bytes: usize,
+    /// Maximum age for an OSV snapshot.
+    pub osv_maximum_age_seconds: u64,
+    /// Maximum age for a Grype snapshot.
+    pub grype_maximum_age_seconds: u64,
+    /// Maximum age for a Trivy snapshot.
+    pub trivy_maximum_age_seconds: u64,
+}
+
+impl Default for SupplyChainConfig {
+    fn default() -> Self {
+        Self {
+            cache_root: PathBuf::from(".scorchkit/cache/supply-chain"),
+            artifact_limit_bytes: 64 * 1024 * 1024,
+            provider_download_limit_bytes: 1024 * 1024 * 1024,
+            osv_maximum_age_seconds: 24 * 60 * 60,
+            grype_maximum_age_seconds: 5 * 24 * 60 * 60,
+            trivy_maximum_age_seconds: 24 * 60 * 60,
+        }
+    }
 }
 
 /// Reproducible static-analysis configuration.
@@ -304,6 +343,10 @@ impl ToolsConfig {
             "wafw00f" => &self.wafw00f,
             "hydra" => &self.hydra,
             "msfconsole" => &self.msfconsole,
+            "syft" => &self.syft,
+            "osv-scanner" => &self.osv_scanner,
+            "grype" => &self.grype,
+            "trivy" => &self.trivy,
             _ => &None,
         };
         override_path.as_deref().unwrap_or(tool).to_string()
@@ -808,5 +851,26 @@ max_budget_usd = 0.5
         assert_eq!(config.resolved_binary(), "/opt/claude");
         assert_eq!(config.model.as_deref(), Some("sonnet"));
         assert_eq!(config.max_budget_usd, Some(0.5));
+    }
+
+    #[test]
+    fn supply_chain_tool_paths_use_exact_defaults_and_overrides() {
+        let defaults = ToolsConfig::default();
+        for tool in ["syft", "osv-scanner", "grype", "trivy"] {
+            assert_eq!(defaults.get_path(tool), tool);
+        }
+        assert_eq!(defaults.get_path("unregistered-tool"), "unregistered-tool");
+
+        let configured = ToolsConfig {
+            syft: Some("/tools/syft-pinned".to_string()),
+            osv_scanner: Some("/tools/osv-pinned".to_string()),
+            grype: Some("/tools/grype-pinned".to_string()),
+            trivy: Some("/tools/trivy-pinned".to_string()),
+            ..ToolsConfig::default()
+        };
+        assert_eq!(configured.get_path("syft"), "/tools/syft-pinned");
+        assert_eq!(configured.get_path("osv-scanner"), "/tools/osv-pinned");
+        assert_eq!(configured.get_path("grype"), "/tools/grype-pinned");
+        assert_eq!(configured.get_path("trivy"), "/tools/trivy-pinned");
     }
 }

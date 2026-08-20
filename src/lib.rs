@@ -78,6 +78,7 @@ pub mod sast_tools;
 pub mod scanner;
 #[cfg(feature = "storage")]
 pub mod storage;
+pub mod supply_chain;
 pub mod tools;
 
 #[cfg(all(test, feature = "infra"))]
@@ -94,3 +95,11 @@ pub use engine::scope::ScopeRule;
 pub use engine::severity::Severity;
 pub use engine::target::Target;
 pub use facade::Engine;
+pub use scorchkit_code::SupplyChainProfile;
+pub use scorchkit_core::{
+    AdvisoryIdentity, DependencyEvidenceKind, PackageIdentity, ProviderSnapshot,
+    ProviderSnapshotState, SbomArtifact, SupplyChainAssessment, SupplyChainCorrelation,
+    SupplyChainCoverageGap, SupplyChainCoverageStatus, SupplyChainGapKind, SupplyChainObservation,
+    SupplyChainPhase, SupplyChainTarget, SupplyChainTargetKind, SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
+};
+pub use supply_chain::{ProviderDownload, ProviderRefreshRequest, SupplyChainProvider};

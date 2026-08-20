@@ -39,6 +39,7 @@ engagement and therefore authorizes no scan.
 | `auth` | web bearer, cookie, basic, or custom-header credentials |
 | `tools` | external executable overrides |
 | `sast` | reproducible static-analysis settings, including pinned local Semgrep rules |
+| `supply_chain` | offline SBOM/SCA cache root, artifact limits, and provider snapshot ages |
 | `ai` | optional provider adapter |
 | `report` | artifact directory and evidence/remediation inclusion |
 | `database` | connection URL, pool size, and migration behavior |
@@ -110,6 +111,35 @@ local_rule_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789a
 The two fields are an atomic pair. ScorchKit validates the path, size, YAML structure, prohibited
 network validators, and digest before starting Semgrep. There is no configuration form for
 `--config auto`, registry names, or URLs.
+
+## Application supply chain
+
+Application supply-chain scans require an existing private cache root. The root is separately
+authorized as local state, must not be a symlink, and on Unix must grant no group or other
+permissions. ScorchKit does not create it implicitly because creation would combine authorization
+and filesystem effects.
+
+```toml
+[supply_chain]
+cache_root = ".scorchkit/cache/supply-chain"
+artifact_limit_bytes = 67108864
+provider_download_limit_bytes = 1073741824
+osv_maximum_age_seconds = 86400
+grype_maximum_age_seconds = 432000
+trivy_maximum_age_seconds = 86400
+
+[tools]
+syft = "syft"
+osv_scanner = "osv-scanner"
+grype = "grype"
+trivy = "trivy"
+```
+
+Scans are offline. Provider refresh is a separate policy-owned operation and scanners cannot change
+their databases during a scan. The configured provider ages are absolute policy caps. A refresh
+request may choose a shorter lifetime but cannot make a snapshot valid beyond these values. See
+[Application supply-chain evidence](application-supply-chain.md) for the cache layout, refresh
+contract, explicit target kinds, and pinned tool versions.
 
 ## CVE providers
 

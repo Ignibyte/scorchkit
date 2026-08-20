@@ -34,6 +34,7 @@ struct ToolCheckResult {
     version: Option<String>,
     version_ok: Option<bool>,
     min_version: Option<&'static str>,
+    exact_version: bool,
     remediation: &'static str,
     deep_notes: Vec<DeepNote>,
 }
@@ -114,6 +115,18 @@ impl Version {
             }
         }
         true // equal
+    }
+}
+
+fn requires_exact_version(binary: &str) -> bool {
+    matches!(binary, "syft" | "osv-scanner" | "grype" | "trivy")
+}
+
+fn version_satisfies(binary: &str, detected: &Version, required: &Version) -> bool {
+    if requires_exact_version(binary) {
+        detected == required
+    } else {
+        detected.is_at_least(required)
     }
 }
 
@@ -461,10 +474,10 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             binary: "trivy",
             name: "Trivy",
-            category: "Container Security",
+            category: "Application Supply Chain",
             version_flag: Some("--version"),
-            min_version: Some("0.50.0"),
-            remediation: "Install: see https://aquasecurity.github.io/trivy/latest/getting-started/installation/",
+            min_version: Some("0.74.0"),
+            remediation: "Install the pinned native Trivy 0.74.0 release asset; do not use a Docker socket wrapper",
         },
         ToolSpec {
             binary: "dnsx",
@@ -533,10 +546,26 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             binary: "osv-scanner",
             name: "OSV-Scanner",
-            category: "SCA",
+            category: "Application Supply Chain",
             version_flag: Some("--version"),
-            min_version: None,
-            remediation: "Install: go install github.com/google/osv-scanner/cmd/osv-scanner@latest",
+            min_version: Some("2.3.8"),
+            remediation: "Install the pinned OSV-Scanner 2.3.8 release asset",
+        },
+        ToolSpec {
+            binary: "syft",
+            name: "Syft",
+            category: "Application Supply Chain",
+            version_flag: Some("--version"),
+            min_version: Some("1.50.0"),
+            remediation: "Install the pinned Syft 1.50.0 release asset",
+        },
+        ToolSpec {
+            binary: "grype",
+            name: "Grype",
+            category: "Application Supply Chain",
+            version_flag: Some("--version"),
+            min_version: Some("0.116.1"),
+            remediation: "Install the pinned Grype 0.116.1 release asset",
         },
         ToolSpec {
             binary: "gitleaks",
@@ -763,7 +792,7 @@ async fn check_tool(spec: &ToolSpec, deep: bool) -> ToolCheckResult {
 
         if let (Some(ref ver_str), Some(min_str)) = (&version, spec.min_version) {
             if let (Some(ver), Some(min)) = (Version::parse(ver_str), Version::parse(min_str)) {
-                version_ok = Some(ver.is_at_least(&min));
+                version_ok = Some(version_satisfies(spec.binary, &ver, &min));
             }
         }
     }
@@ -780,6 +809,7 @@ async fn check_tool(spec: &ToolSpec, deep: bool) -> ToolCheckResult {
         version,
         version_ok,
         min_version: spec.min_version,
+        exact_version: requires_exact_version(spec.binary),
         remediation: spec.remediation,
         deep_notes,
     }
@@ -825,9 +855,17 @@ fn render_tool_result(result: &ToolCheckResult, deep: bool) -> String {
             let version = crate::report::terminal::escape_terminal_text(
                 result.version.as_deref().unwrap_or("-"),
             );
-            let version_note = match (result.version_ok, result.min_version) {
-                (Some(true), Some(min)) => format!("(>= {min})").green().to_string(),
-                (Some(false), Some(min)) => format!("(need >= {min})").red().to_string(),
+            let version_note = match (result.version_ok, result.min_version, result.exact_version) {
+                (Some(true), Some(required), true) => format!("(= {required})").green().to_string(),
+                (Some(false), Some(required), true) => {
+                    format!("(need = {required})").red().to_string()
+                }
+                (Some(true), Some(required), false) => {
+                    format!("(>= {required})").green().to_string()
+                }
+                (Some(false), Some(required), false) => {
+                    format!("(need >= {required})").red().to_string()
+                }
                 _ => String::new(),
             };
             let status = match result.version_ok {
@@ -942,6 +980,7 @@ mod tests {
             version: version.map(str::to_string),
             version_ok,
             min_version: Some("3.0.0"),
+            exact_version: false,
             remediation: "Install the fixture tool",
             deep_notes: notes,
         }
@@ -957,6 +996,20 @@ mod tests {
             template_age_note(Duration::from_hours(744)),
             DeepNote::Warn("Templates last updated 31 days ago. Run: nuclei -ut".to_string())
         );
+    }
+
+    #[test]
+    fn application_supply_chain_tools_require_exact_pinned_versions() {
+        for binary in ["syft", "osv-scanner", "grype", "trivy"] {
+            assert!(requires_exact_version(binary), "{binary} must remain exact-pinned");
+        }
+        assert!(!requires_exact_version("nmap"));
+
+        let pinned = Version::parse("0.74.0").expect("pinned version");
+        let newer = Version::parse("0.75.0").expect("newer version");
+        assert!(version_satisfies("trivy", &pinned, &pinned));
+        assert!(!version_satisfies("trivy", &newer, &pinned));
+        assert!(version_satisfies("nmap", &newer, &pinned));
     }
 
     #[test]
@@ -1043,6 +1096,12 @@ mod tests {
         assert!(missing_deep.contains("hint"));
         assert!(missing_deep.contains("Install the fixture tool"));
         assert!(missing_deep.contains("WARN"));
+
+        let mut exact = tool_result(true, Some("3.0.0"), Some(true), Vec::new());
+        exact.exact_version = true;
+        let rendered = render_tool_result(&exact, true);
+        assert!(rendered.contains("= 3.0.0"));
+        assert!(!rendered.contains(">= 3.0.0"));
     }
 
     #[test]

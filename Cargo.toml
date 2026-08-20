@@ -13,14 +13,14 @@ resolver = "2"
 default = []
 storage = [
   "dep:sqlx",
-  "dep:sha2",
   "dep:croner",
   "dep:scorchkit-storage",
   "scorchkit-cli/storage",
 ]
 mcp = ["storage", "dep:rmcp", "dep:scorchkit-mcp", "scorchkit-cli/mcp"]
-infra = ["dep:ipnet", "dep:sha2", "dep:hickory-resolver", "scorchkit-cli/infra"]
-# Note: sha2 under `infra` powers content-addressed CVE cache filenames.
+infra = ["dep:ipnet", "dep:hickory-resolver", "scorchkit-cli/infra"]
+# SHA-256 is always available for supply-chain and evidence integrity; infra reuses it for
+# content-addressed CVE cache filenames.
 # WORK-150: cloud family seam — trait + orchestrator + CLI wiring only.
 cloud = ["scorchkit-cli/cloud", "scorchkit-config/cloud"]
 # Quarantined native AWS checks. The code compiles in tests while its provider
@@ -60,6 +60,13 @@ governor = "0.8"
 
 # Terminal UI
 indicatif = "0.17"
+
+# Local-only CycloneDX validation. Default features are intentionally disabled because they add
+# HTTP and filesystem schema retrievers.
+jsonschema = { version = "=0.49.9", default-features = false }
+
+# Package URL parsing and canonical serialization for supplied identifiers only.
+packageurl = { version = "=0.6.0", features = ["serde"] }
 regex = { version = "1.12.3", default-features = false, features = [
   "std",
   "perf",
@@ -71,6 +78,7 @@ reqwest = { version = "0.12", features = [
   "rustls-tls",
   "cookies",
   "multipart",
+  "stream",
 ], default-features = false }
 
 # TLS inspection
@@ -100,6 +108,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9.34"
 
+# Bounded, no-extraction validation of Grype's Zstandard-compressed tar database archives.
+tar = "=0.4.46"
+
 # Temporary files (used by tool wrappers that need to materialise
 # wordlists / community lists for external CLIs).
 tempfile = "3"
@@ -124,6 +135,12 @@ url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 webpki-roots = "1"
 x509-parser = "0.16"
+
+# Bounded structural validation for policy-owned OSV offline database archives.
+zip = { version = "=8.6.0", default-features = false, features = [
+  "deflate-flate2-zlib-rs",
+] }
+zstd = { version = "=0.13.3", default-features = false }
 # Uses default features (`system-config` + `tokio`) — we need both for
 # `TokioResolver::builder_tokio()` to resolve from `/etc/resolv.conf`.
 # `dnssec-aws-lc-rs` enables full DNSSEC chain validation via
@@ -194,7 +211,6 @@ optional = true
 
 [dependencies.sha2]
 version = "0.10"
-optional = true
 
 [dependencies.sqlx]
 version = "0.8"

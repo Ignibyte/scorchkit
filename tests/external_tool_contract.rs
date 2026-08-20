@@ -219,7 +219,10 @@ fn assert_invocation_contract(
         "{module_id} must use the shared output limit"
     );
     assert!(
-        matches!(invocation.exit_policy, ExitPolicy::RequireSuccess | ExitPolicy::AllowNonZero),
+        matches!(
+            &invocation.exit_policy,
+            ExitPolicy::RequireSuccess | ExitPolicy::AllowNonZero | ExitPolicy::AcceptedCodes(_)
+        ),
         "{module_id} must declare an exit policy"
     );
 }
@@ -232,7 +235,7 @@ async fn every_dast_tool_wrapper_executes_its_declared_invocation() -> Result<()
         authorized_dast_context("https://example.com/?id=1")?.with_tool_executor(injected);
     let modules = scorchkit::tools::register_modules();
 
-    assert_eq!(modules.len(), 46, "DAST tool registry contract changed");
+    assert_eq!(modules.len(), 45, "DAST tool registry contract changed");
     let mut process_backed = 0usize;
     for module in modules {
         assert!(
@@ -257,7 +260,7 @@ async fn every_dast_tool_wrapper_executes_its_declared_invocation() -> Result<()
         process_backed += 1;
     }
 
-    assert_eq!(process_backed, 45, "all non-session DAST wrappers must use the shared executor");
+    assert_eq!(process_backed, 44, "all non-session DAST wrappers must use the shared executor");
     Ok(())
 }
 
@@ -301,7 +304,7 @@ async fn every_sast_tool_wrapper_executes_its_declared_invocation() -> Result<()
     let context = authorized_code_context(root.path())?.with_tool_executor(injected);
     let modules = scorchkit::sast_tools::register_modules();
 
-    assert_eq!(modules.len(), 23, "SAST tool registry contract changed");
+    assert_eq!(modules.len(), 21, "SAST tool registry contract changed");
     for module in modules {
         assert!(
             module.requires_external_tool(),
@@ -322,7 +325,7 @@ async fn every_sast_tool_wrapper_executes_its_declared_invocation() -> Result<()
         }
     }
 
-    assert_eq!(recorder.len(), 24);
+    assert_eq!(recorder.len(), 22);
     Ok(())
 }
 

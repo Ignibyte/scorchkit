@@ -28,6 +28,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use chrono::Utc;
+use scorchkit_code::SupplyChainProfile;
+use scorchkit_core::{ProviderSnapshot, SupplyChainTargetKind};
+
 use crate::config::AppConfig;
 use crate::engine::code_context::CodeContext;
 use crate::engine::error::{Result, ScorchError};
@@ -39,6 +43,10 @@ use crate::engine::scan_result::ScanResult;
 use crate::engine::target::Target;
 use crate::runner::code_orchestrator::CodeOrchestrator;
 use crate::runner::orchestrator::Orchestrator;
+use crate::supply_chain::{
+    authorize_local_target_shape, ProviderRefreshRequest, ProviderRefreshService,
+    SupplyChainOrchestrator, SupplyChainRun, SupplyChainRunWorkspace, SupplyChainSnapshotStore,
+};
 
 /// High-level scanning engine for library consumers.
 ///
@@ -130,13 +138,89 @@ impl Engine {
     ///
     /// Returns an error if the path or requested effect is denied, or the scan fails.
     pub async fn code_scan_with_profile(&self, path: &Path, profile: &str) -> Result<ScanResult> {
-        validate_scan_profile(profile)?;
+        let supply_chain_profile = validated_supply_chain_profile(profile)?;
         let ctx = self.code_context(path, None)?;
+        let supply_chain_context = ctx.clone();
 
         let mut orchestrator = CodeOrchestrator::new(ctx);
         orchestrator.register_default_modules();
         orchestrator.apply_profile(profile);
-        orchestrator.run_quiet(true).await
+        let mut result = orchestrator.run_quiet(true).await?;
+        let supply_chain = self
+            .run_supply_chain(
+                supply_chain_context,
+                SupplyChainTargetKind::SourceDirectory,
+                supply_chain_profile,
+                None,
+            )
+            .await?;
+        result.merge(supply_chain);
+        Ok(result)
+    }
+
+    /// Run only the ordered, offline application supply-chain pipeline.
+    ///
+    /// `kind` is explicit so local paths can never be reinterpreted as registry or daemon targets.
+    /// The configured cache root must already exist and be separately authorized with
+    /// [`Capability::LocalState`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error before traversal or process creation when the target, local state, scan
+    /// profile, or external-tool effect is not authorized.
+    pub async fn supply_chain_scan_with_profile(
+        &self,
+        path: &Path,
+        kind: SupplyChainTargetKind,
+        profile: &str,
+        revision: Option<String>,
+    ) -> Result<ScanResult> {
+        let supply_chain_profile = validated_supply_chain_profile(profile)?;
+        let context = self.code_context(path, None)?;
+        self.run_supply_chain(context, kind, supply_chain_profile, revision).await
+    }
+
+    /// Inspect all local provider snapshots after separately authorizing the cache root.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the local-state root is missing, invalid, or denied by policy.
+    pub fn supply_chain_cache_status(&self) -> Result<Vec<ProviderSnapshot>> {
+        let store = self.supply_chain_snapshot_store()?;
+        let now = Utc::now();
+        Ok(["osv", "grype", "trivy"]
+            .into_iter()
+            .map(|provider| {
+                let maximum_age_seconds = match provider {
+                    "osv" => self.config.supply_chain.osv_maximum_age_seconds,
+                    "grype" => self.config.supply_chain.grype_maximum_age_seconds,
+                    "trivy" => self.config.supply_chain.trivy_maximum_age_seconds,
+                    _ => unreachable!("fixed supply-chain provider list"),
+                };
+                store.status(provider, now, maximum_age_seconds)
+            })
+            .collect())
+    }
+
+    /// Refresh one explicit provider snapshot outside scan-time execution.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when local state, the provider endpoint, download integrity, import, or
+    /// atomic promotion fails. The prior current snapshot remains selected on failure.
+    pub async fn supply_chain_cache_refresh(
+        &self,
+        request: &ProviderRefreshRequest,
+    ) -> Result<ProviderSnapshot> {
+        let store = self.supply_chain_snapshot_store()?;
+        let engagement = self.engagement.as_ref().ok_or_else(|| {
+            ScorchError::Config(
+                "provider refresh denied: no engagement authorization is configured".to_string(),
+            )
+        })?;
+        ProviderRefreshService::new(Arc::clone(engagement), Arc::clone(&self.config), store)
+            .refresh(request)
+            .await
     }
 
     /// Run a SAST code scan for a specific language.
@@ -149,11 +233,22 @@ impl Engine {
     /// Returns an error if the scan fails.
     pub async fn code_scan_language(&self, path: &Path, language: &str) -> Result<ScanResult> {
         let ctx = self.code_context(path, Some(language))?;
+        let supply_chain_context = ctx.clone();
 
         let mut orchestrator = CodeOrchestrator::new(ctx);
         orchestrator.register_default_modules();
         orchestrator.filter_by_language(language);
-        orchestrator.run_quiet(true).await
+        let mut result = orchestrator.run_quiet(true).await?;
+        let supply_chain = self
+            .run_supply_chain(
+                supply_chain_context,
+                SupplyChainTargetKind::SourceDirectory,
+                SupplyChainProfile::Standard,
+                None,
+            )
+            .await?;
+        result.merge(supply_chain);
+        Ok(result)
     }
 
     /// Run a combined DAST+SAST scan: web target and source code path.
@@ -809,6 +904,62 @@ impl Engine {
         }
         Ok((canonical_path, authorization))
     }
+
+    fn supply_chain_snapshot_store(&self) -> Result<SupplyChainSnapshotStore> {
+        let configured = &self.config.supply_chain.cache_root;
+        let cache_root = configured.canonicalize().map_err(|error| {
+            ScorchError::Config(format!(
+                "cannot open supply-chain cache root '{}': {error}; create and authorize it before scanning",
+                configured.display()
+            ))
+        })?;
+        self.require_authorized(
+            PolicyTarget::Code(cache_root.clone()),
+            Capability::LocalState,
+            EffectClass::Passive,
+        )?;
+        SupplyChainSnapshotStore::open(
+            &cache_root,
+            self.config.supply_chain.provider_download_limit_bytes,
+        )
+    }
+
+    async fn run_supply_chain(
+        &self,
+        context: CodeContext,
+        kind: SupplyChainTargetKind,
+        profile: SupplyChainProfile,
+        revision: Option<String>,
+    ) -> Result<ScanResult> {
+        let started_at = Utc::now();
+        let target = authorize_local_target_shape(&context.path, kind, revision)?;
+        let result_target = Target::from_path(&target.canonical_path)?;
+        let snapshots = self.supply_chain_snapshot_store()?;
+        let workspace = SupplyChainRunWorkspace::create(snapshots.root())?;
+        let run = SupplyChainOrchestrator::new(context, target, profile, workspace, snapshots)
+            .run()
+            .await;
+        Ok(supply_chain_scan_result(result_target, started_at, run))
+    }
+}
+
+fn supply_chain_scan_result(
+    target: Target,
+    started_at: chrono::DateTime<Utc>,
+    run: SupplyChainRun,
+) -> ScanResult {
+    let SupplyChainRun { assessment, findings, modules_run, modules_skipped, module_outcomes } =
+        run;
+    ScanResult::new(
+        uuid::Uuid::new_v4().to_string(),
+        target,
+        started_at,
+        findings,
+        modules_run,
+        modules_skipped,
+    )
+    .with_module_outcomes(module_outcomes)
+    .with_supply_chain(assessment)
 }
 
 /// Return the authorization requirements for one built-in scan profile.
@@ -828,6 +979,15 @@ pub(crate) fn validate_scan_profile(profile: &str) -> Result<()> {
     Err(ScorchError::Config(format!(
         "unknown scan profile '{profile}'; expected quick, standard, thorough, or pentest"
     )))
+}
+
+fn validated_supply_chain_profile(profile: &str) -> Result<SupplyChainProfile> {
+    validate_scan_profile(profile)?;
+    SupplyChainProfile::from_name(profile).ok_or_else(|| {
+        ScorchError::Config(format!(
+            "unknown supply-chain profile '{profile}'; expected quick, standard, thorough, or pentest"
+        ))
+    })
 }
 
 fn profile_policy_requirements(profile: &str) -> Result<ProfilePolicyRequirements> {
@@ -1118,16 +1278,29 @@ mod tests {
     #[tokio::test]
     async fn test_engine_code_scan() -> Result<()> {
         let dir = tempfile::tempdir().map_err(|e| ScorchError::Config(e.to_string()))?;
-        let config = Arc::new(AppConfig::default());
+        let cache_root = dir.path().join("supply-chain-cache");
+        std::fs::create_dir(&cache_root)?;
+        #[cfg(unix)]
+        std::fs::set_permissions(&cache_root, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
+        let mut config = AppConfig::default();
+        config.supply_chain.cache_root = cache_root;
+        config.tools.syft = Some("/fixture/missing-syft".to_string());
+        let config = Arc::new(config);
         let scope = ScopeRule::path_prefix(dir.path())?;
         let policy = EngagementPolicy::default()
             .allow_scope(scope)
             .allow_capability(Capability::CodeScan)
             .allow_capability(Capability::ExternalTool)
+            .allow_capability(Capability::LocalState)
             .allow_effect(EffectClass::Passive);
         let engine = Engine::for_engagement(config, Arc::new(Engagement::new("test", policy)));
         let result = engine.code_scan(dir.path()).await?;
         assert!(result.findings.is_empty());
+        assert!(result.supply_chain.is_some());
+        assert_eq!(
+            result.execution_status,
+            crate::engine::scan_result::ScanExecutionStatus::Incomplete
+        );
         Ok(())
     }
 

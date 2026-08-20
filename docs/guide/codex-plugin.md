@@ -34,6 +34,12 @@ available, the skill stops and reports the setup problem. It does not fall back 
 scan. A project, registered target, prompt, plan, or prior job remains context rather than
 authorization; the configured engine engagement is authoritative.
 
+The execution skill also understands the ordered application supply-chain routes. It checks typed
+cache status before an explicit local source or artifact scan, preserves complete/incomplete/degraded
+coverage, and never turns a registry, daemon, or remote image into a local target. Provider refresh
+requires a separate user request and the complete digest-pinned refresh contract; it is never an
+implicit preflight step.
+
 ## Planning and persisted scans
 
 `plan_scan` returns validated module recommendations. `project_scan` accepts optional `modules` and

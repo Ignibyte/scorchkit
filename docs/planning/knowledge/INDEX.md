@@ -77,6 +77,11 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-passive-analyzer-config-isolation-001` | Isolate passive analyzers with ScorchKit-owned configuration, state, environment, and outputs and disable target plugin/config discovery. | `AAR-011-deep-sast-adapters` |
 | `PR-scorchkit-verified-artifact-single-read-001` | Make file-consuming scanners use an owned copy of the same bounded bytes whose identity and schema were verified. | `AAR-011-deep-sast-adapters` |
 | `PR-scorchkit-module-mutation-evidence-001` | Preserve module-level cargo-mutants records and use `<module>` only for nonempty scope accounting. | `AAR-011-deep-sast-adapters` |
+| `PR-scorchkit-offline-scan-refresh-separation-001` | Keep provider refresh outside scan execution; scans consume only explicit validated snapshots. | `AAR-012-application-supply-chain` |
+| `PR-scorchkit-single-verified-sbom-001` | Generate one SBOM, validate and hash its bounded bytes once, and give consumers owned copies of those exact bytes. | `AAR-012-application-supply-chain` |
+| `PR-scorchkit-cache-stage-ownership-001` | Give staged cache state an armed cleanup owner and transfer ownership only after verified atomic promotion. | `AAR-012-application-supply-chain` |
+| `PR-scorchkit-aggregate-effect-budget-001` | Bound both each external object and the complete operation's object count and cumulative bytes. | `AAR-012-application-supply-chain` |
+| `PR-scorchkit-source-artifact-coverage-separation-001` | Preserve declared source dependencies and shipped artifact contents as distinct coverage classes and correlate only supplied valid identities. | `AAR-012-application-supply-chain` |
 
 ## Register
 
@@ -138,3 +143,7 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-parser-empty-failure-conflation-001` | evidence-integrity bug | `AAR-011-deep-sast-adapters` |
 | `BF-scorchkit-pinned-rule-reopen-race-001` | provenance-integrity bug | `AAR-011-deep-sast-adapters` |
 | `BF-scorchkit-module-mutation-function-null-001` | verification bug | `AAR-011-deep-sast-adapters` |
+| `BF-scorchkit-refresh-stage-orphan-001` | cache-lifecycle bug | `AAR-012-application-supply-chain` |
+| `BF-scorchkit-aggregate-provider-limit-gap-001` | effect-budget bug | `AAR-012-application-supply-chain` |
+| `BF-scorchkit-tool-report-file-unbounded-001` | process-output bug | `AAR-012-application-supply-chain` |
+| `BF-scorchkit-empty-artifact-profile-success-001` | coverage-integrity bug | `AAR-012-application-supply-chain` |

@@ -53,7 +53,7 @@ new process group. Success, nonzero exit, timeout, cancellation, output overflow
 drop all terminate and reap the owned process tree. Linux and macOS are supported. Windows remains
 disabled until Job Object cleanup proves the same contract.
 
-Forty-five DAST adapters and 23 external SAST wrappers use this bounded path. Twenty-two SAST
+Forty-five DAST adapters and 21 registered external SAST wrappers use this bounded path. Twenty SAST
 wrappers submit one invocation. CodeQL submits an ordered database-create and database-analyze pair
 for each applicable language. Interactsh owns a long-lived callback session, but it shares
 executable resolution, bounded readers, and process-group cleanup.

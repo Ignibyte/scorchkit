@@ -78,7 +78,6 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(paramspider::ParamSpiderModule),
         Box::new(trufflehog::TrufflehogModule),
         Box::new(prowler::ProwlerModule),
-        Box::new(trivy::TrivyModule),
         Box::new(dnsx::DnsxModule),
         Box::new(gobuster::GobusterModule),
         Box::new(dnsrecon::DnsreconModule),

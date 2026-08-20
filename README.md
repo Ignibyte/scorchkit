@@ -14,11 +14,11 @@ permission to test. A project target, prompt, or agent approval does not replace
 
 | Family | Registered modules | Notes |
 |---|---:|---|
-| DAST and recon | 91 | 69 application modules by default; 22 explicit compatibility modules |
-| SAST | 24 | 23 application modules by default; ScoutSuite is explicit cloud-account compatibility |
+| DAST and recon | 90 | 68 application modules by default; 22 explicit compatibility modules |
+| SAST | 22 | 21 application modules by default; ScoutSuite is explicit cloud-account compatibility |
 | Infrastructure | Up to 5 | Explicit compatibility family: 4 core probes plus optional CVE correlation |
 | Cloud | 5 | Explicit compatibility family of bounded tool adapters; native provider SDK modules remain quarantined |
-| Maximum | 125 | All production registries, including optional CVE correlation |
+| Maximum | 122 | All production registries, including optional CVE correlation |
 
 The [application-security catalog](docs/architecture/application-security-catalog.md) explains the
 default and compatibility split. The source registries remain authoritative for the complete
@@ -71,7 +71,7 @@ no authorization and cannot start a scan until an engagement is added.
 | `quick` | `headers`, `tech`, `ssl`, `misconfig` | `active-safe` |
 | `standard` | Built-in application DAST modules | `intrusive` |
 | `thorough` | Application modules except credential-test and exploit effects | `intrusive` plus `external-tool` capability |
-| `pentest` | All 69 application modules, including `commix` | Explicit intrusive, external-tool, and exploit grants |
+| `pentest` | All 68 application modules, including `commix` | Explicit intrusive, external-tool, and exploit grants |
 
 Broader profiles are never inferred from installed tools. Expand the engagement deliberately and
 review the resulting scope before using them.
@@ -90,6 +90,17 @@ analysis. Unsupported languages, missing tools, successful runs, and failures re
 the returned module outcomes. Semgrep uses an embedded digest-identified rule pack and never selects
 `--config auto`.
 
+Application supply-chain work is an ordered offline pipeline rather than three independent scanner
+modules. Quick scans run OSV Scanner against declared source lockfiles. Standard adds one exact
+CycloneDX 1.6 SBOM from Syft and Grype analysis of those same bytes. Thorough and pentest add Trivy
+as a second consumer of the same SBOM. Missing tools or provider snapshots make coverage incomplete;
+attempted producer, consumer, or parser failures make it degraded.
+
+The cache root must already exist with owner-only permissions and be separately authorized as local
+state. Scans cannot refresh databases, pull registry images, use a container daemon, run target
+builds or package managers, or inherit ambient credentials. Provider refresh is a separate explicit
+operation. See [application supply-chain evidence](docs/architecture/application-supply-chain.md).
+
 Common commands:
 
 ```bash
@@ -98,6 +109,8 @@ scorchkit modules --check-tools
 scorchkit modules --include-compatibility
 scorchkit code ./src --profile standard
 scorchkit code ./src --profile thorough
+scorchkit supply-chain scan ./src --kind source-directory --profile standard
+scorchkit supply-chain cache-status
 scorchkit infra 192.0.2.10
 scorchkit assess --url https://owned.example --code ./src --infra 192.0.2.10
 scorchkit diff baseline.json current.json
@@ -146,7 +159,7 @@ The package stores no target, engagement, database URL, or credential. It is a h
 same agent-neutral engine and is not installed into a personal marketplace by the repository. See
 [the Codex plugin guide](docs/guide/codex-plugin.md).
 
-All 30 MCP tools advertise a versioned object output schema, complete safety annotations, and one
+All 33 MCP tools advertise a versioned object output schema, complete safety annotations, and one
 read, local-state, or external-effect class. Routed calls return native structured success/error
 content; successful calls also retain the unchanged legacy text payload. The local-process principal
 and self-asserted client name are trace context only; ScorchKit engagement policy remains the sole
@@ -199,6 +212,7 @@ Read [CONSTITUTION.md](CONSTITUTION.md), [AGENTS.md](AGENTS.md), and the
 - [Architecture overview](docs/architecture/overview.md)
 - [Cargo workspace boundaries](docs/architecture/workspace.md)
 - [Application-security adapter catalog](docs/architecture/application-security-catalog.md)
+- [Application supply-chain evidence](docs/architecture/application-supply-chain.md)
 - [Agent integration](docs/architecture/agent.md)
 - [Codex plugin](docs/guide/codex-plugin.md)
 - [AI adapters](docs/architecture/ai.md)

@@ -69,7 +69,28 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
     let duration = format_duration(result.started_at, result.completed_at);
     let version = env!("CARGO_PKG_VERSION");
     let module_count = result.modules_run.len();
-    let execution_status = if result.execution_successful() { "Complete" } else { "Degraded" };
+    let execution_status = match result.execution_status {
+        crate::engine::scan_result::ScanExecutionStatus::Complete => "Complete",
+        crate::engine::scan_result::ScanExecutionStatus::Incomplete => "Incomplete",
+        crate::engine::scan_result::ScanExecutionStatus::Degraded => "Degraded",
+    };
+    let supply_chain_html = result.supply_chain.as_ref().map_or_else(String::new, |assessment| {
+        let gaps = assessment.gaps.iter().map(|gap| {
+            format!(
+                "<li><code>{}/{}</code>{}: {}</li>",
+                gap.phase.as_str(),
+                gap.kind.as_str(),
+                gap.component.as_deref().map_or_else(String::new, |component| {
+                    format!(" [{}]", html_escape(component))
+                }),
+                html_escape(&gap.detail),
+            )
+        }).collect::<Vec<_>>().join("\n");
+        format!(
+            "<h3>Application supply-chain coverage</h3><p>Status: <strong>{}</strong></p><ul>{}</ul>",
+            assessment.coverage_status.as_str(), gaps
+        )
+    });
 
     let risk_rating = overall_risk_rating(s.critical, s.high, s.medium);
 
@@ -140,6 +161,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
     <tr><th>Profile</th><td>Standard</td></tr>
     <tr><th>Tool Version</th><td>ScorchKit v{version}</td></tr>
   </table>
+  {supply_chain}
   <h3>Methodology</h3>
   <p>The assessment followed the PTES (Penetration Testing Execution Standard)
   framework adapted for automated scanning: reconnaissance, vulnerability
@@ -172,6 +194,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
         version = version,
         module_count = module_count,
         execution_status = execution_status,
+        supply_chain = supply_chain_html,
         total = s.total_findings,
         categories = count_categories(s.critical, s.high, s.medium, s.low, s.info),
         risk_rating = risk_rating,
@@ -426,6 +449,7 @@ mod tests {
             modules_skipped: Vec::new(),
             module_outcomes: Vec::new(),
             execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
+            supply_chain: None,
             findings,
             summary: ScanSummary {
                 total_findings: 2,

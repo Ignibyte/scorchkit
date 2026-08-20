@@ -131,20 +131,17 @@ fn build_sarif(result: &ScanResult) -> serde_json::Value {
                 "properties": {
                     "scorchkit/executionStatus": execution_status,
                     "scorchkit/moduleOutcomes": result.module_outcomes,
+                    "scorchkit/supplyChain": result.supply_chain,
                 },
             }]
         }]
     })
 }
 
-fn projected_execution_status(
+const fn projected_execution_status(
     result: &ScanResult,
 ) -> crate::engine::scan_result::ScanExecutionStatus {
-    if result.execution_successful() {
-        crate::engine::scan_result::ScanExecutionStatus::Complete
-    } else {
-        crate::engine::scan_result::ScanExecutionStatus::Degraded
-    }
+    result.execution_status
 }
 
 fn sarif_code_flow(flow: &crate::engine::observation::CodeFlow) -> serde_json::Value {
@@ -266,6 +263,10 @@ mod tests {
     use crate::engine::scan_result::ScanResult;
     use crate::engine::severity::Severity;
     use crate::engine::target::Target;
+    use crate::{
+        SupplyChainAssessment, SupplyChainCoverageGap, SupplyChainGapKind, SupplyChainPhase,
+        SupplyChainTarget, SupplyChainTargetKind,
+    };
 
     fn result_with(finding: Finding) -> ScanResult {
         ScanResult::new(
@@ -347,6 +348,43 @@ mod tests {
         assert_eq!(invocation["properties"]["scorchkit/executionStatus"], "degraded");
         assert_eq!(invocation["properties"]["scorchkit/moduleOutcomes"][0]["status"], "failed");
         assert!(!serde_json::to_string(&sarif).expect("serialize SARIF").contains("sarif-secret"));
+    }
+
+    #[test]
+    fn sarif_marks_missing_supply_chain_coverage_incomplete_and_projects_exact_gap() {
+        let mut assessment = SupplyChainAssessment::new(SupplyChainTarget {
+            kind: SupplyChainTargetKind::SourceDirectory,
+            canonical_path: PathBuf::from("/owned/source"),
+            revision: Some("revision-1".to_string()),
+            sha256: None,
+        });
+        assessment.record_gap(SupplyChainCoverageGap::new(
+            SupplyChainPhase::SourceDependencyScan,
+            SupplyChainGapKind::MissingProviderSnapshot,
+            Some("osv".to_string()),
+            "OSV snapshot is unavailable",
+        ));
+        let result = result_with(Finding::new(
+            "dep-audit",
+            Severity::Info,
+            "Dependency inventory",
+            "Inventory completed",
+            "Cargo.lock",
+        ))
+        .with_supply_chain(assessment);
+
+        let sarif = build_sarif(&result);
+        let invocation = &sarif["runs"][0]["invocations"][0];
+        assert_eq!(invocation["executionSuccessful"], false);
+        assert_eq!(invocation["properties"]["scorchkit/executionStatus"], "incomplete");
+        assert_eq!(
+            invocation["properties"]["scorchkit/supplyChain"]["coverage_status"],
+            "incomplete"
+        );
+        assert_eq!(
+            invocation["properties"]["scorchkit/supplyChain"]["gaps"][0]["kind"],
+            "missing_provider_snapshot"
+        );
     }
 
     #[test]

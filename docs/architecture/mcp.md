@@ -50,12 +50,12 @@ adaptation cannot change policy, persistence, or scan behavior.
 
 ## Tools
 
-The current server exposes 30 tools.
+The current server exposes 33 tools.
 
 | Group | Tools |
 |---|---|
 | DAST | `list_modules`, `check_tools`, `scan`, `scan_job_start`, `scan_job_status`, `scan_job_cancel`, `scan_job_resume`, `plan_scan`, `auto_scan`, `target_intelligence`, `scan_progress` |
-| SAST | `list_code_modules`, `scan_code` |
+| SAST and supply chain | `list_code_modules`, `scan_code`, `supply_chain_scan`, `supply_chain_cache_status`, `supply_chain_cache_refresh` |
 | Projects | `project_create`, `project_list`, `project_show`, `project_delete`, `project_scan`, `project_status` |
 | Targets | `target_add`, `target_list`, `target_remove` |
 | Findings | `project_findings`, `finding_show`, `finding_update_status`, `correlate_findings`, `analyze_findings` |
@@ -65,6 +65,11 @@ The current server exposes 30 tools.
 `quick`, `standard`, `thorough`, and `pentest` requests use the same profile requirements as the CLI.
 Credential and exploit modules are available only through `pentest` with explicit engagement grants.
 AI planning or analysis uses the configured provider and never replaces scanner evidence.
+
+`scan_code` merges the supply-chain profile selected by the same profile name. The explicit
+`supply_chain_scan` route accepts only a caller-declared local target shape. Cache status reports
+typed local snapshot health; cache refresh is a separate provider effect and cannot occur during a
+scan. See [Application supply-chain evidence](application-supply-chain.md).
 
 `project_scan` accepts optional `modules` and `skip` selectors after the profile is authorized. This
 allows a host to persist the reviewed recommendations from `plan_scan` without silently running the
@@ -103,7 +108,7 @@ The current transport is local stdio, so the principal kind records the local pr
 MCP client name and version are self-asserted and explicitly `trusted=false`; they are useful for
 trace attribution only. Neither the principal nor client metadata grants an engagement, target,
 capability, or effect. Authenticated remote principals and principal-to-engagement binding remain
-blocked on SK-037.
+blocked on SK-044.
 
 ## Behavior classes and annotations
 
@@ -111,11 +116,11 @@ Composite tools take the strongest behavior they can accept:
 
 | Class | Tools |
 |---|---|
-| `read` | `check_tools`, `correlate_findings`, `finding_show`, `list_code_modules`, `list_modules`, `project_findings`, `project_list`, `project_show`, `project_status`, `scan_job_status`, `scan_progress`, `target_list` |
+| `read` | `check_tools`, `correlate_findings`, `finding_show`, `list_code_modules`, `list_modules`, `project_findings`, `project_list`, `project_show`, `project_status`, `scan_job_status`, `scan_progress`, `supply_chain_cache_status`, `target_list` |
 | `local_state` | `db_migrate`, `finding_update_status`, `project_create`, `project_delete`, `scan_job_cancel`, `schedule_scan`, `target_add`, `target_remove` |
-| `external_effect` | `analyze_findings`, `auto_scan`, `plan_scan`, `project_scan`, `run_due_scans`, `scan`, `scan_code`, `scan_job_resume`, `scan_job_start`, `target_intelligence` |
+| `external_effect` | `analyze_findings`, `auto_scan`, `plan_scan`, `project_scan`, `run_due_scans`, `scan`, `scan_code`, `scan_job_resume`, `scan_job_start`, `supply_chain_cache_refresh`, `supply_chain_scan`, `target_intelligence` |
 
-All 30 definitions set `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`.
+All 33 definitions set `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`.
 These are conservative client hints, not enforcement. For example, a scan is marked potentially
 destructive because its static schema accepts the `pentest` profile even when most calls use a safer
 profile. Engine policy still evaluates the concrete request before effects.

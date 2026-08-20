@@ -9,13 +9,18 @@ extend-exclude = [
 [default.extend-words]
 AKS = "AKS"
 EDE = "EDE"
+# Exact SPDX license identifiers embedded in the CycloneDX schema.
+Matix = "Matix"
+ND = "ND"
 PN = "PN"
 PNGs = "PNGs"
+TOU = "TOU"
 arjun = "arjun"
 dalfox = "dalfox"
 feroxbuster = "feroxbuster"
 gosec = "gosec"
 gitleaks = "gitleaks"
+iMatix = "iMatix"
 nikto = "nikto"
 nuclei = "nuclei"
 prowler = "prowler"

@@ -286,7 +286,7 @@ impl Orchestrator {
             ("wordpress", "WordPress-specific assessment", 11),
             ("spa", "Single-page application (React/Vue/Angular)", 12),
             ("network", "Network infrastructure & DNS", 12),
-            ("full", "All application modules (same as --profile thorough)", 68),
+            ("full", "All application modules (same as --profile thorough)", 67),
             ("compatibility", "Explicit non-application compatibility catalog", 22),
         ]
     }

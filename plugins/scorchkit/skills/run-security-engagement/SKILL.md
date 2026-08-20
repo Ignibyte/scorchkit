@@ -40,5 +40,16 @@ Execute only the approved scan and report its real terminal state.
    scan or job ID. Treat a whole-scan error as failed. Do not describe partial, failed, cancelled,
    or interrupted work as success.
 
+## Application supply-chain path
+
+For an application source or artifact request, confirm the exact local path, explicit target kind,
+revision if known, profile, existing private cache root, and required provider snapshot state. Use
+`supply_chain_cache_status` before execution. Call `supply_chain_scan` only for the approved local
+target; never convert a registry name, image reference, URL, or daemon target into a filesystem
+request. Do not refresh provider data implicitly. Call `supply_chain_cache_refresh` only when the
+user separately requests that effect and supplies the complete reviewed provider object list and
+digests. Report `incomplete` and `degraded` coverage with every typed gap instead of describing an
+empty finding set as clean.
+
 Use `$report-security-findings` after a persisted project scan when the user requests analysis or a
 report. Do not change finding lifecycle state during execution.

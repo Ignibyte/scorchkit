@@ -469,17 +469,25 @@ fn code_dispatch_renders_language_manifests_and_terminal_report() {
     )
     .expect("write Cargo manifest fixture");
 
-    let config = AppConfig {
-        engagement: Some(Engagement::new(
-            "CLI code fixture",
-            EngagementPolicy::default()
-                .allow_scope(ScopeRule::path_prefix(&code_path).expect("canonical code scope"))
-                .allow_capability(Capability::CodeScan)
-                .allow_capability(Capability::ExternalTool)
-                .allow_effect(EffectClass::Passive),
-        )),
-        ..AppConfig::default()
-    };
+    let cache_root = directory.path().join("supply-chain-cache");
+    std::fs::create_dir(&cache_root).expect("create supply-chain cache fixture");
+    #[cfg(unix)]
+    std::fs::set_permissions(&cache_root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .expect("private supply-chain cache fixture");
+
+    let mut config = AppConfig::default();
+    config.supply_chain.cache_root = cache_root.clone();
+    config.tools.osv_scanner = Some("/fixture/missing-osv-scanner".to_string());
+    config.engagement = Some(Engagement::new(
+        "CLI code fixture",
+        EngagementPolicy::default()
+            .allow_scope(ScopeRule::path_prefix(&code_path).expect("canonical code scope"))
+            .allow_scope(ScopeRule::path_prefix(&cache_root).expect("canonical cache scope"))
+            .allow_capability(Capability::CodeScan)
+            .allow_capability(Capability::ExternalTool)
+            .allow_capability(Capability::LocalState)
+            .allow_effect(EffectClass::Passive),
+    ));
     let config_path = write_config(directory.path(), "code.toml", &config);
 
     let output = run_cli(

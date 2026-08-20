@@ -186,7 +186,7 @@ const fn contract(
 }
 
 #[doc(hidden)]
-const TOOL_CONTRACTS: [McpToolContract; 30] = [
+const TOOL_CONTRACTS: [McpToolContract; 33] = [
     contract("analyze_findings", McpToolClass::ExternalEffect, false, false, true),
     contract("auto_scan", McpToolClass::ExternalEffect, true, false, true),
     contract("check_tools", McpToolClass::Read, false, true, false),
@@ -213,6 +213,9 @@ const TOOL_CONTRACTS: [McpToolContract; 30] = [
     contract("scan_job_status", McpToolClass::Read, false, true, false),
     contract("scan_progress", McpToolClass::Read, false, true, false),
     contract("schedule_scan", McpToolClass::LocalState, false, false, false),
+    contract("supply_chain_cache_refresh", McpToolClass::ExternalEffect, true, false, true),
+    contract("supply_chain_cache_status", McpToolClass::Read, false, true, false),
+    contract("supply_chain_scan", McpToolClass::ExternalEffect, false, false, false),
     contract("target_add", McpToolClass::LocalState, false, false, false),
     contract("target_intelligence", McpToolClass::ExternalEffect, false, false, true),
     contract("target_list", McpToolClass::Read, false, true, false),

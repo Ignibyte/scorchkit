@@ -385,7 +385,7 @@ async fn execute_scheduled_scan(
         result.modules_skipped.iter().map(|(id, _)| id.clone()).collect();
     let summary_json = serde_json::to_value(&result.summary)?;
 
-    let scan = scans::save_scan(
+    let scan = scans::save_scan_with_evidence(
         pool,
         project.id,
         result.target.url.as_str(),
@@ -395,6 +395,7 @@ async fn execute_scheduled_scan(
         &modules_run,
         &modules_skipped,
         &summary_json,
+        &scans::execution_evidence(&result),
     )
     .await?;
 

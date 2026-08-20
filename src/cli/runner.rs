@@ -272,6 +272,10 @@ pub async fn execute(cli: Cli) -> Result<()> {
             .await
         }
 
+        Commands::SupplyChain { command } => {
+            run_supply_chain_command(&config, command, cli.output, cli.quiet).await
+        }
+
         Commands::Completions { shell } => {
             args::print_completions(shell);
             Ok(())
@@ -338,6 +342,61 @@ pub async fn execute(cli: Cli) -> Result<()> {
                 cli.output,
             )
             .await
+        }
+    }
+}
+
+async fn run_supply_chain_command(
+    config: &Arc<AppConfig>,
+    command: args::SupplyChainCommands,
+    output_format: Option<OutputFormat>,
+    quiet: bool,
+) -> Result<()> {
+    let engine = crate::facade::Engine::new(Arc::clone(config));
+    match command {
+        args::SupplyChainCommands::Scan { path, kind, profile, revision } => {
+            let kind = match kind {
+                args::SupplyChainTargetKindArg::SourceDirectory => {
+                    scorchkit_core::SupplyChainTargetKind::SourceDirectory
+                }
+                args::SupplyChainTargetKindArg::DirectoryArtifact => {
+                    scorchkit_core::SupplyChainTargetKind::DirectoryArtifact
+                }
+                args::SupplyChainTargetKindArg::FileArtifact => {
+                    scorchkit_core::SupplyChainTargetKind::FileArtifact
+                }
+                args::SupplyChainTargetKindArg::OciArchive => {
+                    scorchkit_core::SupplyChainTargetKind::OciArchive
+                }
+                args::SupplyChainTargetKindArg::OciLayout => {
+                    scorchkit_core::SupplyChainTargetKind::OciLayout
+                }
+                args::SupplyChainTargetKindArg::CycloneDxSbom => {
+                    scorchkit_core::SupplyChainTargetKind::CycloneDxSbom
+                }
+            };
+            let result =
+                engine.supply_chain_scan_with_profile(&path, kind, &profile, revision).await?;
+            emit_scan_report(&result, config, output_format.as_ref(), quiet).await
+        }
+        args::SupplyChainCommands::CacheStatus => {
+            let snapshots = engine.supply_chain_cache_status()?;
+            println!("{}", serde_json::to_string_pretty(&snapshots)?);
+            Ok(())
+        }
+        args::SupplyChainCommands::CacheRefresh { request } => {
+            let metadata = std::fs::metadata(&request)?;
+            if metadata.len() > 1024 * 1024 {
+                return Err(ScorchError::Config(
+                    "provider refresh request exceeds the 1 MiB metadata limit".to_string(),
+                ));
+            }
+            let bytes = std::fs::read(&request)?;
+            let request: crate::supply_chain::ProviderRefreshRequest =
+                serde_json::from_slice(&bytes)?;
+            let snapshot = engine.supply_chain_cache_refresh(&request).await?;
+            println!("{}", serde_json::to_string_pretty(&snapshot)?);
+            Ok(())
         }
     }
 }
@@ -929,7 +988,7 @@ async fn persist_scan_results(
         result.modules_skipped.iter().map(|(id, _)| id.clone()).collect();
     let summary_json = serde_json::to_value(&result.summary)?;
 
-    let scan = crate::storage::scans::save_scan(
+    let scan = crate::storage::scans::save_scan_with_evidence(
         &pool,
         project.id,
         result.target.url.as_str(),
@@ -939,6 +998,7 @@ async fn persist_scan_results(
         &modules_run,
         &modules_skipped,
         &summary_json,
+        &crate::storage::scans::execution_evidence(result),
     )
     .await?;
 
@@ -1199,7 +1259,16 @@ async fn run_code_scan(
         orchestrator.exclude_by_ids(&ids);
     }
 
-    let result = orchestrator.run_quiet(quiet).await?;
+    let mut result = orchestrator.run_quiet(quiet).await?;
+    let supply_chain = engine
+        .supply_chain_scan_with_profile(
+            &abs_path,
+            scorchkit_core::SupplyChainTargetKind::SourceDirectory,
+            profile,
+            None,
+        )
+        .await?;
+    result.merge(supply_chain);
     emit_scan_report(&result, config, output_format.as_ref(), quiet).await?;
 
     // AI analysis
@@ -1267,7 +1336,7 @@ mod tests {
     use super::persist_scan_results;
     use super::{
         effective_quiet, emit_scan_report, empty_plan_fallback_message, run_ai_analysis,
-        should_run_ai,
+        run_supply_chain_command, should_run_ai,
     };
     #[cfg(feature = "infra")]
     use super::{run_assess, AssessmentTargets};
@@ -1473,5 +1542,26 @@ mod tests {
             include_str!("runner.rs").split("#[cfg(test)]").next().expect("production source");
         let compact: String = production.split_whitespace().collect();
         assert!(compact.contains("result.merge(code_result);if!quiet{ifcode_degraded{"));
+    }
+
+    #[tokio::test]
+    async fn provider_refresh_request_limit_preserves_the_exact_one_mibibyte_boundary() {
+        for size in [1024 * 1024, 2049] {
+            let directory = tempfile::tempdir().expect("request directory");
+            let request = directory.path().join("request.json");
+            std::fs::write(&request, vec![b' '; size]).expect("request fixture");
+            let error = run_supply_chain_command(
+                &Arc::new(AppConfig::default()),
+                crate::cli::args::SupplyChainCommands::CacheRefresh { request },
+                None,
+                true,
+            )
+            .await
+            .expect_err("blank JSON request must fail parsing after the size check");
+            assert!(
+                !error.to_string().contains("exceeds the 1 MiB metadata limit"),
+                "boundary request was rejected by the wrong limit: {error}"
+            );
+        }
     }
 }

@@ -264,8 +264,7 @@ impl CodeOrchestrator {
         if progress::has_no_visible_items(total, quiet) {
             println!(
                 "{}",
-                "No code analysis modules available. Install semgrep, osv-scanner, or gitleaks."
-                    .yellow()
+                "No code analysis modules available. Install semgrep or gitleaks.".yellow()
             );
         } else if progress::has_visible_items(total, quiet) {
             println!(
@@ -449,6 +448,7 @@ impl CodeOrchestrator {
             modules_skipped,
             module_outcomes,
             execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
+            supply_chain: None,
             summary,
         };
         result.refresh_execution_status();

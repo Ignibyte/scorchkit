@@ -238,6 +238,12 @@ pub enum Commands {
         database_url: Option<String>,
     },
 
+    /// Scan local application dependencies and artifacts with the ordered offline SBOM pipeline.
+    SupplyChain {
+        #[command(subcommand)]
+        command: SupplyChainCommands,
+    },
+
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -372,6 +378,43 @@ pub enum OutputFormat {
     Html,
     Sarif,
     Pdf,
+}
+
+/// Explicit local target shapes accepted by the supply-chain scanner.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum SupplyChainTargetKindArg {
+    SourceDirectory,
+    DirectoryArtifact,
+    FileArtifact,
+    OciArchive,
+    OciLayout,
+    CycloneDxSbom,
+}
+
+/// Application supply-chain scan and provider-cache operations.
+#[derive(Subcommand, Debug)]
+pub enum SupplyChainCommands {
+    /// Run the ordered offline pipeline against one explicit local target.
+    Scan {
+        /// Existing local target path.
+        path: PathBuf,
+        /// Exact target shape; never inferred as an image, registry, or daemon target.
+        #[arg(long, value_enum)]
+        kind: SupplyChainTargetKindArg,
+        /// Supply-chain profile: quick, standard, thorough, or pentest.
+        #[arg(long, default_value = "standard")]
+        profile: String,
+        /// Optional source revision or immutable artifact revision supplied by the caller.
+        #[arg(long)]
+        revision: Option<String>,
+    },
+    /// Show missing, stale, invalid, or ready state for every provider snapshot.
+    CacheStatus,
+    /// Refresh one provider from a complete, explicit JSON request file.
+    CacheRefresh {
+        /// JSON file matching the versioned provider refresh request contract.
+        request: PathBuf,
+    },
 }
 
 /// Database management subcommands.

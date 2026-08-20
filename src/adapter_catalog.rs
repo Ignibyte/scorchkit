@@ -43,7 +43,7 @@ const COMPATIBILITY_ENTERPRISE_WEB_IDS: &[&str] =
 const COMPATIBILITY_CLOUD_WEB_IDS: &[&str] = &["cloud", "prowler"];
 
 const APPLICATION_SOURCE_WEB_IDS: &[&str] = &["trufflehog"];
-const APPLICATION_ARTIFACT_WEB_IDS: &[&str] = &["trivy"];
+const APPLICATION_ARTIFACT_WEB_IDS: &[&str] = &[];
 const APPLICATION_ATTACK_PATH_WEB_IDS: &[&str] = &["commix", "interactsh"];
 
 const WEB_JSON_LINES_IDS: &[&str] = &[
@@ -69,7 +69,6 @@ const WEB_JSON_IDS: &[&str] = &[
     "prowler",
     "ssh_audit",
     "sslyze",
-    "trivy",
     "wafw00f",
     "wapiti",
     "wpscan",
@@ -158,7 +157,6 @@ pub const KNOWN_WEB_ADAPTER_IDS: &[&str] = &[
     "tech",
     "testssl",
     "theharvester",
-    "trivy",
     "trufflehog",
     "upload",
     "vespasian",
@@ -188,11 +186,9 @@ pub const KNOWN_CODE_ADAPTER_IDS: &[&str] = &[
     "eslint-security",
     "gitleaks",
     "gosec",
-    "grype",
     "hadolint",
     "kics",
     "kubescape",
-    "osv-scanner",
     "phpstan",
     "psalm",
     "scoutsuite",

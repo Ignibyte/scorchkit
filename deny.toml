@@ -47,6 +47,9 @@ confidence-threshold = 0.8
 
 allow = [
   "MIT",
+  # JUSTIFICATION: MIT-0 is the OSI-approved MIT No Attribution license. It is required by
+  # borrow-or-share through the local-only jsonschema validation dependency chain.
+  "MIT-0",
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",
   "BSD-2-Clause",

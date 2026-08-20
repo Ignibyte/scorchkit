@@ -378,7 +378,7 @@ async fn persist_agent_results(
         result.modules_skipped.iter().map(|(id, _)| id.clone()).collect();
     let summary_json = serde_json::to_value(&result.summary)?;
 
-    let scan = crate::storage::scans::save_scan(
+    let scan = crate::storage::scans::save_scan_with_evidence(
         &pool,
         project.id,
         result.target.url.as_str(),
@@ -388,6 +388,7 @@ async fn persist_agent_results(
         &modules_run,
         &modules_skipped,
         &summary_json,
+        &crate::storage::scans::execution_evidence(result),
     )
     .await?;
 
@@ -434,6 +435,7 @@ mod tests {
             modules_skipped: vec![],
             module_outcomes: vec![],
             execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
+            supply_chain: None,
         }
     }
 

@@ -49,7 +49,7 @@ which the next command discovers automatically.
 | `quick` | headers, tech, SSL, misconfiguration | active-safe |
 | `standard` | built-in application modules | intrusive |
 | `thorough` | application modules except credential-test and exploit effects | intrusive and external-tool capability |
-| `pentest` | all 69 application modules | explicit exploit grants in addition to intrusive and external-tool capability |
+| `pentest` | all 68 application modules | explicit exploit grants in addition to intrusive and external-tool capability |
 
 Unknown profiles are errors. `commix` is restricted to `pentest`. Network, enterprise credential,
 and cloud-account adapters remain outside every implicit profile; explicit module IDs or the

@@ -267,3 +267,39 @@ pub struct CodeScanParams {
     /// Comma-separated list of code module IDs to skip.
     pub skip: Option<String>,
 }
+
+/// Parameters for an explicit local application supply-chain scan.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SupplyChainScanParams {
+    /// Existing local directory, archive, artifact, OCI layout, or `CycloneDX` document.
+    pub path: String,
+    /// Exact target kind: `source_directory`, `directory_artifact`, `file_artifact`, `oci_archive`,
+    /// `oci_layout`, or `cyclonedx_sbom`.
+    pub kind: String,
+    /// quick, standard, thorough, or pentest.
+    #[serde(default = "default_profile")]
+    pub profile: String,
+    /// Optional immutable source or artifact revision supplied by the caller.
+    pub revision: Option<String>,
+}
+
+/// One exact provider object to download during an explicit cache refresh.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SupplyChainProviderDownloadParams {
+    pub url: String,
+    pub relative_path: String,
+    pub sha256: String,
+}
+
+/// Parameters for a policy-owned supply-chain provider refresh.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SupplyChainCacheRefreshParams {
+    /// osv, grype, or trivy. Trivy refresh currently fails closed.
+    pub provider: String,
+    pub snapshot_id: String,
+    pub schema_version: String,
+    pub downloads: Vec<SupplyChainProviderDownloadParams>,
+    /// Optional RFC 3339 upstream build time.
+    pub upstream_built_at: Option<String>,
+    pub maximum_age_seconds: u64,
+}

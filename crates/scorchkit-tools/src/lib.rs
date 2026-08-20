@@ -17,12 +17,17 @@ pub const DEFAULT_TOOL_OUTPUT_LIMIT_BYTES: usize = 8_388_608;
 const TOOL_INFRASTRUCTURE_FAILURE_STATUS: i32 = -1;
 
 /// Whether a tool invocation requires a successful process exit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExitPolicy {
     /// A non-zero exit status is an infrastructure failure.
     RequireSuccess,
     /// Return captured output for any exit status.
     AllowNonZero,
+    /// Return captured output only for one of the explicitly accepted exit codes.
+    ///
+    /// Codes are sorted and deduplicated by [`ToolInvocation::accepting`]. An empty set accepts no
+    /// exit status and therefore fails closed.
+    AcceptedCodes(Vec<i32>),
 }
 
 /// Whether a child process inherits the parent environment.
@@ -70,10 +75,58 @@ impl ToolInvocation {
         Self::new(program, args, timeout, ExitPolicy::AllowNonZero)
     }
 
+    /// Build an invocation that accepts exactly the supplied process exit codes.
+    #[must_use]
+    pub fn accepting(
+        program: &str,
+        args: &[&str],
+        timeout: Duration,
+        accepted_codes: &[i32],
+    ) -> Self {
+        let mut accepted_codes = accepted_codes.to_vec();
+        accepted_codes.sort_unstable();
+        accepted_codes.dedup();
+        Self::new(program, args, timeout, ExitPolicy::AcceptedCodes(accepted_codes))
+    }
+
+    /// Build a strict invocation from already-owned arguments.
+    #[must_use]
+    pub fn strict_owned(program: impl Into<String>, args: Vec<String>, timeout: Duration) -> Self {
+        Self::new_owned(program.into(), args, timeout, ExitPolicy::RequireSuccess)
+    }
+
+    /// Build an exact-exit invocation from already-owned arguments.
+    #[must_use]
+    pub fn accepting_owned(
+        program: impl Into<String>,
+        args: Vec<String>,
+        timeout: Duration,
+        accepted_codes: &[i32],
+    ) -> Self {
+        let mut accepted_codes = accepted_codes.to_vec();
+        accepted_codes.sort_unstable();
+        accepted_codes.dedup();
+        Self::new_owned(program.into(), args, timeout, ExitPolicy::AcceptedCodes(accepted_codes))
+    }
+
     fn new(program: &str, args: &[&str], timeout: Duration, exit_policy: ExitPolicy) -> Self {
+        Self::new_owned(
+            program.to_string(),
+            args.iter().map(|argument| (*argument).to_string()).collect(),
+            timeout,
+            exit_policy,
+        )
+    }
+
+    const fn new_owned(
+        program: String,
+        args: Vec<String>,
+        timeout: Duration,
+        exit_policy: ExitPolicy,
+    ) -> Self {
         Self {
-            program: program.to_string(),
-            args: args.iter().map(|argument| (*argument).to_string()).collect(),
+            program,
+            args,
             timeout,
             exit_policy,
             output_limit_bytes: DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
@@ -408,7 +461,7 @@ async fn execute_system(invocation: ToolInvocation) -> Result<ToolOutput> {
 
     let exit_code = status.code().unwrap_or(TOOL_INFRASTRUCTURE_FAILURE_STATUS);
     let stderr = String::from_utf8_lossy(&stderr.bytes).into_owned();
-    if invocation.exit_policy == ExitPolicy::RequireSuccess && !status.success() {
+    if !invocation.exit_policy.accepts(exit_code, status.success()) {
         return Err(ScorchError::ToolFailed {
             tool: invocation.program,
             status: exit_code,
@@ -423,6 +476,16 @@ async fn execute_system(invocation: ToolInvocation) -> Result<ToolOutput> {
         duration: started.elapsed(),
         resolved_program,
     })
+}
+
+impl ExitPolicy {
+    fn accepts(&self, exit_code: i32, succeeded: bool) -> bool {
+        match self {
+            Self::RequireSuccess => succeeded,
+            Self::AllowNonZero => true,
+            Self::AcceptedCodes(codes) => codes.binary_search(&exit_code).is_ok(),
+        }
+    }
 }
 
 type ChildIoOutcome = (
@@ -711,6 +774,19 @@ mod tests {
         assert_eq!(invocation.environment_policy, EnvironmentPolicy::Inherit);
         assert!(invocation.environment.is_empty());
         assert!(invocation.working_directory.is_none());
+    }
+
+    #[test]
+    fn exact_exit_policy_is_sorted_deduplicated_and_fail_closed_when_empty() {
+        let invocation =
+            ToolInvocation::accepting("tool", &["--flag"], Duration::from_secs(3), &[1, 0, 1]);
+        assert_eq!(invocation.exit_policy, ExitPolicy::AcceptedCodes(vec![0, 1]));
+        assert!(invocation.exit_policy.accepts(0, true));
+        assert!(invocation.exit_policy.accepts(1, false));
+        assert!(!invocation.exit_policy.accepts(2, false));
+
+        let none = ToolInvocation::accepting("tool", &[], Duration::from_secs(3), &[]);
+        assert!(!none.exit_policy.accepts(0, true));
     }
 
     #[cfg(unix)]

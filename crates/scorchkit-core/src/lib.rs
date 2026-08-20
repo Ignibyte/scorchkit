@@ -15,6 +15,7 @@ pub mod scan_result;
 pub mod service_fingerprint;
 pub mod severity;
 pub mod shared_data;
+pub mod supply_chain;
 pub mod target;
 
 /// Compatibility namespace used by extracted source modules and doctests.
@@ -22,7 +23,7 @@ pub mod engine {
     pub use crate::{
         adapter, compliance, compliance_framework, correlation, cve, error, events, evidence,
         finding, observation, risk_score, scan_result, service_fingerprint, severity, shared_data,
-        target,
+        supply_chain, target,
     };
     pub use scorchkit_policy::{policy, scope};
 }
@@ -51,4 +52,11 @@ pub use scan_result::{
     ScanSummary,
 };
 pub use severity::Severity;
+pub use supply_chain::{
+    correlate_observations, observation_counts_by_tool, AdvisoryIdentity, DependencyEvidenceKind,
+    PackageIdentity, ProviderSnapshot, ProviderSnapshotState, SbomArtifact, SupplyChainAssessment,
+    SupplyChainCorrelation, SupplyChainCoverageGap, SupplyChainCoverageStatus, SupplyChainGapKind,
+    SupplyChainObservation, SupplyChainPhase, SupplyChainTarget, SupplyChainTargetKind,
+    SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
+};
 pub use target::Target;

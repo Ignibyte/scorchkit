@@ -105,10 +105,40 @@ fn render_findings_html(result: &ScanResult) -> String {
     findings_html
 }
 
+// JUSTIFICATION: This function assembles one static HTML document whose sections share escaped
+// scan projections; splitting it would obscure the single encoding boundary without simplifying it.
+#[allow(clippy::too_many_lines)]
 fn render_html(result: &ScanResult) -> String {
     let s = &result.summary;
     let findings_html = render_findings_html(result);
-    let execution_status = if result.execution_successful() { "complete" } else { "degraded" };
+    let execution_status = match result.execution_status {
+        crate::engine::scan_result::ScanExecutionStatus::Complete => "complete",
+        crate::engine::scan_result::ScanExecutionStatus::Incomplete => "incomplete",
+        crate::engine::scan_result::ScanExecutionStatus::Degraded => "degraded",
+    };
+    let supply_chain_html = result.supply_chain.as_ref().map_or_else(String::new, |assessment| {
+        let gaps = assessment
+            .gaps
+            .iter()
+            .map(|gap| {
+                format!(
+                    "<li><code>{}/{}</code>{}: {}</li>",
+                    gap.phase.as_str(),
+                    gap.kind.as_str(),
+                    gap.component.as_deref().map_or_else(String::new, |component| {
+                        format!(" [{}]", html_escape(component))
+                    }),
+                    html_escape(&gap.detail),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "<h2>Supply-chain coverage</h2><p>Status: <strong>{}</strong></p><ul>{}</ul>",
+            assessment.coverage_status.as_str(),
+            gaps
+        )
+    });
 
     format!(
         r#"<!DOCTYPE html>
@@ -174,6 +204,8 @@ fn render_html(result: &ScanResult) -> String {
     <div class="summary-card info"><div class="count">{info}</div><div>Info</div></div>
   </div>
 
+  {supply_chain}
+
   <h2>Findings ({total})</h2>
   {findings}
 
@@ -194,6 +226,7 @@ fn render_html(result: &ScanResult) -> String {
         info = s.info,
         total = s.total_findings,
         findings = findings_html,
+        supply_chain = supply_chain_html,
         version = env!("CARGO_PKG_VERSION"),
         modules = result.modules_run.len(),
         duration = format_duration(result.started_at, result.completed_at),

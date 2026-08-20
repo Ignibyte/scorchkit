@@ -270,6 +270,48 @@ async fn test_scan_persist_and_query() {
     storage::projects::delete_project(&pool, project.id).await.unwrap();
 }
 
+#[tokio::test]
+async fn test_scan_execution_evidence_round_trips() {
+    let Some(pool) = get_pool_or_skip().await else {
+        return;
+    };
+    let project = storage::projects::create_project(&pool, &unique_name("test-scan-evidence"), "")
+        .await
+        .expect("create project");
+    let now = chrono::Utc::now();
+    let evidence = serde_json::json!({
+        "schema": "scorchkit.scan-execution-evidence.v1",
+        "execution_status": "incomplete",
+        "module_outcomes": [],
+        "supply_chain": {
+            "coverage_status": "incomplete",
+            "gaps": [{"kind": "missing_provider_snapshot"}]
+        }
+    });
+
+    let scan = storage::scans::save_scan_with_evidence(
+        &pool,
+        project.id,
+        "file:///owned/source",
+        "standard",
+        now,
+        Some(now),
+        &[],
+        &[],
+        &serde_json::json!({"total_findings": 0}),
+        &evidence,
+    )
+    .await
+    .expect("save scan evidence");
+    assert_eq!(scan.execution_evidence, evidence);
+
+    let restored =
+        storage::scans::get_scan(&pool, scan.id).await.expect("read scan").expect("stored scan");
+    assert_eq!(restored.execution_evidence, evidence);
+
+    storage::projects::delete_project(&pool, project.id).await.expect("delete project");
+}
+
 /// Verify that saving the same finding twice increments `seen_count` via dedup.
 #[tokio::test]
 async fn test_finding_dedup_increments() {

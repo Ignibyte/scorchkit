@@ -48,6 +48,10 @@ pub enum Capability {
     CredentialUse,
     /// Execute an exploit capability.
     Exploit,
+    /// Read or write an explicitly authorized local `ScorchKit` state path.
+    LocalState,
+    /// Retrieve a security-provider snapshot outside scan-time execution.
+    ProviderRefresh,
 }
 
 /// A normalized target presented to the policy engine.

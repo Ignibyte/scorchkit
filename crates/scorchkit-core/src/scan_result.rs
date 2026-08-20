@@ -3,6 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::finding::Finding;
 use super::severity::Severity;
+use super::supply_chain::{SupplyChainAssessment, SupplyChainCoverageStatus};
 use super::target::Target;
 
 /// Overall execution integrity of a scan result.
@@ -12,6 +13,8 @@ pub enum ScanExecutionStatus {
     /// Every selected module either ran or had a non-failure coverage disposition.
     #[default]
     Complete,
+    /// At least one applicable prerequisite was absent or unusable before execution.
+    Incomplete,
     /// At least one selected module failed during execution or output validation.
     Degraded,
 }
@@ -50,6 +53,13 @@ pub enum ModuleOutcomeReason {
     MissingTool {
         /// Executable name declared by the adapter.
         tool: String,
+    },
+    /// A non-tool prerequisite was absent or unusable before execution.
+    CoverageUnavailable {
+        /// Stable coverage-gap kind.
+        gap: String,
+        /// Provider, producer, consumer, or artifact name.
+        component: String,
     },
     /// The module failed during execution or output validation.
     ExecutionFailed {
@@ -198,6 +208,9 @@ pub struct ScanResult {
     /// Overall status derived from the typed module outcomes.
     #[serde(default)]
     pub execution_status: ScanExecutionStatus,
+    /// Canonical application supply-chain evidence when this scan selected that family.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supply_chain: Option<SupplyChainAssessment>,
     /// Summary statistics.
     pub summary: ScanSummary,
 }
@@ -260,6 +273,7 @@ impl ScanResult {
             modules_skipped,
             module_outcomes: Vec::new(),
             execution_status: ScanExecutionStatus::Complete,
+            supply_chain: None,
             summary,
         }
     }
@@ -278,6 +292,12 @@ impl ScanResult {
         self.module_outcomes.iter().any(|outcome| outcome.status == ModuleOutcomeStatus::Failed)
     }
 
+    /// Return whether at least one selected module was applicable but could not start.
+    #[must_use]
+    pub fn has_incomplete_modules(&self) -> bool {
+        self.module_outcomes.iter().any(|outcome| outcome.status == ModuleOutcomeStatus::Skipped)
+    }
+
     /// Return the SARIF-compatible execution-success value for this result.
     #[must_use]
     pub fn execution_successful(&self) -> bool {
@@ -286,11 +306,27 @@ impl ScanResult {
 
     /// Recompute the top-level status after outcome collection or merge.
     pub fn refresh_execution_status(&mut self) {
-        self.execution_status = if self.has_failed_modules() {
+        let supply_chain_status =
+            self.supply_chain.as_ref().map(|assessment| assessment.coverage_status);
+        self.execution_status = if self.has_failed_modules()
+            || supply_chain_status == Some(SupplyChainCoverageStatus::Degraded)
+        {
             ScanExecutionStatus::Degraded
+        } else if self.has_incomplete_modules()
+            || supply_chain_status == Some(SupplyChainCoverageStatus::Incomplete)
+        {
+            ScanExecutionStatus::Incomplete
         } else {
             ScanExecutionStatus::Complete
         };
+    }
+
+    /// Attach canonical supply-chain evidence and derive the combined execution status.
+    #[must_use]
+    pub fn with_supply_chain(mut self, assessment: SupplyChainAssessment) -> Self {
+        self.supply_chain = Some(assessment);
+        self.refresh_execution_status();
+        self
     }
 
     /// Preserve a fatal module or scan-family failure in a partial result.
@@ -329,6 +365,13 @@ impl ScanResult {
     ///
     /// This is used to combine DAST and SAST results into a single report.
     pub fn merge(&mut self, other: Self) {
+        if self.supply_chain.is_none() {
+            self.supply_chain = other.supply_chain;
+        } else if let (Some(current), Some(additional)) =
+            (self.supply_chain.as_mut(), other.supply_chain)
+        {
+            current.merge(additional);
+        }
         self.findings.extend(other.findings);
         self.modules_run.extend(other.modules_run);
         self.modules_skipped.extend(other.modules_skipped);
@@ -364,6 +407,7 @@ mod tests {
             modules_skipped: Vec::new(),
             module_outcomes: Vec::new(),
             execution_status: ScanExecutionStatus::Complete,
+            supply_chain: None,
             summary: ScanSummary::from_findings(&findings),
             findings,
         }
@@ -440,7 +484,7 @@ mod tests {
         assert_eq!(dast.modules_run.len(), 4);
         assert_eq!(dast.modules_skipped.len(), 1);
         assert_eq!(dast.module_outcomes.len(), 2);
-        assert_eq!(dast.execution_status, ScanExecutionStatus::Complete);
+        assert_eq!(dast.execution_status, ScanExecutionStatus::Incomplete);
         assert_eq!(dast.module_outcomes[0], ModuleOutcome::ran("semgrep", 1));
         assert_eq!(dast.summary.total_findings, 4);
         assert_eq!(dast.summary.critical, 1);
@@ -585,5 +629,20 @@ mod tests {
         assert_eq!(message, crate::observation::redact_text("prefix api_key=wire-secret suffix"));
         assert!(message.starts_with("prefix "));
         assert!(message.ends_with(" suffix"));
+    }
+
+    #[test]
+    fn incomplete_modules_require_an_explicit_skipped_outcome() {
+        let clean = test_result_with_confidences(&[]);
+        assert!(!clean.has_incomplete_modules());
+
+        let ran = clean.clone().with_module_outcomes(vec![ModuleOutcome::ran("semgrep", 0)]);
+        assert!(!ran.has_incomplete_modules());
+
+        let skipped = clean.with_module_outcomes(vec![ModuleOutcome::skipped(
+            "osv",
+            ModuleOutcomeReason::MissingTool { tool: "osv-scanner".to_string() },
+        )]);
+        assert!(skipped.has_incomplete_modules());
     }
 }

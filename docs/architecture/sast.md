@@ -23,7 +23,7 @@ CLI: scorchkit code <path>          CLI: scorchkit run <url>           CLI: scor
     ┌────┼────────┐              ┌────────────┼────────────┐                       │
     │    │        │              │            │            │                       │
   sast  sast_tools             recon      scanner       tools                   infra
-  (1)   (23)                   (10)       (35)          (46)                    (5)
+  (1)   (21)                   (10)       (35)          (45)                    (5)
          │                                    │                                    │
          └────────────────────────────────────┴────────────────────────────────────┘
                                               │
@@ -57,10 +57,11 @@ Parallel to `ScanModule`. Adds `languages()` method for language-aware filtering
 
 - `Sast` — security-oriented source analysis (Semgrep, CodeQL, Psalm, Bandit, Gosec, ESLint-security, Slither, Brakeman, Snyk-code)
 - `Correctness` — static correctness and type analysis that does not claim vulnerability coverage (PHPStan)
-- `Sca` — software composition analysis (OSV-Scanner, Grype, cargo-audit, cargo-deny, Snyk-test, dep-audit)
+- `Sca` — software composition analysis (cargo-audit, cargo-deny, Snyk-test, dep-audit); ordered
+  OSV/Grype coverage lives in the supply-chain service
 - `Secrets` — secret detection (Gitleaks)
 - `Iac` — infrastructure as code (Checkov, Hadolint, TFLint, KICS, Kubescape)
-- `Container` — container image analysis (Grype, Dockle) plus the explicit ScoutSuite
+- `Container` — local container artifact analysis (Dockle) plus the explicit ScoutSuite
   cloud-account compatibility adapter
 
 ### `Target::from_path()`
@@ -75,9 +76,9 @@ Constructs a `Target` with `file://` URL scheme from a filesystem path. This ena
 
 ## External SAST Tool Wrappers (`sast_tools/`)
 
-23 wrappers, registered in `sast_tools::register_modules()`.
+21 wrappers are registered in `sast_tools::register_modules()`.
 
-The default code catalog contains 22 of these wrappers plus the native dependency analyzer.
+The default code catalog contains 20 of these wrappers plus the native dependency analyzer.
 `scoutsuite` remains registered but requires an explicit module-ID selection because it assesses a
 cloud account rather than application source or artifacts.
 
@@ -85,12 +86,10 @@ cloud account rather than application source or artifacts.
 |------|----------|-----------|---------------|-----------|
 | Semgrep | Sast, fast | multi | JSON (`results`) | strict |
 | CodeQL | Sast, deep | JavaScript/TypeScript, Python, Ruby | SARIF | strict |
-| OSV-Scanner | Sca | multi | JSON (`results.packages.vulnerabilities`) | non-zero on findings |
 | Gitleaks | Secrets | any | JSON array | non-zero on findings |
 | Bandit | Sast | python | JSON | non-zero on findings |
 | Gosec | Sast | go | JSON | non-zero on findings |
 | Checkov | Iac | terraform/cloudformation/k8s/dockerfile | JSON | non-zero on findings |
-| Grype | Sca / Container | any | JSON | non-zero on findings |
 | Hadolint | Iac | dockerfile | JSON | non-zero on findings |
 | ESLint-security | Sast | javascript/typescript | JSON | non-zero on findings |
 | PHPStan | Correctness, fast | php | JSON | non-zero on findings |
@@ -106,6 +105,11 @@ cloud account rather than application source or artifacts.
 | Dockle | Container | docker image | JSON | non-zero on findings |
 | Kubescape | Iac | kubernetes | JSON | non-zero on findings |
 | ScoutSuite | Container | aws/gcp/azure/alicloud/oci | JSON | non-zero on findings |
+
+The legacy OSV Scanner and Grype wrapper types remain readable for source compatibility but are not
+registered. Production application scans use the ordered offline supply-chain service so source
+lockfiles, the exact validated SBOM, provider snapshot health, and artifact consumers cannot be
+silently reordered or separated. See [Application supply-chain evidence](application-supply-chain.md).
 
 Tools that exit non-zero for "findings found" use `ctx.run_tool_lenient()`. Strict tools use
 `ctx.run_tool()`. File-producing deep analyzers use the same context-owned invocation seam with a

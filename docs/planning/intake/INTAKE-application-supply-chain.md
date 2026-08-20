@@ -2,8 +2,8 @@
 title: INTAKE-application-supply-chain
 status: candidate
 created: 2026-08-17
-ticket:
-pipeline_spec:
+ticket: docs/planning/tickets/open/TICKET-012-application-supply-chain.md
+pipeline_spec: docs/planning/pipeline/active/application-supply-chain.spec.md
 ---
 
 # Application dependency artifact and SBOM security pipeline

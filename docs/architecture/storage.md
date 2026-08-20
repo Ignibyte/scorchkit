@@ -18,7 +18,7 @@ PostgreSQL via `sqlx` (async, runtime queries with `FromRow` derives) behind a `
 ```
 projects (id, name, description, settings JSONB, created_at, updated_at)
     └── project_targets (id, project_id FK, url UNIQUE(project_id,url), label)
-    └── scan_records (id, project_id FK, target_url, profile, started_at, completed_at, modules_run TEXT[], modules_skipped TEXT[], summary JSONB)
+    └── scan_records (id, project_id FK, target_url, profile, started_at, completed_at, modules_run TEXT[], modules_skipped TEXT[], summary JSONB, execution_evidence JSONB)
         └── tracked_findings (id, scan_id FK, project_id FK, stable_identity, identity_schema, correlation_keys JSONB, compatibility fields, raw_finding JSONB, lifecycle fields)
             ├── finding_evidence (scan_id FK, evidence_identity, evidence_schema, raw_evidence JSONB, collected_at)
             └── finding_agent_analysis (analysis_identity, analysis_schema, raw_analysis JSONB, created_at)
@@ -41,6 +41,12 @@ repeat saves within one scan deduplicate, while later scans and different eviden
 Agent analysis has its own child table and cannot overwrite or masquerade as scanner evidence. See
 `docs/architecture/application-security-evidence.md`.
 
+`scan_records.execution_evidence` stores the stable `scorchkit.scan-execution-evidence.v1`
+projection: exact execution status, typed module outcomes, and the optional canonical application
+supply-chain assessment. Legacy callers continue to write an empty object; production scan callers
+use the evidence-aware save path so missing or degraded analyzer coverage remains durable beside the
+summary.
+
 ## Vulnerability Lifecycle
 
 ```
@@ -62,7 +68,7 @@ src/storage/
   jobs.rs       — provider-neutral job store adapter with transactional revision audit
   migrate.rs    — run embedded migrations
 migrations/
-  001_initial.sql … 009_appsec_evidence_v2.sql
+  001_initial.sql … 010_scan_execution_evidence.sql
 ```
 
 Scan job domain types, `JobStore`, and the in-memory store live in `scorchkit-executor::job`. The
