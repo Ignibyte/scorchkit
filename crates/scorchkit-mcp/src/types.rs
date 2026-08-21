@@ -78,6 +78,104 @@ pub struct ApplicationDastParams {
     pub schemas: Vec<ApplicationDastSchemaParams>,
 }
 
+/// One immutable Git change set declared to the application workflow planner.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplicationChangeSetParams {
+    /// Immutable lowercase 40- or 64-hex base object ID. Branch names are rejected.
+    pub base_revision: String,
+    /// Immutable lowercase 40- or 64-hex head object ID. Branch names are rejected.
+    pub head_revision: String,
+    /// Root-relative changed paths for exactly this change set.
+    pub changed_paths: Vec<String>,
+}
+
+/// Inputs for bounded application context discovery.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplicationContextParams {
+    /// Existing authorized local application source directory.
+    pub path: String,
+    /// Optional project name or UUID used only to load registered target inventory.
+    pub project: Option<String>,
+    /// Optional immutable host-declared Git change set. `ScorchKit` records but does not execute
+    /// Git to verify the declaration.
+    pub change_set: Option<ApplicationChangeSetParams>,
+    /// Normalized application routes declared by the host without query values.
+    #[serde(default)]
+    pub routes: Vec<String>,
+    /// Root-relative local application artifacts declared by the host.
+    #[serde(default)]
+    pub artifacts: Vec<String>,
+}
+
+/// Exact static or runtime scanner selector in a focused verification request.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FocusedScannerSelectorParams {
+    /// Scanner or module identifier.
+    pub scanner_id: String,
+    /// Exact rule, query, check, or template identifier.
+    pub rule_id: String,
+    /// Exact rule or template digest when supplied by correlation.
+    pub rule_digest: Option<String>,
+    /// Exact rule pack, template collection, or configuration identity.
+    pub config_identity: Option<String>,
+}
+
+/// Parameter identity for a focused request without a value.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FocusedRequestParameterParams {
+    /// Parameter name.
+    pub name: String,
+    /// Parameter carrier such as `query` or `json`.
+    pub location: String,
+}
+
+/// Redacted focused runtime request selector.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FocusedRequestSelectorParams {
+    /// Exact HTTP method.
+    pub method: String,
+    /// Normalized route without query values.
+    pub route: String,
+    /// Optional parameter identity without a value.
+    pub parameter: Option<FocusedRequestParameterParams>,
+    /// Optional persona label without a credential.
+    pub authentication_persona: Option<String>,
+}
+
+/// Complete canonical focused selection returned by attack-path correlation.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FocusedVerificationSelectionParams {
+    /// Must be `scorchkit.focused-verification/v1`.
+    pub schema: String,
+    /// Deterministic selection identity returned by correlation.
+    pub identity: String,
+    /// Parent attack-path identity.
+    pub path_identity: String,
+    /// Exact static-analysis selectors.
+    #[serde(default)]
+    pub static_rules: Vec<FocusedScannerSelectorParams>,
+    /// Exact runtime scanner or template selectors.
+    #[serde(default)]
+    pub runtime_probes: Vec<FocusedScannerSelectorParams>,
+    /// Redacted runtime requests.
+    #[serde(default)]
+    pub requests: Vec<FocusedRequestSelectorParams>,
+    /// Exact test identities.
+    #[serde(default)]
+    pub tests: Vec<String>,
+}
+
+/// Parameters for compiling an inert application-security workflow.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplicationSecurityWorkflowParams {
+    /// `commit`, `pull_request`, `staging`, `release`, or `deep`.
+    pub profile: String,
+    /// Inputs used to rebuild the canonical application context.
+    pub context: ApplicationContextParams,
+    /// Optional exact focused selection. When present, broad profile steps are not compiled.
+    pub focused_selection: Option<FocusedVerificationSelectionParams>,
+}
+
 /// One expected access result for an application-pentest persona.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ApplicationPentestPersonaParams {

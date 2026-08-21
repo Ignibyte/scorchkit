@@ -370,6 +370,48 @@ pub struct FocusedVerificationSelection {
     pub tests: Vec<String>,
 }
 
+/// Validate one focused selection restored or supplied independently of its parent attack path.
+///
+/// # Errors
+///
+/// Returns a typed error when the schema, identity, ordering, or nested selector normalization is
+/// inconsistent. This does not authorize or execute the selection.
+pub fn validate_focused_verification_selection(
+    selection: &FocusedVerificationSelection,
+) -> Result<(), AttackPathValidationError> {
+    if selection.schema != FOCUSED_VERIFICATION_SCHEMA_V1 {
+        return Err(AttackPathValidationError::Schema);
+    }
+    if !is_lower_hex_digest(&selection.path_identity)
+        || selection.identity != focused_selection_identity(selection)
+    {
+        return Err(AttackPathValidationError::Identity);
+    }
+    if selection.static_rules.len() > MAX_CORRELATION_DETAILS_PER_FINDING
+        || selection.runtime_probes.len() > MAX_CORRELATION_DETAILS_PER_FINDING
+        || selection.requests.len() > MAX_CORRELATION_DETAILS_PER_FINDING
+        || selection.tests.len() > MAX_CORRELATION_DETAILS_PER_FINDING
+        || !is_strictly_ordered(&selection.static_rules)
+        || !is_strictly_ordered(&selection.runtime_probes)
+        || !is_strictly_ordered(&selection.requests)
+        || normalized_strings(selection.tests.clone()) != selection.tests
+        || !selection
+            .static_rules
+            .iter()
+            .chain(&selection.runtime_probes)
+            .all(scanner_selector_is_normalized)
+        || !selection.requests.iter().all(request_selector_is_normalized)
+    {
+        return Err(AttackPathValidationError::Normalization);
+    }
+    Ok(())
+}
+
+fn is_lower_hex_digest(value: &str) -> bool {
+    value.len() == 64
+        && value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
 /// Verification coverage state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -637,11 +679,10 @@ impl AttackPath {
         }
         if self.identity != attack_path_identity(&self.members, &self.shared_facets)
             || self.focused_verification.path_identity != self.identity.value
-            || self.focused_verification.identity
-                != focused_selection_identity(&self.focused_verification)
         {
             return Err(AttackPathValidationError::Identity);
         }
+        validate_focused_verification_selection(&self.focused_verification)?;
         if self.shared_facets.is_empty()
             || !is_strictly_ordered(&self.shared_facets)
             || self.shared_facets.iter().any(|facet| {
@@ -1638,6 +1679,26 @@ fn focused_selection_identity(selection: &FocusedVerificationSelection) -> Strin
     }
     parts.extend(selection.tests.iter().map(|test| format!("test\0{test}")));
     digest_parts(FOCUSED_VERIFICATION_SCHEMA_V1, &parts)
+}
+
+#[cfg(test)]
+pub(crate) fn focused_verification_test_fixture() -> FocusedVerificationSelection {
+    let mut selection = FocusedVerificationSelection {
+        schema: FOCUSED_VERIFICATION_SCHEMA_V1.to_string(),
+        identity: String::new(),
+        path_identity: "a".repeat(64),
+        static_rules: vec![ScannerVerificationSelector {
+            scanner_id: "semgrep".to_string(),
+            rule_id: "scorchkit.sql-injection".to_string(),
+            rule_digest: Some("b".repeat(64)),
+            config_identity: Some("c".repeat(64)),
+        }],
+        runtime_probes: Vec::new(),
+        requests: Vec::new(),
+        tests: Vec::new(),
+    };
+    selection.identity = focused_selection_identity(&selection);
+    selection
 }
 
 fn scanner_selector_identity_part(kind: &str, selector: &ScannerVerificationSelector) -> String {

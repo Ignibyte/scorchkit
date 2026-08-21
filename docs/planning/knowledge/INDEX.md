@@ -100,6 +100,10 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-declared-evidence-must-match-001` | Require every completed scenario to prove each declared evidence class with typed matching records at executor and durable boundaries. | `AAR-016-application-pentest` |
 | `PR-scorchkit-native-response-byte-ceiling-001` | Consume decoded target responses through one hard byte-ceiling primitive; direct whole-body scanner reads are forbidden. | `AAR-016-application-pentest` |
 | `PR-scorchkit-runtime-evidence-link-compatibility-001` | Attach manual runtime evidence only when project, canonical origin, route, and parameter match inside one transaction. | `AAR-016-application-pentest` |
+| `PR-scorchkit-mutation-relative-worker-target-001` | Override ambient Cargo settings with a relative target directory inside every isolated mutation worker. | `AAR-017-codex-appsec-workflows` |
+| `PR-scorchkit-isolated-runtime-scope-fixture-001` | Derive request paths, authorization scope, and expected canonical roots from the runtime checkout in isolated-worktree tests. | `AAR-017-codex-appsec-workflows` |
+| `PR-scorchkit-workflow-boundary-truth-table-001` | Assert every workflow alias, exact limit, gap predicate, stable identity, and engine requirement directly. | `AAR-017-codex-appsec-workflows` |
+| `PR-scorchkit-workflow-gap-no-broad-substitution-001` | Preserve unsupported exact selectors as typed gaps and require a separate explicit choice before broader execution. | `AAR-017-codex-appsec-workflows` |
 
 ## Register
 
@@ -184,3 +188,6 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-status-only-persona-certification-001` | evidence-integrity bug | `AAR-016-application-pentest` |
 | `BF-scorchkit-native-response-unbounded-001` | resource-budget bug | `AAR-016-application-pentest` |
 | `BF-scorchkit-application-scan-split-transaction-001` | persistence-integrity bug | `AAR-016-application-pentest` |
+| `BF-scorchkit-ambient-cargo-target-worker-sharing-001` | build-isolation bug | `AAR-017-codex-appsec-workflows` |
+| `BF-scorchkit-compile-runtime-scope-mismatch-001` | test-isolation bug | `AAR-017-codex-appsec-workflows` |
+| `BF-scorchkit-workflow-boundary-mutation-gap-001` | test-gap bug | `AAR-017-codex-appsec-workflows` |

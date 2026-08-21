@@ -364,11 +364,14 @@ fn open_regular_file(path: &Path, root: Option<&Path>) -> Result<OpenedNucleiInp
         )));
     }
     let canonical = path.canonicalize()?;
-    if root.is_some_and(|root| !canonical.starts_with(root)) {
-        return Err(ScorchError::Config(format!(
-            "trusted Nuclei input '{}' escapes its collection root",
-            path.display()
-        )));
+    if let Some(root) = root {
+        let canonical_root = root.canonicalize()?;
+        if !canonical.starts_with(&canonical_root) {
+            return Err(ScorchError::Config(format!(
+                "trusted Nuclei input '{}' escapes its collection root",
+                path.display()
+            )));
+        }
     }
     let file = open_no_follow(&canonical)?;
     let opened_metadata = file.metadata()?;

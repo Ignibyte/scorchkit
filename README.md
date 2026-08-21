@@ -162,17 +162,19 @@ scorchkit analyze report.json --focus prioritize
 
 ## Codex plugin
 
-The repository-owned package at `plugins/scorchkit` gives Codex five focused MCP workflows for
-engagement preparation, planning, execution, reporting, and remediation verification. Operational
-skills use the local stdio MCP server directly and stop when it is unavailable. They do not treat a
-prompt, project, target registration, or plan as authorization and do not fall back to a
+The repository-owned package at `plugins/scorchkit` gives Codex six focused workflows for
+engagement preparation, planning, execution, reporting, remediation verification, and tiered
+application-security coordination. The coordinator combines Codex Security semantic change or
+repository review with ScorchKit's deterministic MCP evidence while preserving separate
+provenance. Operational skills stop when their required boundary is unavailable. They do not treat
+a prompt, project, target registration, or plan as authorization and do not fall back to a
 terminal-driven scan.
 
 The package stores no target, engagement, database URL, or credential. It is a host adapter over the
 same agent-neutral engine and is not installed into a personal marketplace by the repository. See
 [the Codex plugin guide](docs/guide/codex-plugin.md).
 
-All 37 MCP tools advertise a versioned object output schema, complete safety annotations, and one
+All 39 MCP tools advertise a versioned object output schema, complete safety annotations, and one
 read, local-state, or external-effect class. Routed calls return native structured success/error
 content; successful calls also retain the unchanged legacy text payload. The local-process principal
 and self-asserted client name are trace context only; ScorchKit engagement policy remains the sole

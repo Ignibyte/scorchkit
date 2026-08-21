@@ -148,6 +148,140 @@ fn unconfigured_test_server() -> ScorchKitServer {
     ScorchKitServer::new_stateless(Arc::new(AppConfig::default()))
 }
 
+fn workflow_context_params() -> ApplicationContextParams {
+    let code_root = std::env::current_dir()
+        .unwrap_or_else(|error| panic!("failed to resolve workflow test root: {error}"));
+    ApplicationContextParams {
+        path: code_root.to_string_lossy().into_owned(),
+        project: None,
+        change_set: Some(ApplicationChangeSetParams {
+            base_revision: "a".repeat(40),
+            head_revision: "b".repeat(40),
+            changed_paths: vec!["src/lib.rs".to_string(), "Cargo.toml".to_string()],
+        }),
+        routes: vec!["/api/items".to_string()],
+        artifacts: vec!["Cargo.toml".to_string()],
+    }
+}
+
+fn workflow_test_server() -> ScorchKitServer {
+    let mut config = AppConfig { engagement: Some(test_engagement()), ..AppConfig::default() };
+    config.dast.personas.insert(
+        "member".to_string(),
+        scorchkit::config::DastPersonaConfig::Header {
+            header_name: "Authorization".to_string(),
+            value_env: "WORKFLOW_FIXTURE_SECRET_ENV".to_string(),
+            verification: scorchkit::config::DastVerificationConfig::default(),
+        },
+    );
+    ScorchKitServer::new_stateless(Arc::new(config))
+}
+
+#[tokio::test]
+async fn application_context_and_workflow_are_read_only_stable_and_scope_honest() {
+    let server = workflow_test_server();
+    let expected_code_root = std::env::current_dir()
+        .and_then(|path| path.canonicalize())
+        .unwrap_or_else(|error| panic!("failed to canonicalize workflow test root: {error}"));
+    let context_json = server
+        .do_application_context(workflow_context_params())
+        .await
+        .expect("application context");
+    let context: scorchkit::ApplicationSecurityContext =
+        serde_json::from_str(&context_json).expect("decode application context");
+    assert_eq!(Path::new(&context.code_root), expected_code_root);
+    assert!(context.languages.contains(&"rust".to_string()));
+    assert!(context.manifests.contains(&"Cargo.toml".to_string()));
+    assert_eq!(context.change_set.as_ref().expect("change set").changed_paths.len(), 2);
+    assert!(context.registered_targets.is_empty());
+    assert_eq!(context.persona_labels, ["member"]);
+    assert!(context.configured_capabilities.contains(&Capability::CodeScan));
+    assert!(!context_json.contains("password"));
+    assert!(!context_json.contains("WORKFLOW_FIXTURE_SECRET_ENV"));
+
+    let commit_json = server
+        .do_plan_appsec_workflow(ApplicationSecurityWorkflowParams {
+            profile: "commit".to_string(),
+            context: workflow_context_params(),
+            focused_selection: None,
+        })
+        .await
+        .expect("commit workflow");
+    let commit: scorchkit::ApplicationSecurityWorkflowPlan =
+        serde_json::from_str(&commit_json).expect("decode commit workflow");
+    assert_eq!(commit.steps.len(), 1);
+    assert_eq!(commit.steps[0].operation, "security_change_review");
+    assert!(!commit.steps[0].broad);
+    assert!(!commit.steps[0].requires_execution_authorization);
+
+    let staging_json = server
+        .do_plan_appsec_workflow(ApplicationSecurityWorkflowParams {
+            profile: "staging".to_string(),
+            context: workflow_context_params(),
+            focused_selection: None,
+        })
+        .await
+        .expect("staging workflow");
+    let staging: scorchkit::ApplicationSecurityWorkflowPlan =
+        serde_json::from_str(&staging_json).expect("decode staging workflow");
+    assert!(staging.steps[1].broad);
+    assert_eq!(staging.steps[2].status, scorchkit::ApplicationSecurityWorkflowStepStatus::Blocked);
+    assert!(staging.gaps.iter().any(|gap| {
+        gap.kind == scorchkit::ApplicationSecurityWorkflowGapKind::MissingRegisteredTarget
+    }));
+    assert_eq!(
+        tool_contract("application_context").expect("context contract").tool_class,
+        scorchkit::mcp::contract::McpToolClass::Read
+    );
+    assert_eq!(
+        tool_contract("plan_appsec_workflow").expect("workflow contract").tool_class,
+        scorchkit::mcp::contract::McpToolClass::Read
+    );
+}
+
+#[tokio::test]
+async fn application_context_redacts_registered_target_query_values_and_labels() {
+    let Some(pool) = get_pool_or_skip().await else {
+        return;
+    };
+    let server = test_server(pool);
+    let project = unique_name("mcp-appsec-context");
+    server
+        .do_project_create(ProjectCreateParams {
+            name: project.clone(),
+            description: Some("application workflow context fixture".to_string()),
+        })
+        .await
+        .expect("create context project");
+    server
+        .do_target_add(TargetAddParams {
+            project: project.clone(),
+            url: "https://example.com/app?token=registered-target-fixture-secret".to_string(),
+            label: Some("api_key=registered-label-fixture-secret".to_string()),
+        })
+        .await
+        .expect("register context target");
+    let mut params = workflow_context_params();
+    params.project = Some(project);
+    let context_json = server.do_application_context(params).await.expect("project context");
+    let context: scorchkit::ApplicationSecurityContext =
+        serde_json::from_str(&context_json).expect("decode project context");
+    assert_eq!(context.registered_targets.len(), 1);
+    assert_eq!(context.registered_targets[0].url, "https://example.com/app?token=");
+    assert!(context.registered_targets[0].label.is_some());
+    assert!(!context_json.contains("registered-target-fixture-secret"));
+    assert!(!context_json.contains("registered-label-fixture-secret"));
+}
+
+#[tokio::test]
+async fn application_context_denies_discovery_without_an_engagement() {
+    let error = unconfigured_test_server()
+        .do_application_context(workflow_context_params())
+        .await
+        .expect_err("missing engagement must deny context discovery");
+    assert!(error.contains("no engagement authorization is configured"));
+}
+
 #[tokio::test]
 async fn supply_chain_mcp_status_and_target_kind_contracts_are_typed(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -434,7 +568,7 @@ async fn stateless_job_runs_through_mcp_transport_without_database() {
     });
     let client = ().serve(client_transport).await.expect("initialize MCP client");
     let tools = client.list_all_tools().await.expect("list MCP tools");
-    assert_eq!(tools.len(), 37, "every routed MCP tool has a canonical contract");
+    assert_eq!(tools.len(), 39, "every routed MCP tool has a canonical contract");
     let expected_output_schema: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/mcp/tool-output-schema-v1.json"))
             .expect("decode output schema fixture");

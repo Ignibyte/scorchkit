@@ -424,7 +424,8 @@ async fn codeql_executes_no_build_create_then_offline_analyze_and_cleans_artifac
     assert!(create.args.iter().any(|argument| argument == "--build-mode=none"));
     assert!(create.args.iter().any(|argument| argument == "--threads=2"));
     assert!(create.args.iter().any(|argument| argument == "--ram=4096"));
-    assert_eq!(create.working_directory.as_deref(), Some(root.path()));
+    let canonical_root = root.path().canonicalize()?;
+    assert_eq!(create.working_directory.as_deref(), Some(canonical_root.as_path()));
 
     let analyze = &invocations[1];
     assert_eq!(analyze.args.first().map(String::as_str), Some("database"));

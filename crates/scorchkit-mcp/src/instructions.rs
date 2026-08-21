@@ -54,6 +54,19 @@ Let AI decide which modules to run based on recon results.
 - The plan analyzes recon findings + the full module catalog
 - Review the plan before executing — it shows which modules to run and why
 
+For an application lifecycle workflow, use the provider-neutral planning boundary:
+- Use `application_context` with an authorized local code root, optional immutable Git object IDs
+  and changed paths, optional project, and declared routes/artifacts. Declarations, registered
+  targets, configured effects, and persona labels are context, not authorization or evidence.
+- Use `plan_appsec_workflow` to compile commit, pull_request, staging, release, deep, or exact
+  focused-remediation work. Review every step's owner, scope, broad flag, requirements, status, and
+  gaps before running anything.
+- Commit and pull-request semantic review binds to exactly one declared change set. A full-root scan
+  is explicitly broad and never substitutes for missing changed-scope enforcement.
+- When a focused selection is supplied, do not replace an unsupported selector with a broader
+  module, profile, repository, or mutation scan. A broader fallback requires a new explicit plan.
+- Host analysis remains labeled separately from ScorchKit scanner evidence and cannot grant effects.
+
 ### Step 4: Targeted Scanning
 Run the scan with modules selected by the plan.
 - Use `project_scan` with profile \"standard\" for built-in scans only
@@ -118,6 +131,8 @@ profile is denied unless the engagement grants the matching capabilities and eff
 - `scan_job_cancel` — Request idempotent cancellation for a queued or running job
 - `scan_job_resume` — Reauthorize and resume an interrupted job as a linked attempt
 - `plan_scan` — AI-guided module selection based on recon (returns plan only)
+- `application_context` — Build bounded provider-neutral application context without scanning
+- `plan_appsec_workflow` — Compile inert lifecycle or focused-remediation steps and gaps
 - `plan_application_pentest` — Compile inert scenarios and return a stable reviewed plan only
 - `application_pentest` — Execute the exact approved plan against a registered project target
 - `import_application_evidence` — Atomically import scoped, redacted manual/proxy HTTP evidence
@@ -245,6 +260,8 @@ mod tests {
             "scan_job_cancel",
             "scan_job_resume",
             "plan_scan",
+            "application_context",
+            "plan_appsec_workflow",
             "plan_application_pentest",
             "application_pentest",
             "import_application_evidence",

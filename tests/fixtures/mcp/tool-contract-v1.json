@@ -1,5 +1,6 @@
 [
   {"name":"analyze_findings","toolClass":"external_effect","destructive":false,"idempotent":false,"openWorld":true},
+  {"name":"application_context","toolClass":"read","destructive":false,"idempotent":true,"openWorld":false},
   {"name":"application_dast","toolClass":"external_effect","destructive":true,"idempotent":false,"openWorld":true},
   {"name":"application_pentest","toolClass":"external_effect","destructive":true,"idempotent":false,"openWorld":true},
   {"name":"auto_scan","toolClass":"external_effect","destructive":true,"idempotent":false,"openWorld":true},
@@ -12,6 +13,7 @@
   {"name":"list_code_modules","toolClass":"read","destructive":false,"idempotent":true,"openWorld":false},
   {"name":"list_modules","toolClass":"read","destructive":false,"idempotent":true,"openWorld":false},
   {"name":"plan_application_pentest","toolClass":"read","destructive":false,"idempotent":true,"openWorld":false},
+  {"name":"plan_appsec_workflow","toolClass":"read","destructive":false,"idempotent":true,"openWorld":false},
   {"name":"plan_scan","toolClass":"external_effect","destructive":false,"idempotent":false,"openWorld":true},
   {"name":"project_create","toolClass":"local_state","destructive":false,"idempotent":true,"openWorld":false},
   {"name":"project_delete","toolClass":"local_state","destructive":true,"idempotent":true,"openWorld":false},

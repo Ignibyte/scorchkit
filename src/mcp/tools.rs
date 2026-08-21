@@ -14,14 +14,16 @@ use uuid::Uuid;
 use super::contract::{McpCallContext, McpToolCallResult};
 use super::server::ScorchKitServer;
 use super::types::{
-    AnalyzeFindingsParams, ApplicationDastParams, ApplicationEvidenceImportParams,
-    ApplicationPentestExecuteParams, ApplicationPentestPersonaParams, ApplicationPentestPlanParams,
-    ApplicationPentestScenarioParams, AutoScanParams, CorrelateFindingsParams, FindingListParams,
-    FindingRefParams, FindingUpdateStatusParams, ManualApplicationFindingParams, PlanScanParams,
-    ProjectCreateParams, ProjectDeleteParams, ProjectRefParams, ProjectScanParams,
-    ProjectStatusParams, ScanJobRefParams, ScanParams, ScanProgressParams, ScheduleScanParams,
-    SupplyChainCacheRefreshParams, SupplyChainScanParams, TargetAddParams,
-    TargetIntelligenceParams, TargetRemoveParams,
+    AnalyzeFindingsParams, ApplicationContextParams, ApplicationDastParams,
+    ApplicationEvidenceImportParams, ApplicationPentestExecuteParams,
+    ApplicationPentestPersonaParams, ApplicationPentestPlanParams,
+    ApplicationPentestScenarioParams, ApplicationSecurityWorkflowParams, AutoScanParams,
+    CorrelateFindingsParams, FindingListParams, FindingRefParams, FindingUpdateStatusParams,
+    FocusedScannerSelectorParams, FocusedVerificationSelectionParams,
+    ManualApplicationFindingParams, PlanScanParams, ProjectCreateParams, ProjectDeleteParams,
+    ProjectRefParams, ProjectScanParams, ProjectStatusParams, ScanJobRefParams, ScanParams,
+    ScanProgressParams, ScheduleScanParams, SupplyChainCacheRefreshParams, SupplyChainScanParams,
+    TargetAddParams, TargetIntelligenceParams, TargetRemoveParams,
 };
 use crate::engine::error::ScorchError;
 use crate::engine::policy::{Capability, EffectClass, PolicyTarget};
@@ -211,6 +213,45 @@ fn application_pentest_scenarios(
     params: Vec<ApplicationPentestScenarioParams>,
 ) -> Result<Vec<scorchkit_core::ApplicationPentestScenario>, String> {
     params.into_iter().map(application_pentest_scenario).collect()
+}
+
+fn focused_verification_selection(
+    params: FocusedVerificationSelectionParams,
+) -> scorchkit_core::FocusedVerificationSelection {
+    scorchkit_core::FocusedVerificationSelection {
+        schema: params.schema,
+        identity: params.identity,
+        path_identity: params.path_identity,
+        static_rules: params.static_rules.into_iter().map(focused_scanner_selector).collect(),
+        runtime_probes: params.runtime_probes.into_iter().map(focused_scanner_selector).collect(),
+        requests: params
+            .requests
+            .into_iter()
+            .map(|request| scorchkit_core::RequestVerificationSelector {
+                method: request.method,
+                route: request.route,
+                parameter: request.parameter.map(|parameter| {
+                    scorchkit_core::observation::HttpParameterIdentity {
+                        name: parameter.name,
+                        location: parameter.location,
+                    }
+                }),
+                authentication_persona: request.authentication_persona,
+            })
+            .collect(),
+        tests: params.tests,
+    }
+}
+
+fn focused_scanner_selector(
+    params: FocusedScannerSelectorParams,
+) -> scorchkit_core::ScannerVerificationSelector {
+    scorchkit_core::ScannerVerificationSelector {
+        scanner_id: params.scanner_id,
+        rule_id: params.rule_id,
+        rule_digest: params.rule_digest,
+        config_identity: params.config_identity,
+    }
 }
 
 fn application_pentest_scenario(
@@ -531,6 +572,126 @@ impl ScorchKitServer {
             .await
             .map_err(|error| error.to_string())?;
         serde_json::to_string_pretty(&result).map_err(|error| error.to_string())
+    }
+
+    async fn application_security_context(
+        &self,
+        params: ApplicationContextParams,
+    ) -> Result<scorchkit_core::ApplicationSecurityContext, String> {
+        let engine = Engine::new(Arc::clone(&self.config));
+        let requested_path = std::path::PathBuf::from(&params.path);
+        let code_context =
+            engine.code_context(&requested_path, None).map_err(|error| error.to_string())?;
+        if !code_context.path.is_dir() {
+            return Err("application context path must be a directory".to_string());
+        }
+        let manifests = code_context
+            .manifests
+            .iter()
+            .map(|manifest| {
+                manifest
+                    .strip_prefix(&code_context.path)
+                    .map(|relative| relative.to_string_lossy().into_owned())
+                    .map_err(|_| "detected manifest escaped the canonical code root".to_string())
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let (project, registered_targets) = if let Some(project_ref) = params.project {
+            let project = resolve_project(self.require_pool()?, &project_ref)
+                .await
+                .map_err(|error| error.to_string())?;
+            let targets = projects::list_targets(self.require_pool()?, project.id)
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(|target| scorchkit_core::ApplicationContextTarget {
+                    url: target.url,
+                    label: (!target.label.is_empty()).then_some(target.label),
+                    provenance: scorchkit_core::ApplicationContextProvenance::ProjectRegistered,
+                })
+                .collect();
+            (Some(project.name), targets)
+        } else {
+            (None, Vec::new())
+        };
+        let change_set = params
+            .change_set
+            .map(|change_set| {
+                scorchkit_core::compile_application_change_set(
+                    &change_set.base_revision,
+                    &change_set.head_revision,
+                    change_set.changed_paths,
+                )
+                .map_err(|error| error.to_string())
+            })
+            .transpose()?;
+        let engagement = engine
+            .engagement()
+            .ok_or_else(|| "application context requires a configured engagement".to_string())?;
+        let input = scorchkit_core::ApplicationSecurityContextInput {
+            code_root: code_context.path.to_string_lossy().into_owned(),
+            languages: code_context.languages,
+            manifests,
+            change_set,
+            routes: params
+                .routes
+                .into_iter()
+                .map(|value| scorchkit_core::ApplicationContextValue {
+                    value,
+                    provenance: scorchkit_core::ApplicationContextProvenance::HostDeclared,
+                })
+                .collect(),
+            artifacts: params
+                .artifacts
+                .into_iter()
+                .map(|value| scorchkit_core::ApplicationContextValue {
+                    value,
+                    provenance: scorchkit_core::ApplicationContextProvenance::HostDeclared,
+                })
+                .collect(),
+            project,
+            registered_targets,
+            persona_labels: self.config.dast.personas.keys().cloned().collect(),
+            configured_capabilities: engagement.policy.capabilities.iter().copied().collect(),
+            configured_effects: engagement.policy.effects.iter().copied().collect(),
+        };
+        scorchkit_core::compile_application_security_context(input)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Return the canonical provider-neutral application context without running a scanner.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error before discovery for a denied root and for an invalid change set, declared
+    /// input, project, registered target, or context limit.
+    pub async fn do_application_context(
+        &self,
+        params: ApplicationContextParams,
+    ) -> Result<String, String> {
+        let context = self.application_security_context(params).await?;
+        serde_json::to_string_pretty(&context).map_err(|error| error.to_string())
+    }
+
+    /// Compile one inert application-security workflow without running a named step.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid context, profile, or focused-selection identity.
+    pub async fn do_plan_appsec_workflow(
+        &self,
+        params: ApplicationSecurityWorkflowParams,
+    ) -> Result<String, String> {
+        let profile = scorchkit_core::ApplicationSecurityWorkflowProfile::parse(&params.profile)
+            .map_err(|error| error.to_string())?;
+        let context = self.application_security_context(params.context).await?;
+        let focused_selection = params.focused_selection.map(focused_verification_selection);
+        let plan = scorchkit_core::compile_application_security_workflow(
+            &context,
+            profile,
+            focused_selection,
+        )
+        .map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&plan).map_err(|error| error.to_string())
     }
 
     /// Compile inert proposals into a canonical application-pentest plan without performing any
@@ -1698,6 +1859,17 @@ fn parse_provider_refresh_request(
 #[tool_router(vis = "pub(crate)")]
 impl ScorchKitServer {
     #[tool(
+        description = "Build one versioned provider-neutral application context from a policy-authorized local code root, optional immutable declared Git change set, host-declared routes and artifacts, configured persona labels, configured capability/effect inventory, and optional project-registered targets. The call performs bounded no-follow local discovery only; declarations and project inventory are context, never scanner evidence or authorization."
+    )]
+    async fn application_context(
+        &self,
+        context: McpCallContext,
+        params: Parameters<ApplicationContextParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_application_context(params.0).await)
+    }
+
+    #[tool(
         description = "Run the policy-sealed OWASP ZAP 2.17.0 application DAST service. Select an explicit passive, standard, or active phase profile; optional digest-pinned local OpenAPI or GraphQL schemas; anonymous coverage; and configured persona IDs. Credentials are resolved only after authorization and never belong in this request. Returns findings plus typed per-persona authentication, phase, route, schema, and coverage evidence."
     )]
     async fn application_dast(
@@ -1717,6 +1889,17 @@ impl ScorchKitServer {
         params: Parameters<ApplicationPentestPlanParams>,
     ) -> McpToolCallResult {
         Self::mcp_tool_result(context, self.do_plan_application_pentest(params.0))
+    }
+
+    #[tool(
+        description = "Compile an inert commit, pull-request, staging, release, deep, or focused-remediation application-security workflow. Returns exact ordered host-analysis and ScorchKit-engine steps, scope identities, broadness, requirements, status, gaps, and stable identities. It executes no named step and supplies no target or effect authorization."
+    )]
+    async fn plan_appsec_workflow(
+        &self,
+        context: McpCallContext,
+        params: Parameters<ApplicationSecurityWorkflowParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_plan_appsec_workflow(params.0).await)
     }
 
     #[tool(

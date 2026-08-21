@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** SK-041 application pentest workflows are complete; SK-042 is the next candidate
+**Status:** SK-042 Codex-first application-security workflows are complete; SK-043 is the next candidate
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-21
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
@@ -141,6 +141,7 @@ file-mode observations while the index retains authoritative modes.
 | SK-039 | Replaced ambient Nuclei template discovery with an explicit signed local collection, application-HTTP classifier, exact policy grants, concrete-address execution, and typed adapter evidence across every public and durable projection. | Thirteen inspection findings repaired; signed pinned-runtime loopback integration; 83.15% line coverage; 1,780 strict cases; PostgreSQL and CLI/MCP contracts green; sealed current-tree evidence catches the exact remaining viable mutation with zero misses while preserving the prior 84- and 39-case focused inventories. |
 | SK-040 | Correlated source flows, runtime proof, deployment provenance, and comparable verification into versioned attack paths with inert focused selectors and append-only transitions. | Fifteen inspection findings repaired; 216/216 viable focused mutations caught at 100% MSI; PostgreSQL, MCP, and canonical report projections green. |
 | SK-041 | Added stable application-only pentest plans, closed trusted execution, isolated persona invariants, typed coverage, and atomic redacted HAR/manual evidence import. | Ten reportable inspection findings and three hardenings repaired; 84.03% line coverage; 1,861 strict cases; PostgreSQL and CLI/MCP contracts green; sealed evidence catches 194/194 viable focused mutations at 100% MSI. |
+| SK-042 | Added inert provider-neutral application context, immutable change sets, tiered workflow plans, two read-only MCP tools, and a Codex-first application-security coordinator. | Exact-tree security review found no reportable finding; 81.75% line coverage; 1,873 strict cases; PostgreSQL and CLI/MCP contracts green; sealed evidence catches 152/152 viable mutations at 100% MSI. |
 
 The sealed Codex Security scan `efe30eaf-9b1b-4572-949a-0e8391d48247` reviewed 603 changed paths and
 closed 192/192 semantic rows. Its eight high-confidence findings have code fixes and regression
@@ -150,30 +151,30 @@ evidence.
 
 ## Current validation evidence
 
-Evidence produced through the TICKET-016 pre-completion worktree:
+Evidence produced through the TICKET-017 pre-completion worktree:
 
 | Signal | Last result | Final requirement |
 |---|---:|---:|
 | Compiler | all targets, workspace packages, and features passed | pass after final edits |
 | Strict Clippy | zero diagnostics across every derived feature state and workspace package | pass after final edits and every feature state |
 | All-feature tests | Workspace library, package, integration, and doctest suites passed; strict all-feature Clippy had zero diagnostics | pass after final edits with PostgreSQL |
-| Canonical line coverage | 84.03% | at least 62%; retain the measured floor before the next ratchet decision |
-| SK-041 focused repair | The approved inventory selected 203 scored mutations in 23 repaired functions. The initial run caught 113 viable cases, the exact survivor recheck caught 81/81, the final-tree follow-up caught 3/3, and 9 cases were compiler-unviable. | retain every raw outcome and the sealed 194/194 viable current-tree evidence digest; do not repeat the broader focused inventory while mutation inputs are unchanged |
-| Nextest strictness | 1,861 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
-| PostgreSQL integration | 74 MCP, 12 storage, and 10 storage-integration tests passed | pass |
-| CLI/MCP contracts | 22 CLI, 2 code-scan, 74 MCP, and 12 scan-plan tests passed | pass |
-| Delivery receipt | TICKET-016 pre-completion focused-repair gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive focused-repair receipt bound to the sealed TICKET-016 current-tree evidence |
+| Canonical line coverage | 81.75% | at least 62%; retain the measured floor before the next ratchet decision |
+| SK-042 focused repair | The preserved DIFF inventory selected 177 mutations. Its exact 28-survivor recheck caught 28/28, reconstructing 152/152 viable outcomes caught with 25 compiler-unviable cases. | retain every raw outcome and the sealed 152/152 viable current-tree evidence digest; do not repeat the broader inventory while mutation inputs are unchanged |
+| Nextest strictness | 1,873 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
+| PostgreSQL integration | 77 MCP, 12 storage, and 10 storage-integration tests passed | pass |
+| CLI/MCP contracts | 22 CLI, 2 code-scan, 77 MCP, and 12 scan-plan tests passed | pass |
+| Delivery receipt | TICKET-017 pre-completion focused-repair gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive focused-repair receipt bound to the sealed TICKET-017 current-tree evidence |
 
 The test count is historical evidence, not a promised final count. The gate output after all source and
 documentation edits is authoritative.
 
 ## Baseline blockers
 
-None. The feature-readiness baseline and SK-028 through SK-041 are closed above.
+None. The feature-readiness baseline and SK-028 through SK-042 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. TICKET-016 is complete and SK-042 is the next candidate;
+The pipeline permits one active ticket. TICKET-017 is complete and SK-043 is the next candidate;
 each later row has a specified candidate intake under `docs/planning/intake/` and becomes a
 numbered ticket only when promoted. Backlog status is not a waiver of a safety invariant.
 
@@ -181,7 +182,7 @@ numbered ticket only when promoted. Backlog status is not a waiver of a safety i
 |---:|---|---|---|---|
 | 1 | SK-040 (completed) | Correlate source flows, routes, parameters, components, and runtime proof into versioned attack paths and focused verification selections. | SK-035 through SK-039 | [TICKET-015](tickets/closed/TICKET-015-source-runtime-correlation.md) |
 | 2 | SK-041 (completed) | Add code-informed, application-only pentest scenarios plus HAR/manual proxy evidence interoperability. | SK-038 through SK-040 | [TICKET-016](tickets/closed/TICKET-016-application-pentest.md) |
-| 3 | SK-042 | Present change-aware commit, PR, staging, release, and deep AppSec workflows through Codex-first, agent-neutral contracts. | SK-036 through SK-041 | [intake](intake/INTAKE-codex-appsec-workflows.md) |
+| 3 | SK-042 (completed) | Present change-aware commit, PR, staging, release, and deep AppSec workflows through Codex-first, agent-neutral contracts. | SK-036 through SK-041 | [TICKET-017](tickets/closed/TICKET-017-codex-appsec-workflows.md) |
 | 4 | SK-043 | Restore webhook delivery through a redacted, policy-owned, durable bounded queue outside scan execution. | SK-028, SK-035 | [intake](intake/INTAKE-policy-webhooks.md) |
 | 5 | SK-044 | Add authenticated remote MCP with principal-to-engagement binding, host validation, and an explicit TLS policy. | SK-032, SK-035 | [intake](intake/INTAKE-authenticated-remote-mcp.md) |
 | 6 | SK-045 | Add Windows Job Object process ownership before enabling Windows builds. | SK-028, SK-034 | [intake](intake/INTAKE-windows-process-owner.md) |

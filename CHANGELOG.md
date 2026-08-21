@@ -5,6 +5,14 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Codex-first application-security workflows (TICKET-017 / SK-042)** — Added versioned,
+  provider-neutral application context and inert commit, pull-request, staging, release, deep, and
+  focused-remediation workflow plans. Read-only MCP tools expose exact scope, provenance,
+  broadness, capability/effect requirements, status, gaps, and stable identities without granting
+  effects. The Codex plugin now coordinates Codex Security change/repository review as labeled host
+  analysis alongside ScorchKit's policy-gated source, dependency, artifact, runtime, and
+  correlation evidence. Unsupported focused selectors stop instead of causing an automatic broad
+  scan.
 - **Versioned source-to-runtime attack paths (TICKET-015 / SK-040)** — Added provider-neutral,
   bounded correlation over typed finding-v2 routes, parameters, components, weaknesses, source
   flows, redacted HTTP proof, and deployment provenance. Canonical paths have deterministic

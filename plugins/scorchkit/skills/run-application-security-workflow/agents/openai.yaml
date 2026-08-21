@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Application Security Workflow"
+  short_description: "Coordinate Codex-first application security"
+  default_prompt: "Use $run-application-security-workflow to assess this application with the narrowest justified profile."

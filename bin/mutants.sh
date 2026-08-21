@@ -56,6 +56,58 @@ need() {
 
 need jq "brew install jq (macOS) or apt-get install jq (Linux)" || exit 2
 
+available_bytes() {
+    df -Pk "$1" 2>/dev/null | awk 'NR == 2 { printf "%.0f", $4 * 1024 }'
+}
+
+filesystem_type() {
+    local candidate="$1"
+    local mount_point
+    case "$(uname -s 2>/dev/null)" in
+        Darwin)
+            mount_point="$(
+                df -P "$candidate" 2>/dev/null \
+                    | awk 'NR == 2 { for (i = 6; i <= NF; i++) { printf "%s%s", (i == 6 ? "" : " "), $i }; print "" }'
+            )"
+            [ -n "$mount_point" ] || return 1
+            mount | awk -v point="$mount_point" '
+                {
+                    marker = " on " point " ("
+                    start = index($0, marker)
+                    if (start > 0) {
+                        filesystem = substr($0, start + length(marker))
+                        sub(/,.*/, "", filesystem)
+                        sub(/\).*/, "", filesystem)
+                        print filesystem
+                        exit
+                    }
+                }
+            '
+            ;;
+        *) stat -f -c '%T' "$candidate" 2>/dev/null ;;
+    esac
+}
+
+is_local_filesystem_type() {
+    case "$1" in
+        apfs | hfs | hfsplus | ufs | ffs | ext2 | ext3 | ext4 | ext2/ext3 | xfs | btrfs | zfs | \
+            tmpfs | ramfs | rootfs | overlay | overlayfs | exfat | msdos | vfat | ntfs)
+            return 0
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+is_local_scratch() {
+    local candidate="$1"
+    local filesystem
+    case "$candidate" in
+        "$ROOT_DIR" | "$ROOT_DIR"/*) return 1 ;;
+    esac
+    filesystem="$(filesystem_type "$candidate")"
+    is_local_filesystem_type "$filesystem"
+}
+
 ensure_mutation_outcomes() {
     local mode="$1"
     local status="$2"
@@ -99,6 +151,18 @@ mutation_outcomes_selftest() {
         || ensure_mutation_outcomes diff 1 "$selftest_root/failed"; then
         rm -rf -- "$selftest_root"
         echo "mutation outcomes selftest failed: non-success result was normalized" >&2
+        return 1
+    fi
+    if is_local_scratch "$ROOT_DIR" || ! is_local_scratch /tmp; then
+        rm -rf -- "$selftest_root"
+        echo "mutation outcomes selftest failed: scratch filesystem classification is unsafe" >&2
+        return 1
+    fi
+    if ! is_local_filesystem_type apfs || ! is_local_filesystem_type ext4 \
+        || is_local_filesystem_type smbfs || is_local_filesystem_type nfs \
+        || is_local_filesystem_type / || is_local_filesystem_type ""; then
+        rm -rf -- "$selftest_root"
+        echo "mutation outcomes selftest failed: filesystem type allowlist is unsafe" >&2
         return 1
     fi
     mkdir -p "$selftest_root/malformed"
@@ -160,18 +224,6 @@ HEADROOM_GIB=4
 REQUIRED_GIB=$((MIN_GIB_PER_WORKER * JOBS + HEADROOM_GIB))
 REQUIRED_BYTES=$((REQUIRED_GIB * 1024 * 1024 * 1024))
 
-available_bytes() {
-    df -Pk "$1" 2>/dev/null | awk 'NR == 2 { printf "%.0f", $4 * 1024 }'
-}
-
-is_local_scratch() {
-    local candidate="$1"
-    if [[ "$ROOT_DIR" == /Volumes/* && "$candidate" == /Volumes/* ]]; then
-        return 1
-    fi
-    return 0
-}
-
 choose_scratch() {
     local required_bytes="$1"
     local explicit="${SCORCHKIT_MUTATION_SCRATCH:-}"
@@ -180,7 +232,7 @@ choose_scratch() {
     if [ -n "$explicit" ]; then
         mkdir -p "$explicit" || return 1
         if ! is_local_scratch "$explicit"; then
-            echo "SCORCHKIT_MUTATION_SCRATCH must not use the /Volumes HDD/SMB mount" >&2
+            echo "SCORCHKIT_MUTATION_SCRATCH must be outside the worktree on a local filesystem" >&2
             return 1
         fi
         free="$(available_bytes "$explicit")"
@@ -290,13 +342,15 @@ case "$MODE" in
     shard) COMMAND+=(--shard "$SHARD") ;;
 esac
 
-# cargo-mutants manages a separate target directory for each worker, so a shared
-# CARGO_TARGET_DIR defeats that isolation. Database-backed tests use unique rows;
-# the database-wide due-schedule fixtures also hold a PostgreSQL advisory lock
-# across arrange, act, assert, and cleanup. This keeps the full storage surface in
-# mutation scope without sharing generated build trees.
+# cargo-mutants requires a separate target directory for each worker. A relative
+# environment override wins over any host-global Cargo target setting and resolves
+# inside each worker's isolated source copy, which already lives under RUN_ROOT on
+# local scratch. Database-backed tests use unique rows; the database-wide
+# due-schedule fixtures also hold a PostgreSQL advisory lock across arrange, act,
+# assert, and cleanup. This keeps the full storage surface in mutation scope
+# without sharing generated build trees.
 (
-    unset CARGO_TARGET_DIR
+    export CARGO_TARGET_DIR=target
     export DATABASE_URL="$MUTATION_DATABASE_URL"
     export SCORCHKIT_DATABASE_URL="$MUTATION_DATABASE_URL"
     export TMPDIR="$RUN_TMP"

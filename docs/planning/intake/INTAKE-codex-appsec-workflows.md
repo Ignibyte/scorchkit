@@ -1,9 +1,9 @@
 ---
 title: INTAKE-codex-appsec-workflows
-status: candidate
+status: promoted
 created: 2026-08-17
-ticket:
-pipeline_spec:
+ticket: TICKET-017
+pipeline_spec: docs/planning/pipeline/completed/codex-appsec-workflows.spec.md
 ---
 
 # Codex-first application-security workflows and tiered scan profiles

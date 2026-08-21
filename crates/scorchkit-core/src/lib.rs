@@ -4,6 +4,7 @@ pub mod adapter;
 pub mod adapter_execution;
 pub mod application_dast;
 pub mod application_pentest;
+pub mod appsec_workflow;
 pub mod attack_path;
 pub mod compliance;
 pub mod compliance_framework;
@@ -25,9 +26,10 @@ pub mod target;
 /// Compatibility namespace used by extracted source modules and doctests.
 pub mod engine {
     pub use crate::{
-        adapter, adapter_execution, application_dast, application_pentest, attack_path, compliance,
-        compliance_framework, correlation, cve, error, events, evidence, finding, observation,
-        risk_score, scan_result, service_fingerprint, severity, shared_data, supply_chain, target,
+        adapter, adapter_execution, application_dast, application_pentest, appsec_workflow,
+        attack_path, compliance, compliance_framework, correlation, cve, error, events, evidence,
+        finding, observation, risk_score, scan_result, service_fingerprint, severity, shared_data,
+        supply_chain, target,
     };
     pub use scorchkit_policy::{policy, scope};
 }
@@ -73,18 +75,33 @@ pub use application_pentest::{
     MAX_APPLICATION_PENTEST_SCENARIOS, MAX_APPLICATION_PENTEST_SECONDS,
     MAX_APPLICATION_PENTEST_VALUE_BYTES,
 };
+pub use appsec_workflow::{
+    compile_application_change_set, compile_application_security_context,
+    compile_application_security_workflow, ApplicationChangeSet, ApplicationContextGap,
+    ApplicationContextGapKind, ApplicationContextProvenance, ApplicationContextTarget,
+    ApplicationContextValue, ApplicationSecurityContext, ApplicationSecurityContextInput,
+    ApplicationSecurityWorkflowGap, ApplicationSecurityWorkflowGapKind,
+    ApplicationSecurityWorkflowOwner, ApplicationSecurityWorkflowPlan,
+    ApplicationSecurityWorkflowProfile, ApplicationSecurityWorkflowScope,
+    ApplicationSecurityWorkflowStep, ApplicationSecurityWorkflowStepKind,
+    ApplicationSecurityWorkflowStepStatus, ApplicationSecurityWorkflowValidationError,
+    APPLICATION_SECURITY_CONTEXT_SCHEMA_V1, APPSEC_CHANGE_SET_SCHEMA_V1,
+    APPSEC_WORKFLOW_PLAN_SCHEMA_V1, MAX_APPSEC_ARTIFACTS, MAX_APPSEC_CHANGED_PATHS,
+    MAX_APPSEC_MANIFESTS, MAX_APPSEC_PERSONAS, MAX_APPSEC_ROUTES, MAX_APPSEC_TARGETS,
+    MAX_APPSEC_VALUE_BYTES,
+};
 pub use attack_path::{
-    correlate_attack_paths, AttackPath, AttackPathCorrelation, AttackPathCorrelationGap,
-    AttackPathCorrelationGapKind, AttackPathCorrelationStatus, AttackPathGap, AttackPathGapKind,
-    AttackPathIdentity, AttackPathMember, AttackPathMemberRole, AttackPathState,
-    AttackPathTransition, AttackPathTransitionReason, AttackPathValidationError, CorrelationFacet,
-    CorrelationFacetKind, FocusedVerificationSelection, RequestVerificationSelector,
-    ScannerVerificationSelector, VerificationAttempt, VerificationAttemptError,
-    VerificationConditions, VerificationCoverage, VerificationOutcome,
-    ATTACK_PATH_CORRELATION_SCHEMA_V1, ATTACK_PATH_IDENTITY_SCHEMA_V1, ATTACK_PATH_SCHEMA_V1,
-    ATTACK_PATH_TRANSITION_SCHEMA_V1, FOCUSED_VERIFICATION_SCHEMA_V1, MAX_CORRELATED_PATHS,
-    MAX_CORRELATION_DETAILS_PER_FINDING, MAX_CORRELATION_FACET_BYTES, MAX_CORRELATION_FINDINGS,
-    MAX_CORRELATION_PAIR_EVALUATIONS, MAX_CORRELATION_PROJECT_EVIDENCE,
+    correlate_attack_paths, validate_focused_verification_selection, AttackPath,
+    AttackPathCorrelation, AttackPathCorrelationGap, AttackPathCorrelationGapKind,
+    AttackPathCorrelationStatus, AttackPathGap, AttackPathGapKind, AttackPathIdentity,
+    AttackPathMember, AttackPathMemberRole, AttackPathState, AttackPathTransition,
+    AttackPathTransitionReason, AttackPathValidationError, CorrelationFacet, CorrelationFacetKind,
+    FocusedVerificationSelection, RequestVerificationSelector, ScannerVerificationSelector,
+    VerificationAttempt, VerificationAttemptError, VerificationConditions, VerificationCoverage,
+    VerificationOutcome, ATTACK_PATH_CORRELATION_SCHEMA_V1, ATTACK_PATH_IDENTITY_SCHEMA_V1,
+    ATTACK_PATH_SCHEMA_V1, ATTACK_PATH_TRANSITION_SCHEMA_V1, FOCUSED_VERIFICATION_SCHEMA_V1,
+    MAX_CORRELATED_PATHS, MAX_CORRELATION_DETAILS_PER_FINDING, MAX_CORRELATION_FACET_BYTES,
+    MAX_CORRELATION_FINDINGS, MAX_CORRELATION_PAIR_EVALUATIONS, MAX_CORRELATION_PROJECT_EVIDENCE,
     VERIFICATION_ATTEMPT_SCHEMA_V1,
 };
 pub use error::{Result, ScorchError};

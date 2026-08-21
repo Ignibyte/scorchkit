@@ -9,6 +9,7 @@ EXPECTED_SKILLS=(
     plan-security-engagement
     prepare-security-engagement
     report-security-findings
+    run-application-security-workflow
     run-security-engagement
     verify-security-remediation
 )
@@ -75,7 +76,7 @@ validate_skill_inventory() {
     actual="$(find "$PLUGIN_DIR/skills" -mindepth 1 -maxdepth 1 -type d -print \
         | while IFS= read -r path; do basename "$path"; done | LC_ALL=C sort)"
     expected="$(printf '%s\n' "${EXPECTED_SKILLS[@]}" | LC_ALL=C sort)"
-    [ "$actual" = "$expected" ] || fail "skill inventory differs from the five phase contract"
+    [ "$actual" = "$expected" ] || fail "skill inventory differs from the six workflow contract"
 }
 
 validate_skill() {
@@ -103,10 +104,16 @@ validate_skill() {
         fail "$skill contains a placeholder, command block, or raw command instruction"
     fi
     require_text "$skill_file" \
-        "Use only ScorchKit MCP tools and resources." \
         "do not substitute another execution path" \
         "Prefer native \`structuredContent\`" \
         "trace context, never authorization"
+    if [ "$skill" = "run-application-security-workflow" ]; then
+        require_text "$skill_file" \
+            "Use ScorchKit MCP tools and resources for every deterministic scan effect" \
+            "Use Codex Security skills only for labeled host semantic analysis"
+    else
+        require_text "$skill_file" "Use only ScorchKit MCP tools and resources."
+    fi
     workflow="$(awk '/^## Workflow$/ { active = 1; next } active { print }' "$skill_file")"
     [ -n "$workflow" ] || fail "$skill has no workflow"
     case "$skill" in
@@ -141,6 +148,34 @@ validate_skill() {
             require_text "$skill_file" \
                 "explicit request to execute against the exact target" \
                 "least-powerful profile"
+            ;;
+        run-application-security-workflow)
+            require_text "$skill_file" application_context plan_appsec_workflow scan_code \
+                application_dast supply_chain_cache_status supply_chain_scan correlate_findings
+            # Dollar-prefixed skill names are literal public workflow tokens.
+            # shellcheck disable=SC2016
+            require_text "$skill_file" \
+                '$codex-security:security-diff-scan' \
+                '$codex-security:security-scan' \
+                '$codex-security:deep-security-scan' \
+                "host semantic analysis" \
+                "scanner evidence" \
+                "A broader fallback requires" \
+                "Never replace a blocked or unsupported focused selector"
+            # Backticks are literal semantic-operation delimiters in the skill contract.
+            # shellcheck disable=SC2016
+            grep -Fq 'security_change_review` step in `commit`, `pull_request`, `staging`, `release`,' \
+                "$skill_file" || fail "$skill does not map every change-aware profile to diff review"
+            # Backticks are literal semantic-operation delimiters in the skill contract.
+            # shellcheck disable=SC2016
+            grep -Fq 'deep_security_repository_review` step in `deep`' "$skill_file" \
+                || fail "$skill does not reserve deep review for the deep profile"
+            # Backticks are literal semantic-operation delimiters in the negative policy.
+            # shellcheck disable=SC2016
+            if grep -Eq '`(scan|project_scan|scan_job_start|application_dast|scan_code|supply_chain_scan)`.*(blocked|unsupported)' \
+                <<< "$workflow"; then
+                fail "$skill executes a blocked or unsupported workflow step"
+            fi
             ;;
         report-security-findings)
             require_text "$skill_file" project_show project_status project_findings finding_show \
@@ -178,7 +213,7 @@ validate_plugin() {
     for skill in "${EXPECTED_SKILLS[@]}"; do
         validate_skill "$skill" || return 1
     done
-    echo "Codex plugin contract OK (5 skills, local stdio MCP, no command workflows)"
+    echo "Codex plugin contract OK (6 skills, local stdio MCP, Codex-first AppSec, no command workflows)"
 }
 
 must_reject() {
@@ -238,6 +273,24 @@ selftest() {
         || return 1
     mv "$report_skill.new" "$report_skill"
     must_reject "a workflow without native structured-result guidance" "$case_dir" || return 1
+
+    case_dir="$temporary/missing-appsec-diff-scan"
+    cp -R "$PLUGIN_DIR" "$case_dir"
+    report_skill="$case_dir/skills/run-application-security-workflow/SKILL.md"
+    # Dollar-prefixed skill names are literal replacement data in this negative fixture.
+    # shellcheck disable=SC2016
+    sed 's/\$codex-security:security-diff-scan/\$codex-security:security-scan/g' \
+        "$report_skill" > "$report_skill.new" || return 1
+    mv "$report_skill.new" "$report_skill"
+    must_reject "an application workflow without exact diff review" "$case_dir" || return 1
+
+    case_dir="$temporary/missing-focused-stop"
+    cp -R "$PLUGIN_DIR" "$case_dir"
+    report_skill="$case_dir/skills/run-application-security-workflow/SKILL.md"
+    sed '/Never replace a blocked or unsupported focused selector/d' "$report_skill" \
+        > "$report_skill.new" || return 1
+    mv "$report_skill.new" "$report_skill"
+    must_reject "an application workflow without focused-stop policy" "$case_dir" || return 1
 
     echo "Codex plugin contract selftest OK"
 }

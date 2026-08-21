@@ -50,10 +50,11 @@ adaptation cannot change policy, persistence, or scan behavior.
 
 ## Tools
 
-The current server exposes 37 tools.
+The current server exposes 39 tools.
 
 | Group | Tools |
 |---|---|
+| Application workflows | `application_context`, `plan_appsec_workflow` |
 | DAST | `list_modules`, `check_tools`, `scan`, `application_dast`, `plan_application_pentest`, `application_pentest`, `import_application_evidence`, `scan_job_start`, `scan_job_status`, `scan_job_cancel`, `scan_job_resume`, `plan_scan`, `auto_scan`, `target_intelligence`, `scan_progress` |
 | SAST and supply chain | `list_code_modules`, `scan_code`, `supply_chain_scan`, `supply_chain_cache_status`, `supply_chain_cache_refresh` |
 | Projects | `project_create`, `project_list`, `project_show`, `project_delete`, `project_scan`, `project_status` |
@@ -136,11 +137,11 @@ Composite tools take the strongest behavior they can accept:
 
 | Class | Tools |
 |---|---|
-| `read` | `check_tools`, `correlate_findings`, `finding_show`, `list_code_modules`, `list_modules`, `plan_application_pentest`, `project_findings`, `project_list`, `project_show`, `project_status`, `scan_job_status`, `scan_progress`, `supply_chain_cache_status`, `target_list` |
+| `read` | `application_context`, `check_tools`, `correlate_findings`, `finding_show`, `list_code_modules`, `list_modules`, `plan_application_pentest`, `plan_appsec_workflow`, `project_findings`, `project_list`, `project_show`, `project_status`, `scan_job_status`, `scan_progress`, `supply_chain_cache_status`, `target_list` |
 | `local_state` | `db_migrate`, `finding_update_status`, `import_application_evidence`, `project_create`, `project_delete`, `scan_job_cancel`, `schedule_scan`, `target_add`, `target_remove` |
 | `external_effect` | `analyze_findings`, `application_dast`, `application_pentest`, `auto_scan`, `plan_scan`, `project_scan`, `run_due_scans`, `scan`, `scan_code`, `scan_job_resume`, `scan_job_start`, `supply_chain_cache_refresh`, `supply_chain_scan`, `target_intelligence` |
 
-All 37 definitions set `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`.
+All 39 definitions set `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`.
 These are conservative client hints, not enforcement. For example, a scan is marked potentially
 destructive because its static schema accepts the `pentest` profile even when most calls use a safer
 profile. Engine policy still evaluates the concrete request before effects.
@@ -149,8 +150,9 @@ profile. Engine policy still evaluates the concrete request before effects.
 process. Status, cancellation, and resume use the same lifecycle described in
 `docs/architecture/jobs.md`. The synchronous `scan` tool remains a compatibility wrapper.
 
-The repository-owned Codex package at `plugins/scorchkit` declares this server and five focused MCP
-workflows. It stores no configuration values and adds no authorization path. See
+The repository-owned Codex package at `plugins/scorchkit` declares this server and six focused
+workflows, including the Codex-first application-security coordinator. It stores no configuration
+values and adds no authorization path. See
 [the Codex plugin guide](../guide/codex-plugin.md).
 
 ## Resources
@@ -233,7 +235,7 @@ through an unauthenticated network wrapper. A future remote server must:
 ## Tests and delivery evidence
 
 `tests/mcp_tools.rs` uses a migrated disposable database and loopback servers. It covers authorized
-and denied scans, the exact 37-tool inventory and schema snapshot, annotations, structured success
+and denied scans, the exact 39-tool inventory and schema snapshot, annotations, structured success
 and failure, spoofed client attribution, stateless jobs over duplex MCP transport, project
 membership, schedule snapshots, one-slot concurrency, N-caller at-most-once execution, finding
 lifecycle, resources, and prompts. Contract unit tests decorate and reject generated routers without
