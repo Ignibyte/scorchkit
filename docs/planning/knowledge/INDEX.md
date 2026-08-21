@@ -104,6 +104,9 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-isolated-runtime-scope-fixture-001` | Derive request paths, authorization scope, and expected canonical roots from the runtime checkout in isolated-worktree tests. | `AAR-017-codex-appsec-workflows` |
 | `PR-scorchkit-workflow-boundary-truth-table-001` | Assert every workflow alias, exact limit, gap predicate, stable identity, and engine requirement directly. | `AAR-017-codex-appsec-workflows` |
 | `PR-scorchkit-workflow-gap-no-broad-substitution-001` | Preserve unsupported exact selectors as typed gaps and require a separate explicit choice before broader execution. | `AAR-017-codex-appsec-workflows` |
+| `PR-scorchkit-public-census-contract-001` | Bind every repeated current public capability census to an executable documentation-parity test sourced from the registry contract. | `AAR-018-public-documentation-sync` |
+| `PR-scorchkit-ci-engagement-run-identity-001` | Give each CI engagement a fresh run identifier while keeping authorization in explicit scope, capability, and effect grants. | `AAR-018-public-documentation-sync` |
+| `PR-scorchkit-site-executable-scratch-001` | Validate an exact website source copy on disposable executable local scratch when the shared workspace cannot execute native JavaScript build helpers. | `AAR-018-public-documentation-sync` |
 
 ## Register
 
@@ -191,3 +194,5 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-ambient-cargo-target-worker-sharing-001` | build-isolation bug | `AAR-017-codex-appsec-workflows` |
 | `BF-scorchkit-compile-runtime-scope-mismatch-001` | test-isolation bug | `AAR-017-codex-appsec-workflows` |
 | `BF-scorchkit-workflow-boundary-mutation-gap-001` | test-gap bug | `AAR-017-codex-appsec-workflows` |
+| `BF-scorchkit-public-census-drift-001` | documentation-integrity bug | `AAR-018-public-documentation-sync` |
+| `BF-scorchkit-shared-mount-site-builder-exec-001` | build-environment failure | `AAR-018-public-documentation-sync` |

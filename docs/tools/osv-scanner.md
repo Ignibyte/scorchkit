@@ -4,11 +4,11 @@ Google's dependency vulnerability scanner — matches project dependencies again
 
 ## Install
 
-```
-go install github.com/google/osv-scanner/cmd/osv-scanner@latest
-```
+Install the OSV Scanner 2.3.8 native release binary and verify the published checksum before placing
+it on `PATH`. ScorchKit requires exactly 2.3.8 for the reviewed offline supply-chain contract; a
+moving `latest` build is not accepted.
 
-Verify with `scorchkit doctor`.
+Verify with `scorchkit doctor --deep`.
 
 ## What ScorchKit surfaces
 
@@ -38,6 +38,9 @@ Each finding carries:
 ```
 scorchkit code /path/to/project --modules osv-scanner
 ```
+
+The engagement must grant the canonical code path plus `code-scan`, `external-tool`, and `passive`.
+See the [getting-started guide](../guide/getting-started.md#scan-source-code).
 
 120s timeout. Recurses — finds every `package-lock.json`, `go.sum`, `Cargo.lock`, `requirements.txt`, etc. in the target tree.
 

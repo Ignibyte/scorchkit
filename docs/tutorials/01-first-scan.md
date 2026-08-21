@@ -13,9 +13,9 @@ Only scan systems you own or have written permission to test. This tutorial stay
 ## 1. Build
 
 ```bash
-git clone https://github.com/chadpeppers/scorchkit.git
+git clone https://github.com/Ignibyte/scorchkit.git
 cd scorchkit
-cargo build --release
+cargo build --locked --release
 ```
 
 The binary is `target/release/scorchkit`. Check the compiled command surface and installed optional
@@ -23,7 +23,7 @@ tools:
 
 ```bash
 target/release/scorchkit --help
-target/release/scorchkit doctor
+target/release/scorchkit doctor --deep
 target/release/scorchkit modules --check-tools
 ```
 

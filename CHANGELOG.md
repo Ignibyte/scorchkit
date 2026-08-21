@@ -4,6 +4,15 @@ All notable changes to ScorchKit will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Public website and operator documentation sync (TICKET-018)** — Rebuilt the separate ScorchKit
+  landing page around the current agent-neutral application-security boundary, source-backed module
+  and MCP counts, layered Linux/macOS installation, authorization-first usage, optional exact-pinned
+  tools, Codex-first workflow role, and the completed/next SK-033 through SK-048 timeline. Updated
+  the README, getting-started and CI tutorials, tool checklist, application catalog, and roadmap to
+  use the canonical public repository, the supported production feature build, 67/21 default and
+  89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
+
 ### Added
 - **Codex-first application-security workflows (TICKET-017 / SK-042)** — Added versioned,
   provider-neutral application context and inert commit, pull-request, staging, release, deep, and

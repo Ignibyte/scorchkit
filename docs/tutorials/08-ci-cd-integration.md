@@ -1,6 +1,8 @@
 # 08 — CI/CD integration
 
-**Goal:** wire ScorchKit into your CI so every PR runs a relevant scan and the build fails on regressions. Examples for GitHub Actions and GitLab CI.
+**Goal:** wire ScorchKit into CI with an explicit engagement, keep the engine checkout outside the
+assessed source tree, and publish deterministic reports. Examples cover GitHub Actions and GitLab
+CI.
 
 **Time:** ~30 minutes per pipeline.
 
@@ -12,9 +14,9 @@
 
 ScorchKit fits CI/CD in three places:
 
-1. **SAST on every PR** — fast, deterministic, no external infrastructure needed. Block the PR if anything Critical lands.
-2. **DAST on every successful deploy to staging** — slower, needs the deploy URL, often runs after smoke tests pass.
-3. **Infra scan on a schedule** — daily or weekly against production. Reports flow into a posture-tracking dashboard.
+1. **SAST on every PR** — authorize the canonical checkout path and passive code/tool effects.
+2. **DAST after a staging deploy** — authorize the exact URL and addresses before the first request.
+3. **Infrastructure on a schedule** — load a protected, reviewed engagement for the named production target.
 
 Pick the one that's most painful for your org and start there.
 
@@ -38,23 +40,35 @@ jobs:
 
       - name: Install ScorchKit
         run: |
-          # Pre-built binary release once available; for now build from source
-          git clone https://github.com/Ignibyte/scorchkit.git
-          cd scorchkit
-          cargo build --release
-          sudo mv target/release/scorchkit /usr/local/bin/
+          git clone https://github.com/Ignibyte/scorchkit.git "$RUNNER_TEMP/scorchkit-engine"
+          cargo build --locked --release --manifest-path "$RUNNER_TEMP/scorchkit-engine/Cargo.toml"
+          sudo install -m 0755 "$RUNNER_TEMP/scorchkit-engine/target/release/scorchkit" /usr/local/bin/scorchkit
 
-      - name: Install SAST tools
+      - name: Authorize this checkout
         run: |
-          # Quick profile only needs gitleaks + the built-in dep_audit
-          # No extra install needed — built-in
-          # Plus optionally:
-          go install github.com/google/osv-scanner/cmd/osv-scanner@latest
-          echo "$HOME/go/bin" >> $GITHUB_PATH
+          SOURCE_ROOT="$(pwd -P)"
+          ENGAGEMENT_ID="$(cat /proc/sys/kernel/random/uuid)"
+          cat > scorchkit.toml <<EOF
+          [engagement]
+          id = "$ENGAGEMENT_ID"
+          name = "CI source review"
+          enabled = true
+
+          [engagement.policy]
+          capabilities = ["code-scan", "external-tool"]
+          effects = ["passive"]
+
+          [[engagement.policy.allowed_scope]]
+          kind = "path_prefix"
+          value = "$SOURCE_ROOT"
+          EOF
+
+      - name: Check optional analyzer coverage
+        run: scorchkit doctor --deep
 
       - name: Run SAST scan
         run: |
-          scorchkit code . --profile quick -o sarif
+          scorchkit --output sarif code . --profile quick
 
       - name: Upload SARIF to GitHub Security
         if: always()
@@ -65,7 +79,7 @@ jobs:
       - name: Fail on Critical findings
         run: |
           # Re-run as JSON for jq filtering
-          scorchkit code . --profile quick -o json
+          scorchkit --output json code . --profile quick
           CRITICAL=$(jq '[.findings[] | select(.severity == "Critical")] | length' scorchkit-report.json)
           echo "Critical findings: $CRITICAL"
           if [ "$CRITICAL" -gt 0 ]; then
@@ -74,7 +88,12 @@ jobs:
           fi
 ```
 
-The `upload-sarif` step lights up GitHub's Security tab — findings show inline on the PR's "Files changed" view, which is where reviewers will actually see them.
+The engagement identifier above is a workflow-local trace ID, not permission by itself. The exact
+path, capability, and passive effect grant are the authorization. Missing optional analyzers remain
+coverage gaps; install exact reviewed versions from the [tool checklist](../tools-checklist.md)
+rather than downloading `latest` during the scan job.
+
+The `upload-sarif` step publishes findings to GitHub's code-scanning surface.
 
 ## 3. DAST on staging deploy (GitHub Actions)
 
@@ -101,7 +120,8 @@ jobs:
 
       - name: Quick scan
         run: |
-          scorchkit run https://staging.your-app.com --profile quick -o sarif
+          scorchkit init https://staging.your-app.com
+          scorchkit --output sarif run https://staging.your-app.com --profile quick
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
@@ -133,28 +153,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install ScorchKit (with infra)
         run: |
-          git clone https://github.com/Ignibyte/scorchkit.git
-          cd scorchkit
-          cargo build --release --features infra
-          sudo mv target/release/scorchkit /usr/local/bin/
+          git clone https://github.com/Ignibyte/scorchkit.git "$RUNNER_TEMP/scorchkit-engine"
+          cargo build --locked --release --features infra --manifest-path "$RUNNER_TEMP/scorchkit-engine/Cargo.toml"
+          sudo install -m 0755 "$RUNNER_TEMP/scorchkit-engine/target/release/scorchkit" /usr/local/bin/scorchkit
 
-      - name: Configure NVD
+      - name: Load reviewed engagement
         env:
-          SCORCHKIT_NVD_API_KEY: ${{ secrets.SCORCHKIT_NVD_API_KEY }}
+          SCORCHKIT_INFRA_CONFIG: ${{ secrets.SCORCHKIT_INFRA_CONFIG }}
         run: |
-          cat > scorchkit.toml <<EOF
-          [cve]
-          backend = "nvd"
-
-          [cve.nvd]
-          # api_key picked up from env
-          EOF
+          umask 077
+          printf '%s\n' "$SCORCHKIT_INFRA_CONFIG" > scorchkit.toml
 
       - name: Scan
         env:
           SCORCHKIT_NVD_API_KEY: ${{ secrets.SCORCHKIT_NVD_API_KEY }}
         run: |
-          scorchkit infra your-prod-host.example.com -c scorchkit.toml -o json
+          scorchkit --config scorchkit.toml --output json infra your-prod-host.example.com
 
       - name: Archive report
         uses: actions/upload-artifact@v4
@@ -172,10 +186,27 @@ scorchkit_sast:
   stage: test
   image: rust:1.70
   script:
-    - git clone https://github.com/Ignibyte/scorchkit.git
-    - cd scorchkit && cargo build --release && cd ..
-    - ./scorchkit/target/release/scorchkit code . --profile quick -o sarif
-    - ./scorchkit/target/release/scorchkit code . --profile quick -o json
+    - git clone https://github.com/Ignibyte/scorchkit.git /tmp/scorchkit-engine
+    - cargo build --locked --release --manifest-path /tmp/scorchkit-engine/Cargo.toml
+    - SOURCE_ROOT="$(pwd -P)"
+    - ENGAGEMENT_ID="$(cat /proc/sys/kernel/random/uuid)"
+    - |
+      cat > scorchkit.toml <<EOF
+      [engagement]
+      id = "$ENGAGEMENT_ID"
+      name = "CI source review"
+      enabled = true
+
+      [engagement.policy]
+      capabilities = ["code-scan", "external-tool"]
+      effects = ["passive"]
+
+      [[engagement.policy.allowed_scope]]
+      kind = "path_prefix"
+      value = "$SOURCE_ROOT"
+      EOF
+    - /tmp/scorchkit-engine/target/release/scorchkit --output sarif code . --profile quick
+    - /tmp/scorchkit-engine/target/release/scorchkit --output json code . --profile quick
     - |
       CRITICAL=$(jq '[.findings[] | select(.severity == "Critical")] | length' scorchkit-report.json)
       if [ "$CRITICAL" -gt 0 ]; then exit 1; fi
@@ -193,7 +224,8 @@ GitLab's `artifacts.reports.sast` slot integrates the SARIF directly into the me
 ## 6. Performance tips
 
 - **Cache the cargo build.** `actions/cache` keyed on `Cargo.lock` cuts a 5-minute build to seconds.
-- **Pin a release tag.** Once ScorchKit ships a binary release, point at `https://github.com/Ignibyte/scorchkit/releases/download/v2.0.0/scorchkit-x86_64-linux.tar.gz` instead of building from source.
+- **Pin a reviewed commit or release.** Do not build an unreviewed moving branch or download an
+  invented artifact name. Verify release checksums and provenance when reproducible releases ship.
 - **Skip slow modules in CI.** Most SAST tools are fast; Semgrep on a monorepo isn't. Use `--modules dep_audit,gitleaks,bandit` or `--profile quick` to keep the PR loop tight.
 - **Run different profiles per branch.** `quick` on every PR, `standard` on merges to main, `thorough` on the schedule.
 

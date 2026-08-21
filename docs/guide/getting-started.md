@@ -4,27 +4,41 @@ ScorchKit runs DAST, SAST, infrastructure, and cloud checks behind an explicit e
 Start with a system you own or have written permission to test. A project entry, prompt, or agent
 approval does not authorize a scan.
 
-## Build
+## Install
 
-The supported production hosts are Linux and macOS.
+The supported production hosts are Linux and macOS. Install the current stable Rust toolchain, then
+build the core CLI:
 
 ```bash
-git clone https://github.com/chadpeppers/scorchkit.git
+git clone https://github.com/Ignibyte/scorchkit.git
 cd scorchkit
-cargo build --release --all-features
+cargo build --locked --release
 ```
 
-Use `target/release/scorchkit` directly or place it on your `PATH`. Feature-specific commands are
-present only when the matching Cargo feature was compiled.
+Use `target/release/scorchkit` directly or place it on your `PATH`. Build the supported production
+feature set when you need infrastructure, cloud compatibility, PostgreSQL-backed state, or local
+stdio MCP:
+
+```bash
+cargo build --locked --release --features "infra cloud mcp"
+```
+
+The `mcp` feature includes storage. Direct scans do not need PostgreSQL; projects, schedules, durable
+jobs, and MCP persistence do. Do not use `--all-features` as an operator install shortcut: it also
+compiles quarantined native cloud SDK modules that are test-only and absent from production
+registries.
 
 ```bash
 scorchkit --help
-scorchkit doctor
+scorchkit doctor --deep
 scorchkit modules --check-tools
 ```
 
 Missing external scanners reduce the available tool-backed modules. Native DAST and infrastructure
-checks remain usable. Cloud production scans currently use five external-tool adapters.
+checks remain usable. Install only the tools required for the selected workflow; several AppSec
+integrations are exact-version contracts. The [external tool checklist](../tools-checklist.md) lists
+every binary and current install rule. Cloud production scans currently use five external-tool
+adapters.
 
 ## Create a safe engagement
 

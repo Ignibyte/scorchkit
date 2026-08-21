@@ -6,7 +6,7 @@ Step-by-step guides for getting work done with ScorchKit. Pick the path that mat
 
 | | Tutorial | What you'll do |
 |--|----------|----------------|
-| 1 | [First scan](01-first-scan.md) | Install, run `doctor`, scan a single web target, read the report — ~30 minutes |
+| 1 | [First scan](01-first-scan.md) | Build the core CLI, run `doctor --deep`, authorize one local target, and read the report — about 30 minutes |
 
 ## Operators
 

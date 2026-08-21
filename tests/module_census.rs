@@ -12,6 +12,48 @@ fn dast_and_sast_registry_counts_are_stable() {
 }
 
 #[test]
+fn public_documentation_matches_registry_census() {
+    let readme = include_str!("../README.md");
+    let roadmap = include_str!("../docs/planning/ROADMAP.md");
+    let catalog = include_str!("../docs/architecture/application-security-catalog.md");
+
+    for (document, content, expected) in [
+        (
+            "README.md",
+            readme,
+            "| DAST and recon | 89 | 67 application modules by default; 22 explicit compatibility modules |",
+        ),
+        (
+            "README.md",
+            readme,
+            "| SAST | 22 | 21 application modules by default; ScoutSuite is explicit cloud-account compatibility |",
+        ),
+        (
+            "ROADMAP.md",
+            roadmap,
+            "| DAST and recon | 89 | 10 recon + 35 scanner + 44 tool adapters |",
+        ),
+        (
+            "ROADMAP.md",
+            roadmap,
+            "| Maximum | 122 | All production registries, including optional CVE correlation |",
+        ),
+        (
+            "application-security-catalog.md",
+            catalog,
+            "| Application web | source, artifact, runtime, attack path | 67 |",
+        ),
+        (
+            "application-security-catalog.md",
+            catalog,
+            "| Application code | source, dependency, artifact | 21 |",
+        ),
+    ] {
+        assert!(content.contains(expected), "{document} is missing `{expected}`");
+    }
+}
+
+#[test]
 fn every_registered_module_has_one_versioned_adapter_contract() {
     let web_modules = scorchkit::runner::orchestrator::all_modules();
     let web_ids: BTreeSet<&str> = web_modules.iter().map(|module| module.id()).collect();

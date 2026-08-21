@@ -32,22 +32,51 @@ storage-model, MCP, CLI, and agent contracts. Existing `scorchkit::...` imports 
 and lower packages cannot depend on the root composition package. See the
 [workspace boundary](docs/architecture/workspace.md).
 
-## Supported hosts
+## Install
 
 ScorchKit currently supports Unix process semantics on Linux and macOS. Windows builds are rejected
 until the external-process owner has a Windows Job Object backend with the same descendant cleanup
 guarantees.
 
-## Build
+Install the current stable Rust toolchain, then build the smallest binary that fits the workflow:
 
 ```bash
-git clone https://github.com/chadpeppers/scorchkit.git
+git clone https://github.com/Ignibyte/scorchkit.git
 cd scorchkit
-cargo build --release --all-features
+cargo build --locked --release
 ```
 
-The binary is `target/release/scorchkit`. PostgreSQL is required for project, schedule, and MCP
-persistence features. Direct stateless scans do not need a database.
+The core binary at `target/release/scorchkit` supports web, code, supply-chain, reporting, and local
+AI-adapter commands. Build the supported production feature set when you also need infrastructure,
+cloud compatibility, PostgreSQL-backed state, or local stdio MCP:
+
+```bash
+cargo build --locked --release --features "infra cloud mcp"
+target/release/scorchkit --help
+target/release/scorchkit doctor --deep
+```
+
+The `mcp` feature includes storage. PostgreSQL is required for projects, schedules, durable jobs,
+and MCP persistence; direct scans do not need a database. `--all-features` is a repository-validation
+mode, not the recommended operator build, because it also compiles quarantined native cloud SDK
+modules that are not in the production registry.
+
+### Optional scanner integrations
+
+Built-in checks work without external scanners. Install only the integrations used by the selected
+profile, then run `scorchkit doctor --deep` to verify executable paths and reviewed versions.
+
+| Workflow | Common integrations | Version rule |
+|---|---|---|
+| Fast source analysis | Semgrep, Gitleaks, language-specific analyzers | Minimum or project-specific versions reported by `doctor` |
+| Deep source analysis | CodeQL CLI bundle, Psalm, PHPStan | Complete local bundles or project-local tools; no scan-time downloads |
+| Supply chain | OSV Scanner 2.3.8, Syft 1.50.0, Grype 0.116.1, Trivy 0.74.0 | Exact reviewed versions |
+| Runtime application testing | OWASP ZAP 2.17.0, Nuclei 3.11.1, matching browser driver | Exact reviewed runtime plus required add-ons or signed local collection |
+| Compatibility families | Network, enterprise, infrastructure, and cloud tools | Explicit selection and matching engagement grants |
+
+See the [external tool checklist](docs/tools-checklist.md) for every supported binary and install
+method. Installing a tool never adds it to an implicit application profile or grants permission to
+run it.
 
 ## Safe first scan
 
@@ -111,6 +140,7 @@ Common commands:
 
 ```bash
 scorchkit doctor
+scorchkit doctor --deep
 scorchkit modules --check-tools
 scorchkit modules --include-compatibility
 scorchkit code ./src --profile standard

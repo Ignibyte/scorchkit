@@ -1,8 +1,23 @@
 # External Tools Checklist
 
-ScorchKit wraps external pentesting tools behind a unified interface. Install any tool and it automatically activates on the next scan. Missing tools are skipped gracefully.
+ScorchKit has built-in modules and optional external-tool adapters. Do not install this complete list
+on a normal application-testing host. Start with the binary and the selected workflow, then add only
+the tools that workflow needs. Missing tools remain explicit coverage gaps; an installed tool does
+not join an implicit profile, widen engagement scope, or grant an effect.
 
-Run `scorchkit doctor` (or `scorchkit doctor --deep` for version checks) to see exactly what's present. The authoritative install hints live in `src/cli/doctor.rs::tool_specs()` — this file mirrors them.
+Run `scorchkit doctor --deep` to check presence, executable paths, reviewed versions, and tool-specific
+runtime requirements. `src/cli/doctor.rs::tool_specs()` is authoritative; this file mirrors it.
+
+## Recommended application-security layers
+
+| Layer | Install when | Common tools |
+|---|---|---|
+| Core | Every installation | No external scanner required for built-in checks |
+| Fast source | Standard source analysis | Semgrep, Gitleaks, applicable language analyzers |
+| Deep source | Thorough source analysis | CodeQL CLI bundle, Psalm, PHPStan |
+| Supply chain | Dependency or artifact evidence | Exact OSV Scanner 2.3.8, Syft 1.50.0, Grype 0.116.1, Trivy 0.74.0 |
+| Runtime application | Authenticated/schema or template testing | Exact ZAP 2.17.0 and Nuclei 3.11.1 plus their reviewed local inputs |
+| Compatibility | Explicit network, enterprise, infrastructure, or cloud work | Only the adapters named in the approved plan and engagement |
 
 ## Tool Installation Guide
 

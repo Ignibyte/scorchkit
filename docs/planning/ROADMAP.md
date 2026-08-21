@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** SK-042 Codex-first application-security workflows are complete; SK-043 is the next candidate
+**Status:** SK-042 and the TICKET-018 public documentation sync are complete; SK-043 is next
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-21
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
@@ -42,13 +42,13 @@ this module census:
 
 | Family | Count | Source of truth |
 |---|---:|---|
-| DAST and recon | 91 | 10 recon + 35 scanner + 46 tool adapters |
+| DAST and recon | 89 | 10 recon + 35 scanner + 44 tool adapters |
 | SAST | 22 | 1 native module + 21 tool adapters |
 | Infrastructure | 4 or 5 | 4 registered modules plus configured CVE correlation |
 | Cloud | 5 | Bounded external-tool adapters; 12 native provider modules are private and test-only |
-| Maximum | 123 | All production registries, including optional CVE correlation |
+| Maximum | 122 | All production registries, including optional CVE correlation |
 
-Of the 46 DAST tool adapters, 45 are bounded one-shot processes and Interactsh owns a long-lived
+Of the 44 DAST tool adapters, 43 are bounded one-shot processes and Interactsh owns a long-lived
 callback session. All 21 SAST adapters are bounded one-shot processes.
 
 This census is an inventory, not the intended default product surface. SK-034 introduced an
@@ -174,9 +174,10 @@ None. The feature-readiness baseline and SK-028 through SK-042 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. TICKET-017 is complete and SK-043 is the next candidate;
-each later row has a specified candidate intake under `docs/planning/intake/` and becomes a
-numbered ticket only when promoted. Backlog status is not a waiver of a safety invariant.
+The pipeline permits one active ticket. TICKET-018 completed the public documentation sync; SK-043
+is the next product candidate. Each later row has a specified candidate intake under
+`docs/planning/intake/` and becomes a numbered ticket only when promoted. Backlog status is not a
+waiver of a safety invariant.
 
 | Order | Batch | Planned outcome | Depends on | Planning artifact |
 |---:|---|---|---|---|

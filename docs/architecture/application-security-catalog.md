@@ -11,7 +11,7 @@ effect.
 
 | Catalog | Domains | Current modules | Selection |
 |---|---|---:|---|
-| Application web | source, artifact, runtime, attack path | 68 | Default CLI, MCP, AI, agent, and named DAST profiles |
+| Application web | source, artifact, runtime, attack path | 67 | Default CLI, MCP, AI, agent, and named DAST profiles |
 | Application code | source, dependency, artifact | 21 | Default code profiles and MCP code catalog; ordered supply-chain evidence is composed separately |
 | Web compatibility | network, enterprise, cloud account | 22 | Explicit module IDs or the `compatibility` template |
 | Code compatibility | cloud account | 1 (`scoutsuite`) | Explicit module ID |
