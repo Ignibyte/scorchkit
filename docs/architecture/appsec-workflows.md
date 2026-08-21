@@ -10,6 +10,9 @@ authority for deterministic effects, scanner evidence, policy decisions, and dur
 ```text
 Codex plugin / another agent host
         |
+        | operator-selected reasoning model
+        | (Daybreak Blue when separately approved and provisioned)
+        |
         | application_context + plan_appsec_workflow (read-only)
         v
 versioned context and inert ordered plan
@@ -29,6 +32,12 @@ It contains exact requirements for later operations, including which steps are b
 a project or registered target, and which target/capability/effect tuples remain subject to the
 existing execution boundary. A prompt, profile, context identity, project, or plan identity cannot
 supply a missing grant.
+
+The selected reasoning model is also outside the engine contract. Codex is the preferred host and
+can use Daybreak Blue when that model is separately available to the operator's approved identity
+and product surface. ScorchKit neither requests that entitlement nor silently selects or substitutes
+a model. The model can reason about context and results, but only ScorchKit policy can authorize an
+effect and only scanner output enters the scanner-evidence layer.
 
 ## Application context
 

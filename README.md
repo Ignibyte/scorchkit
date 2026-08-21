@@ -200,6 +200,12 @@ provenance. Operational skills stop when their required boundary is unavailable.
 a prompt, project, target registration, or plan as authorization and do not fall back to a
 terminal-driven scan.
 
+Codex model selection remains a host concern. Approved defenders can run the same workflows with
+[Daybreak Blue](https://developers.openai.com/api/docs/models/daybreak-blue-latest), a frontier-model
+alias calibrated for defensive cybersecurity work. Daybreak access requires separate approval and
+provisioning for the applicable identity and product surface. ScorchKit does not grant access,
+silently select a model, or promote Codex or Daybreak conclusions into scanner evidence.
+
 The package stores no target, engagement, database URL, or credential. It is a host adapter over the
 same agent-neutral engine and is not installed into a personal marketplace by the repository. See
 [the Codex plugin guide](docs/guide/codex-plugin.md).

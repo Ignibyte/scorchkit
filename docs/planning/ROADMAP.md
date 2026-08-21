@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** SK-042 and the TICKET-018 public documentation sync are complete; SK-043 is next
+**Status:** SK-042 and the TICKET-018/TICKET-019 public-site work are complete; SK-043 is next
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-21
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
@@ -27,6 +27,11 @@ Agent hosts own reasoning around those controls:
 
 Codex is the preferred host. Claude remains an optional compatibility adapter. No vendor owns
 workflow state, target authorization, scanner evidence, or delivery truth.
+
+Codex model selection remains outside the engine contract. Separately approved defenders can use
+Daybreak Blue for host reasoning when it is provisioned on their applicable identity and product
+surface. ScorchKit does not grant model access, select or substitute a model, or convert model
+conclusions into scanner evidence.
 
 The core product does not implicitly select general port and network enumeration, Active Directory,
 SMB, Kerberos, password spraying, cloud-account posture, persistence, lateral movement, or
@@ -151,7 +156,7 @@ evidence.
 
 ## Current validation evidence
 
-Evidence produced through the TICKET-017 pre-completion worktree:
+Evidence produced through the TICKET-019 pre-completion worktree:
 
 | Signal | Last result | Final requirement |
 |---|---:|---:|
@@ -160,10 +165,11 @@ Evidence produced through the TICKET-017 pre-completion worktree:
 | All-feature tests | Workspace library, package, integration, and doctest suites passed; strict all-feature Clippy had zero diagnostics | pass after final edits with PostgreSQL |
 | Canonical line coverage | 81.75% | at least 62%; retain the measured floor before the next ratchet decision |
 | SK-042 focused repair | The preserved DIFF inventory selected 177 mutations. Its exact 28-survivor recheck caught 28/28, reconstructing 152/152 viable outcomes caught with 25 compiler-unviable cases. | retain every raw outcome and the sealed 152/152 viable current-tree evidence digest; do not repeat the broader inventory while mutation inputs are unchanged |
-| Nextest strictness | 1,873 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
+| Nextest strictness | 1,874 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
 | PostgreSQL integration | 77 MCP, 12 storage, and 10 storage-integration tests passed | pass |
 | CLI/MCP contracts | 22 CLI, 2 code-scan, 77 MCP, and 12 scan-plan tests passed | pass |
-| Delivery receipt | TICKET-017 pre-completion focused-repair gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive focused-repair receipt bound to the sealed TICKET-017 current-tree evidence |
+| TICKET-019 DIFF mutation selection | Documentation-only engine diff selected 0 viable mutations: 0 caught, 0 missed, 0 unviable, with a defined 100% empty-set score at the unchanged 95% floor | no full or repository-wide mutation run required |
+| Delivery receipt | TICKET-019 pre-completion DIFF gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive DIFF receipt for the exact completed tree |
 
 The test count is historical evidence, not a promised final count. The gate output after all source and
 documentation edits is authoritative.
@@ -174,8 +180,9 @@ None. The feature-readiness baseline and SK-028 through SK-042 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. TICKET-018 completed the public documentation sync; SK-043
-is the next product candidate. Each later row has a specified candidate intake under
+The pipeline permits one active ticket. TICKET-018 completed the public documentation sync and
+TICKET-019 made its Codex/Daybreak model boundary prominent; SK-043 is the next product candidate.
+Each later row has a specified candidate intake under
 `docs/planning/intake/` and becomes a numbered ticket only when promoted. Backlog status is not a
 waiver of a safety invariant.
 

@@ -5,6 +5,11 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Codex and Daybreak website positioning (TICKET-019)** — Made the public site lead with
+  ScorchKit's Codex-preferred, agent-neutral workflow and explain how separately approved Daybreak
+  Blue reasoning combines with Codex Security semantic review and ScorchKit's policy-gated SAST,
+  supply-chain, DAST, application-pentest, and evidence tools. Added explicit model-access and
+  provenance boundaries plus a dependency-free website content contract.
 - **Public website and operator documentation sync (TICKET-018)** — Rebuilt the separate ScorchKit
   landing page around the current agent-neutral application-security boundary, source-backed module
   and MCP counts, layered Linux/macOS installation, authorization-first usage, optional exact-pinned

@@ -5,6 +5,21 @@ and a local stdio MCP descriptor. It does not change the engine's authorization 
 application-security workflow consumes provider-neutral MCP contracts that remain usable by another
 host; Codex Security is a preferred semantic-analysis capability at the plugin layer.
 
+## Model selection and Daybreak Blue
+
+The plugin does not choose or provision a model. Codex uses the model selected by the operator or
+approved workspace. For authorized defensive work, separately approved users can select
+[Daybreak Blue](https://developers.openai.com/api/docs/models/daybreak-blue-latest), which OpenAI
+documents as a frontier-model alias with safeguards calibrated for defensive cybersecurity.
+[Trusted Access](https://learn.chatgpt.com/docs/cyber-safety) is specific to the approved identity or
+service, workspace or API organization and project, offering, model, and product surface.
+
+Daybreak Blue can perform the host-analysis steps in the same Codex-first workflow. It does not
+grant an engagement, widen a target, bypass an effect check, execute a scanner outside ScorchKit,
+or turn a model conclusion into scanner evidence. If the selected model or Codex Security
+capability is unavailable, the affected host-analysis step remains unavailable. The plugin does not
+silently switch models or broaden ScorchKit execution to compensate.
+
 ## Package boundary
 
 The plugin starts an installed `scorchkit` binary with the `serve` argument. It does not embed a
