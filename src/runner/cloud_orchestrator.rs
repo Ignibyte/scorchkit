@@ -278,6 +278,7 @@ impl CloudOrchestrator {
             execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
             supply_chain: None,
             application_dast: None,
+            adapter_executions: Vec::new(),
             summary,
         })
     }

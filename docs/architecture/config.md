@@ -187,6 +187,34 @@ match the installed browser major and is never downloaded during a scan. The pub
 contains persona IDs, never these environment values. See
 [Authenticated application DAST](application-dast.md).
 
+## Trusted Nuclei
+
+Nuclei requires one explicit signed local collection. It never selects or updates ambient
+community templates.
+
+~~~toml
+[tools]
+nuclei = "/mnt/fast/scorchkit/tools/nuclei/v3.11.1/nuclei"
+
+[nuclei]
+collection_manifest = "/opt/scorchkit/nuclei/approved/collection.json"
+manifest_limit_bytes = 1048576
+certificate_limit_bytes = 65536
+template_limit_bytes = 1048576
+template_limit_count = 256
+output_limit_bytes = 8388608
+artifact_limit_bytes = 67108864
+artifact_limit_files = 1024
+timeout_seconds = 600
+rate_limit_per_second = 20
+concurrency = 4
+request_timeout_seconds = 10
+~~~
+
+The manifest, certificate, and templates need an engagement-authorized path prefix with
+local-state/passive. The target needs exact DAST and external-tool grants at the collection's
+strongest effect. See [Trusted Nuclei application probes](trusted-nuclei.md).
+
 ## CVE providers
 
 NVD and OSV are separate effect targets. Before either backend is constructed, the engagement must

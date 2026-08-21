@@ -1,6 +1,7 @@
 //! Stable domain contracts shared by every `ScorchKit` host and scanner family.
 
 pub mod adapter;
+pub mod adapter_execution;
 pub mod application_dast;
 pub mod compliance;
 pub mod compliance_framework;
@@ -22,9 +23,9 @@ pub mod target;
 /// Compatibility namespace used by extracted source modules and doctests.
 pub mod engine {
     pub use crate::{
-        adapter, application_dast, compliance, compliance_framework, correlation, cve, error,
-        events, evidence, finding, observation, risk_score, scan_result, service_fingerprint,
-        severity, shared_data, supply_chain, target,
+        adapter, adapter_execution, application_dast, compliance, compliance_framework,
+        correlation, cve, error, events, evidence, finding, observation, risk_score, scan_result,
+        service_fingerprint, severity, shared_data, supply_chain, target,
     };
     pub use scorchkit_policy::{policy, scope};
 }
@@ -38,6 +39,10 @@ pub use adapter::{
     AdapterContractV1, AdapterOutputContract, AdapterParseOutcome, AdapterTargetKind,
     LifecycleStage, ProvenanceStrategy, SecurityDomain, TemporaryArtifactPolicy,
     ADAPTER_CONTRACT_V1,
+};
+pub use adapter_execution::{
+    AdapterExecutionAssessment, AdapterExecutionGap, AdapterExecutionGapKind,
+    AdapterExecutionStatus, AdapterInputIdentity, ADAPTER_EXECUTION_ASSESSMENT_SCHEMA_V1,
 };
 pub use application_dast::{
     ApplicationDastAssessment, ApplicationDastAuthenticationState, ApplicationDastCoverageGap,

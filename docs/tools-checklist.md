@@ -24,7 +24,7 @@ Run `scorchkit doctor` (or `scorchkit doctor --deep` for version checks) to see 
 
 | Tool | Binary | Min version | Install |
 |------|--------|-------------|---------|
-| Nuclei | `nuclei` | 3.0.0 | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
+| Nuclei | `nuclei` | exactly 3.11.1 | install the checksum-verified 3.11.1 release; see [the trusted runtime contract](tools/nuclei.md) |
 | Nikto | `nikto` | 2.1.6 | `sudo apt install nikto` |
 | OWASP ZAP | `zap.sh` | exactly 2.17.0 | see [the ScorchKit runtime contract](tools/zap.md) |
 | WPScan | `wpscan` | 3.8.0 | `gem install wpscan` |
@@ -145,7 +145,6 @@ sudo apt install -y nmap nikto sqlmap hydra feroxbuster testssl.sh whatweb \
 
 # Go-based (requires Go 1.21+)
 for pkg in \
-  github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
   github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
   github.com/projectdiscovery/httpx/cmd/httpx@latest \
   github.com/projectdiscovery/dnsx/cmd/dnsx@latest \

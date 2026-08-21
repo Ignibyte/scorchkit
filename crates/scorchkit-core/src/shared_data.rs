@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+use crate::AdapterExecutionAssessment;
+
 /// Well-known keys for shared data.
 pub mod keys {
     /// URLs discovered by the crawler module.
@@ -28,13 +30,17 @@ pub mod keys {
 #[derive(Debug, Default)]
 pub struct SharedData {
     store: RwLock<HashMap<String, Vec<String>>>,
+    adapter_assessments: RwLock<HashMap<String, AdapterExecutionAssessment>>,
 }
 
 impl SharedData {
     /// Create a new empty shared data store.
     #[must_use]
     pub fn new() -> Self {
-        Self { store: RwLock::new(HashMap::new()) }
+        Self {
+            store: RwLock::new(HashMap::new()),
+            adapter_assessments: RwLock::new(HashMap::new()),
+        }
     }
 
     /// Publish data under a key, extending any existing entries.
@@ -61,6 +67,33 @@ impl SharedData {
     #[must_use]
     pub fn has(&self, key: &str) -> bool {
         self.store.read().ok().is_some_and(|s| s.get(key).is_some_and(|v| !v.is_empty()))
+    }
+
+    /// Publish the latest typed assessment for one adapter.
+    pub fn publish_adapter_assessment(&self, assessment: AdapterExecutionAssessment) {
+        if let Ok(mut assessments) = self.adapter_assessments.write() {
+            assessments.insert(assessment.adapter_id.clone(), assessment);
+        }
+    }
+
+    /// Return one adapter assessment without removing it.
+    #[must_use]
+    pub fn adapter_assessment(&self, adapter_id: &str) -> Option<AdapterExecutionAssessment> {
+        self.adapter_assessments
+            .read()
+            .ok()
+            .and_then(|assessments| assessments.get(adapter_id).cloned())
+    }
+
+    /// Return every published assessment in stable adapter order.
+    #[must_use]
+    pub fn adapter_assessments(&self) -> Vec<AdapterExecutionAssessment> {
+        let Some(assessments) = self.adapter_assessments.read().ok() else {
+            return Vec::new();
+        };
+        let mut values: Vec<_> = assessments.values().cloned().collect();
+        values.sort_by(|left, right| left.adapter_id.cmp(&right.adapter_id));
+        values
     }
 }
 
@@ -101,6 +134,25 @@ mod tests {
         let sd = SharedData::new();
         sd.publish(keys::URLS, Vec::new());
         assert!(!sd.has(keys::URLS));
+    }
+
+    #[test]
+    fn adapter_assessments_replace_by_id_and_return_in_stable_order() {
+        let sd = SharedData::new();
+        sd.publish_adapter_assessment(AdapterExecutionAssessment::new("zeta"));
+        let mut latest = AdapterExecutionAssessment::new("alpha");
+        latest.tool_version = Some("1.0.0".to_string());
+        sd.publish_adapter_assessment(AdapterExecutionAssessment::new("alpha"));
+        sd.publish_adapter_assessment(latest.clone());
+
+        assert_eq!(sd.adapter_assessment("alpha"), Some(latest));
+        assert_eq!(
+            sd.adapter_assessments()
+                .into_iter()
+                .map(|assessment| assessment.adapter_id)
+                .collect::<Vec<_>>(),
+            ["alpha", "zeta"]
+        );
     }
 
     /// Verify `has()` returns true after publish.

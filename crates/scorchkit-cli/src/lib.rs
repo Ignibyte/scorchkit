@@ -181,7 +181,7 @@ pub enum Commands {
 
     /// Check external tool installation status
     Doctor {
-        /// Run deep validation: version checks, template freshness, health checks
+        /// Run deep validation: pinned versions, configuration, and health checks
         #[arg(long)]
         deep: bool,
     },

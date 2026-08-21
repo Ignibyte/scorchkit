@@ -1,9 +1,9 @@
 ---
 title: INTAKE-trusted-nuclei
-status: candidate
+status: promoted
 created: 2026-08-17
-ticket:
-pipeline_spec:
+ticket: docs/planning/tickets/closed/TICKET-014-trusted-nuclei.md
+pipeline_spec: docs/planning/pipeline/completed/trusted-nuclei.spec.md
 ---
 
 # Trusted Nuclei templates and application-specific runtime probes

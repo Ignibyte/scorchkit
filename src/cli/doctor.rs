@@ -3,7 +3,7 @@
 //! Basic mode (`doctor`) checks binary presence via `which`.
 //! Deep mode (`doctor --deep`) additionally validates versions,
 //! checks minimum version requirements, and runs tool-specific
-//! health checks like nuclei template freshness.
+//! tool-specific runtime health checks.
 
 use std::{fmt::Write, time::Duration};
 
@@ -120,7 +120,7 @@ impl Version {
 }
 
 fn requires_exact_version(binary: &str) -> bool {
-    matches!(binary, "zap.sh" | "syft" | "osv-scanner" | "grype" | "trivy")
+    matches!(binary, "nuclei" | "zap.sh" | "syft" | "osv-scanner" | "grype" | "trivy")
 }
 
 fn version_satisfies(binary: &str, detected: &Version, required: &Version) -> bool {
@@ -215,37 +215,12 @@ fn standalone_zap_version(output: &str) -> Option<String> {
     versions.next().is_none().then_some(version)
 }
 
-/// Check nuclei template freshness by examining the templates directory.
+/// Explain the trusted Nuclei input boundary without inspecting ambient templates.
 fn check_nuclei_templates() -> DeepNote {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let paths = [
-        format!("{home}/nuclei-templates"),
-        format!("{home}/.local/nuclei-templates"),
-        format!("{home}/.config/nuclei/templates"),
-    ];
-
-    for path in &paths {
-        let dir = std::path::Path::new(path);
-        if dir.exists() {
-            if let Ok(metadata) = std::fs::metadata(dir) {
-                if let Ok(modified) = metadata.modified() {
-                    let age = modified.elapsed().unwrap_or(Duration::from_secs(0));
-                    return template_age_note(age);
-                }
-            }
-        }
-    }
-
-    DeepNote::Warn("Templates directory not found. Run: nuclei -ut".to_string())
-}
-
-fn template_age_note(age: Duration) -> DeepNote {
-    let days = age.as_secs() / 86_400;
-    if days > 30 {
-        DeepNote::Warn(format!("Templates last updated {days} days ago. Run: nuclei -ut"))
-    } else {
-        DeepNote::Info(format!("Templates updated {days} days ago"))
-    }
+    DeepNote::Info(
+        "Ambient Nuclei templates are disabled; scans require an explicit trusted collection manifest"
+            .to_string(),
+    )
 }
 
 fn deep_check_plan(spec: &ToolSpec, deep: bool, installed: bool) -> DeepCheckPlan {
@@ -367,8 +342,8 @@ fn tool_specs() -> Vec<ToolSpec> {
             name: "Nuclei",
             category: "Web Scanner",
             version_flag: Some("-version"),
-            min_version: Some("3.0.0"),
-            remediation: "Install: go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+            min_version: Some("3.11.1"),
+            remediation: "Install the checksum-verified official Nuclei 3.11.1 release",
         },
         ToolSpec {
             binary: "zap.sh",
@@ -1160,20 +1135,19 @@ mod tests {
     }
 
     #[test]
-    fn template_age_note_pins_the_thirty_day_boundary() {
+    fn nuclei_health_note_rejects_ambient_template_ownership() {
         assert_eq!(
-            template_age_note(Duration::from_hours(720)),
-            DeepNote::Info("Templates updated 30 days ago".to_string())
-        );
-        assert_eq!(
-            template_age_note(Duration::from_hours(744)),
-            DeepNote::Warn("Templates last updated 31 days ago. Run: nuclei -ut".to_string())
+            check_nuclei_templates(),
+            DeepNote::Info(
+                "Ambient Nuclei templates are disabled; scans require an explicit trusted collection manifest"
+                    .to_string()
+            )
         );
     }
 
     #[test]
     fn reviewed_runtime_tools_require_exact_pinned_versions() {
-        for binary in ["zap.sh", "syft", "osv-scanner", "grype", "trivy"] {
+        for binary in ["nuclei", "zap.sh", "syft", "osv-scanner", "grype", "trivy"] {
             assert!(requires_exact_version(binary), "{binary} must remain exact-pinned");
         }
         assert!(!requires_exact_version("nmap"));

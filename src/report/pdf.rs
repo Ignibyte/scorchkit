@@ -110,6 +110,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
             assessment.coverage_status.as_str(), assessment.profile.as_str(), html_escape(&assessment.zap_version), personas, gaps
         )
     });
+    let adapter_executions_html = render_adapter_executions(result);
 
     let risk_rating = overall_risk_rating(s.critical, s.high, s.medium);
 
@@ -182,6 +183,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
   </table>
   {supply_chain}
   {application_dast}
+  {adapter_executions}
   <h3>Methodology</h3>
   <p>The assessment followed the PTES (Penetration Testing Execution Standard)
   framework adapted for automated scanning: reconnaissance, vulnerability
@@ -216,6 +218,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
         execution_status = execution_status,
         supply_chain = supply_chain_html,
         application_dast = application_dast_html,
+        adapter_executions = adapter_executions_html,
         total = s.total_findings,
         categories = count_categories(s.critical, s.high, s.medium, s.low, s.info),
         risk_rating = risk_rating,
@@ -229,6 +232,55 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
         findings_html = findings_html,
         modules_list = modules_list,
     )
+}
+
+fn render_adapter_executions(result: &ScanResult) -> String {
+    if result.adapter_executions.is_empty() {
+        return String::new();
+    }
+    let assessments = result.adapter_executions.iter().fold(
+        String::new(),
+        |mut rendered, assessment| {
+            let inputs = assessment.inputs.iter().fold(String::new(), |mut rendered, input| {
+                let signer = input.signer_identity.as_deref().map_or_else(String::new, |signer| {
+                    format!(" signer:{}", html_escape(signer))
+                });
+                let _ = write!(
+                    rendered,
+                    "<li><code>{}/{}</code> sha256:{}{}</li>",
+                    html_escape(&input.kind),
+                    html_escape(&input.id),
+                    html_escape(&input.sha256),
+                    signer,
+                );
+                rendered
+            });
+            let gaps = assessment.gaps.iter().fold(String::new(), |mut rendered, gap| {
+                let _ = write!(
+                    rendered,
+                    "<li><code>{:?}/{}</code>: {}</li>",
+                    gap.kind,
+                    html_escape(&gap.component),
+                    html_escape(&gap.detail),
+                );
+                rendered
+            });
+            let _ = write!(
+                rendered,
+                "<h4>{}</h4><table><tbody><tr><th>Schema</th><td>{}</td></tr><tr><th>Status</th><td>{:?}</td></tr><tr><th>Tool</th><td>{}</td></tr><tr><th>Collection</th><td>{}</td></tr><tr><th>Effect</th><td>{}</td></tr></tbody></table><p>Verified inputs</p><ul>{}</ul><p>Coverage gaps</p><ul>{}</ul>",
+                html_escape(&assessment.adapter_id),
+                html_escape(&assessment.schema_version),
+                assessment.status,
+                html_escape(assessment.tool_version.as_deref().unwrap_or("unknown")),
+                html_escape(assessment.configuration_identity.as_deref().unwrap_or("unavailable")),
+                html_escape(assessment.strongest_effect.as_deref().unwrap_or("unknown")),
+                inputs,
+                gaps,
+            );
+            rendered
+        },
+    );
+    format!("<h3>External adapter execution</h3>{assessments}")
 }
 
 /// Render all findings as HTML sections.
@@ -472,6 +524,7 @@ mod tests {
             execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
             supply_chain: None,
             application_dast: None,
+            adapter_executions: Vec::new(),
             findings,
             summary: ScanSummary {
                 total_findings: 2,
@@ -499,6 +552,26 @@ mod tests {
         assert!(html.contains("Appendix A"), "Missing appendix");
         assert!(html.contains("SCORCHKIT"), "Missing branding");
         assert!(html.contains("CONFIDENTIAL"), "Missing classification");
+    }
+
+    #[test]
+    fn pdf_projects_external_adapter_identity_without_unescaped_markup() {
+        let mut result = test_result();
+        let mut assessment = scorchkit_core::AdapterExecutionAssessment::new("nuclei<script>");
+        assessment.tool_version = Some("3.11.1<script>".to_string());
+        assessment.configuration_identity = Some("collection<script>".to_string());
+        assessment.inputs.push(scorchkit_core::AdapterInputIdentity::new(
+            "nuclei_template",
+            "probe",
+            "a".repeat(64),
+        ));
+        result = result.with_adapter_executions(vec![assessment]);
+
+        let html = render_pdf_html(&result);
+        assert!(html.contains("External adapter execution"));
+        assert!(html.contains("nuclei&lt;script&gt;"));
+        assert!(html.contains("3.11.1&lt;script&gt;"));
+        assert!(!html.contains("nuclei<script>"));
     }
 
     /// Verify executive summary shows correct severity counts.

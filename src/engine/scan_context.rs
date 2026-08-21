@@ -7,6 +7,7 @@ use crate::runner::subprocess::{SystemToolExecutor, ToolExecutor, ToolInvocation
 use super::error::Result;
 use super::events::EventBus;
 use super::policy::AuthorizationDecision;
+use super::policy::{AuthorizationDecision as PolicyAuthorizationDecision, Engagement};
 use super::policy::{Capability, EffectClass, PolicyTarget};
 use super::policy_network::PolicyNetwork;
 use super::shared_data::SharedData;
@@ -37,6 +38,8 @@ pub struct ScanContext {
     tool_executor: Arc<dyn ToolExecutor>,
     /// Opaque proof that the context was created by the policy-gated engine.
     authorization: Vec<AuthorizationDecision>,
+    /// Active policy authorizer for adapter inputs discovered after context construction.
+    engagement: Option<Arc<Engagement>>,
     /// Engagement-bound resolver and connector for native network probes.
     network_policy: PolicyNetwork,
 }
@@ -65,6 +68,7 @@ impl ScanContext {
             http_client,
             authorization,
             network_policy,
+            None,
         )
     }
 
@@ -75,6 +79,7 @@ impl ScanContext {
         no_redirect_http_client: reqwest::Client,
         authorization: Vec<AuthorizationDecision>,
         network_policy: PolicyNetwork,
+        engagement: Option<Arc<Engagement>>,
     ) -> Self {
         Self {
             target,
@@ -86,6 +91,7 @@ impl ScanContext {
             tool_executor: Arc::new(SystemToolExecutor),
             authorization,
             network_policy,
+            engagement,
         }
     }
 
@@ -107,6 +113,24 @@ impl ScanContext {
         budget: Duration,
     ) -> Result<Vec<std::net::SocketAddr>> {
         self.network_policy.resolve(host, port, budget).await
+    }
+
+    /// Resolve a target under one adapter's exact declared effect.
+    pub(crate) async fn resolve_network_target_for_effect(
+        &self,
+        host: &str,
+        port: u16,
+        budget: Duration,
+        effect: EffectClass,
+    ) -> Result<Vec<std::net::SocketAddr>> {
+        let engagement = self.engagement.as_ref().ok_or_else(|| {
+            crate::engine::error::ScorchError::Config(
+                "adapter target resolution denied: no active engagement authorizer".to_string(),
+            )
+        })?;
+        PolicyNetwork::new(Arc::clone(engagement), Capability::DastScan, effect)
+            .resolve(host, port, budget)
+            .await
     }
 
     /// Connect a native protocol to one authorized concrete address.
@@ -180,6 +204,50 @@ impl ScanContext {
         self.tool_executor.execute(invocation).await
     }
 
+    /// Execute one fully owned invocation under an adapter's exact strongest effect.
+    pub(crate) async fn run_invocation_for_effect(
+        &self,
+        invocation: ToolInvocation,
+        effect: EffectClass,
+    ) -> Result<ToolOutput> {
+        self.require_adapter_authorization(effect)?;
+        self.events.publish(crate::engine::events::ScanEvent::Custom {
+            kind: "effect.subprocess_started".to_string(),
+            data: serde_json::json!({
+                "target": self.target.url,
+                "program": crate::engine::observation::redact_text(&invocation.program),
+                "capability": "external-tool",
+                "effect": effect,
+            }),
+        });
+        self.tool_executor.execute(invocation).await
+    }
+
+    /// Authorize one canonical local adapter input before reading it.
+    pub(crate) fn authorize_local_state(
+        &self,
+        canonical_path: &std::path::Path,
+    ) -> Result<PolicyAuthorizationDecision> {
+        let engagement = self.engagement.as_ref().ok_or_else(|| {
+            crate::engine::error::ScorchError::Config(
+                "adapter local state denied: no active engagement authorizer".to_string(),
+            )
+        })?;
+        let target = PolicyTarget::Code(canonical_path.to_path_buf());
+        let decision = engagement
+            .authorize(target.clone(), Capability::LocalState, EffectClass::Passive)
+            .require()?;
+        self.events.publish(crate::engine::events::ScanEvent::Custom {
+            kind: "effect.local_state_authorized".to_string(),
+            data: serde_json::json!({
+                "target": target,
+                "capability": "local-state",
+                "effect": "passive",
+            }),
+        });
+        Ok(decision)
+    }
+
     pub(crate) fn require_tool_authorization(&self, tool_name: &str) -> Result<()> {
         if cfg!(test) && self.authorization.is_empty() {
             return Ok(());
@@ -216,6 +284,45 @@ impl ScanContext {
         Ok(())
     }
 
+    fn require_adapter_authorization(&self, effect: EffectClass) -> Result<()> {
+        self.require_adapter_grant(Capability::DastScan, effect)?;
+        self.require_adapter_grant(Capability::ExternalTool, effect)?;
+        match effect {
+            EffectClass::CredentialTest => {
+                self.require_adapter_grant(Capability::CredentialUse, effect)?;
+            }
+            EffectClass::Exploit => {
+                self.require_adapter_grant(Capability::Exploit, effect)?;
+            }
+            EffectClass::Passive | EffectClass::ActiveSafe | EffectClass::Intrusive => {}
+        }
+        Ok(())
+    }
+
+    /// Prove an adapter's complete target/process/capability grant set before effects begin.
+    pub(crate) fn authorize_adapter_effect(&self, effect: EffectClass) -> Result<()> {
+        self.require_adapter_authorization(effect)?;
+        self.events.publish(crate::engine::events::ScanEvent::Custom {
+            kind: "effect.adapter_authorized".to_string(),
+            data: serde_json::json!({
+                "target": self.target.url,
+                "capabilities": ["dast-scan", "external-tool"],
+                "effect": effect,
+            }),
+        });
+        Ok(())
+    }
+
+    fn require_adapter_grant(&self, capability: Capability, effect: EffectClass) -> Result<()> {
+        if let Some(engagement) = &self.engagement {
+            engagement
+                .authorize(PolicyTarget::Web(self.target.url.clone()), capability, effect)
+                .require()?;
+            return Ok(());
+        }
+        self.require_grant(capability, effect)
+    }
+
     fn require_grant(&self, capability: Capability, effect: EffectClass) -> Result<()> {
         let target = PolicyTarget::Web(self.target.url.clone());
         if self.authorization.iter().any(|decision| {
@@ -232,7 +339,8 @@ impl ScanContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::policy::{AuthorizationDecision, DenialReason};
+    use crate::engine::policy::{AuthorizationDecision, DenialReason, EngagementPolicy};
+    use crate::engine::scope::ScopeRule;
     use uuid::Uuid;
 
     fn decision(
@@ -339,5 +447,64 @@ mod tests {
             }],
         );
         assert!(mismatched.require_tool_authorization("commix").is_err());
+    }
+
+    #[test]
+    fn dynamic_adapter_authorization_requires_the_exact_discovered_effect_and_capabilities() {
+        let target = Target::parse("https://example.com").expect("target");
+        let policy = EngagementPolicy::default()
+            .allow_scope(ScopeRule::parse("example.com").expect("scope"))
+            .allow_capability(Capability::DastScan)
+            .allow_capability(Capability::ExternalTool)
+            .allow_effect(EffectClass::ActiveSafe);
+        let engagement = Arc::new(Engagement::new("adapter", policy));
+        let context = ScanContext::with_http_clients(
+            target,
+            Arc::new(AppConfig::default()),
+            reqwest::Client::new(),
+            reqwest::Client::new(),
+            Vec::new(),
+            PolicyNetwork::new(
+                Arc::clone(&engagement),
+                Capability::DastScan,
+                EffectClass::ActiveSafe,
+            ),
+            Some(engagement),
+        );
+
+        assert!(context.authorize_adapter_effect(EffectClass::ActiveSafe).is_ok());
+        assert!(context.authorize_adapter_effect(EffectClass::Intrusive).is_err());
+        assert!(context.authorize_adapter_effect(EffectClass::CredentialTest).is_err());
+    }
+
+    #[test]
+    fn adapter_local_state_requires_an_explicit_canonical_path_grant() {
+        let root = tempfile::tempdir().expect("local state");
+        let file = root.path().join("manifest.json");
+        std::fs::write(&file, b"{}").expect("manifest");
+        let target = Target::parse("https://example.com").expect("target");
+        let policy = EngagementPolicy::default()
+            .allow_scope(ScopeRule::parse("example.com").expect("web scope"))
+            .allow_scope(ScopeRule::path_prefix(root.path()).expect("path scope"))
+            .allow_capability(Capability::LocalState)
+            .allow_effect(EffectClass::Passive);
+        let engagement = Arc::new(Engagement::new("local adapter state", policy));
+        let context = ScanContext::with_http_clients(
+            target,
+            Arc::new(AppConfig::default()),
+            reqwest::Client::new(),
+            reqwest::Client::new(),
+            Vec::new(),
+            PolicyNetwork::new(
+                Arc::clone(&engagement),
+                Capability::DastScan,
+                EffectClass::ActiveSafe,
+            ),
+            Some(engagement),
+        );
+
+        assert!(context.authorize_local_state(&file.canonicalize().expect("canonical")).is_ok());
+        let outside = tempfile::NamedTempFile::new().expect("outside");
+        assert!(context.authorize_local_state(&outside.path().canonicalize().unwrap()).is_err());
     }
 }

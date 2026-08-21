@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use super::adapter_execution::{AdapterExecutionAssessment, AdapterExecutionStatus};
 use super::application_dast::{ApplicationDastAssessment, ApplicationDastCoverageStatus};
 use super::finding::Finding;
 use super::severity::Severity;
@@ -215,6 +216,9 @@ pub struct ScanResult {
     /// Canonical authenticated application DAST evidence when requested.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub application_dast: Option<ApplicationDastAssessment>,
+    /// Reproducible external-adapter execution and coverage evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adapter_executions: Vec<AdapterExecutionAssessment>,
     /// Summary statistics.
     pub summary: ScanSummary,
 }
@@ -279,6 +283,7 @@ impl ScanResult {
             execution_status: ScanExecutionStatus::Complete,
             supply_chain: None,
             application_dast: None,
+            adapter_executions: Vec::new(),
             summary,
         }
     }
@@ -315,14 +320,24 @@ impl ScanResult {
             self.supply_chain.as_ref().map(|assessment| assessment.coverage_status);
         let dast_status =
             self.application_dast.as_ref().map(|assessment| assessment.coverage_status);
+        let adapter_degraded = self
+            .adapter_executions
+            .iter()
+            .any(|assessment| assessment.status == AdapterExecutionStatus::Degraded);
+        let adapter_incomplete = self
+            .adapter_executions
+            .iter()
+            .any(|assessment| assessment.status == AdapterExecutionStatus::Incomplete);
         self.execution_status = if self.has_failed_modules()
             || supply_chain_status == Some(SupplyChainCoverageStatus::Degraded)
             || dast_status == Some(ApplicationDastCoverageStatus::Degraded)
+            || adapter_degraded
         {
             ScanExecutionStatus::Degraded
         } else if self.has_incomplete_modules()
             || supply_chain_status == Some(SupplyChainCoverageStatus::Incomplete)
             || dast_status == Some(ApplicationDastCoverageStatus::Incomplete)
+            || adapter_incomplete
         {
             ScanExecutionStatus::Incomplete
         } else {
@@ -342,6 +357,14 @@ impl ScanResult {
     #[must_use]
     pub fn with_application_dast(mut self, assessment: ApplicationDastAssessment) -> Self {
         self.application_dast = Some(assessment);
+        self.refresh_execution_status();
+        self
+    }
+
+    /// Attach canonical external-adapter assessments and derive combined execution status.
+    #[must_use]
+    pub fn with_adapter_executions(mut self, assessments: Vec<AdapterExecutionAssessment>) -> Self {
+        self.adapter_executions = assessments;
         self.refresh_execution_status();
         self
     }
@@ -400,6 +423,7 @@ impl ScanResult {
         self.modules_run.extend(other.modules_run);
         self.modules_skipped.extend(other.modules_skipped);
         self.module_outcomes.extend(other.module_outcomes);
+        self.adapter_executions.extend(other.adapter_executions);
         self.refresh_execution_status();
         self.summary = ScanSummary::from_findings(&self.findings);
     }
@@ -437,6 +461,7 @@ mod tests {
             execution_status: ScanExecutionStatus::Complete,
             supply_chain: None,
             application_dast: None,
+            adapter_executions: Vec::new(),
             summary: ScanSummary::from_findings(&findings),
             findings,
         }
@@ -707,5 +732,33 @@ mod tests {
             ModuleOutcomeReason::MissingTool { tool: "osv-scanner".to_string() },
         )]);
         assert!(skipped.has_incomplete_modules());
+    }
+
+    #[test]
+    fn adapter_assessments_drive_top_level_integrity_and_merge() {
+        let incomplete = AdapterExecutionAssessment::new("nuclei").with_gap(
+            AdapterExecutionStatus::Incomplete,
+            crate::AdapterExecutionGap::new(
+                crate::AdapterExecutionGapKind::ConfigurationUnavailable,
+                "collection",
+                "manifest unavailable",
+            ),
+        );
+        let mut result =
+            test_result_with_confidences(&[]).with_adapter_executions(vec![incomplete]);
+        assert_eq!(result.execution_status, ScanExecutionStatus::Incomplete);
+        assert!(!result.execution_successful());
+
+        let degraded = AdapterExecutionAssessment::new("nuclei").with_gap(
+            AdapterExecutionStatus::Degraded,
+            crate::AdapterExecutionGap::new(
+                crate::AdapterExecutionGapKind::SignatureRejected,
+                "native-signature",
+                "signature rejected",
+            ),
+        );
+        result.merge(test_result_with_confidences(&[]).with_adapter_executions(vec![degraded]));
+        assert_eq!(result.execution_status, ScanExecutionStatus::Degraded);
+        assert!(!result.execution_successful());
     }
 }

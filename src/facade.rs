@@ -220,6 +220,7 @@ impl Engine {
             no_redirect_http_client,
             authorization,
             network_policy,
+            self.engagement.as_ref().map(Arc::clone),
         );
         ApplicationDastOrchestrator::new(context, request.clone(), schemas, personas).run().await
     }
@@ -432,6 +433,7 @@ impl Engine {
             no_redirect_http_client,
             authorization,
             network_policy,
+            self.engagement.as_ref().map(Arc::clone),
         ))
     }
 
@@ -946,6 +948,11 @@ impl Engine {
         if requirements.credential_testing {
             authorization.push(self.require_authorized(
                 PolicyTarget::Web(target.clone()),
+                Capability::DastScan,
+                EffectClass::CredentialTest,
+            )?);
+            authorization.push(self.require_authorized(
+                PolicyTarget::Web(target.clone()),
                 Capability::ExternalTool,
                 EffectClass::CredentialTest,
             )?);
@@ -956,6 +963,11 @@ impl Engine {
             )?);
         }
         if requirements.exploitation {
+            authorization.push(self.require_authorized(
+                PolicyTarget::Web(target.clone()),
+                Capability::DastScan,
+                EffectClass::Exploit,
+            )?);
             authorization.push(self.require_authorized(
                 PolicyTarget::Web(target.clone()),
                 Capability::ExternalTool,

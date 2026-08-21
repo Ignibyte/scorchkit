@@ -5,6 +5,14 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Trusted signed Nuclei application probes (TICKET-014 / SK-039)** — Replaced ambient community
+  template execution with an explicit local manifest that pins one public certificate and every
+  approved HTTP template byte sequence. ScorchKit now classifies template effects before policy
+  authorization, runs the exact Nuclei 3.11.1 executable against one authorized concrete address in
+  a private bounded workspace, and rejects unsigned, altered, unsupported-protocol, redirect,
+  external-authority, payload, fuzz, workflow, JavaScript, and credential-bearing templates. Typed
+  complete, incomplete, and degraded adapter evidence now survives checkpoints, JSON, terminal,
+  MCP, HTML, PDF, SARIF, and PostgreSQL projections without exposing untrusted secrets.
 - **Authenticated schema-driven application DAST (TICKET-013 / SK-038)** — Replaced the ambient
   `zap-cli quick-scan` wrapper with policy-sealed OWASP ZAP 2.17.0 Automation Framework plans for
   anonymous, header-token, and browser-login personas. Local digest-pinned OpenAPI and GraphQL

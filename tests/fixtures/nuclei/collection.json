@@ -1,0 +1,21 @@
+{
+  "schema_version": "scorchkit.nuclei-collection/v1",
+  "collection_id": "scorchkit-loopback",
+  "version": "1.0.0",
+  "signer": {
+    "identity": "scorchkit-test-signer",
+    "certificate": "test-signer.crt",
+    "certificate_sha256": "0cfcb96bf813a88ee25f72db53ee4b2f451945f35b18838f5d502f50aa7c03d5",
+    "signature_fragment": "d99f5d6c797c165484555f270cff3d6e"
+  },
+  "templates": [
+    {
+      "id": "scorchkit-loopback-probe",
+      "path": "approved-http.yaml",
+      "sha256": "9be20ac82ef75c8f3f4d63ab2a5355f6af839de8f7e6d757be818e2324e50499",
+      "strongest_effect": "active-safe",
+      "reviewed_by": "scorchkit-security-review",
+      "reviewed_at": "2026-08-21T03:22:00Z"
+    }
+  ]
+}

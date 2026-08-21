@@ -87,6 +87,10 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-authenticated-dast-two-stage-proof-001` | Prove authenticated state before discovery and from final scanner evidence; missing or lost proof is a typed coverage gap. | `AAR-013-authenticated-dast` |
 | `PR-scorchkit-operation-coverage-method-route-001` | Claim schema-operation coverage only from bounded traffic that matches both HTTP method and normalized route template. | `AAR-013-authenticated-dast` |
 | `PR-scorchkit-artifact-entry-all-types-001` | Count every non-root filesystem entry against recursive artifact limits, follow only real directories, and sum only regular-file bytes. | `AAR-013-authenticated-dast` |
+| `PR-scorchkit-authorize-validate-consume-one-handle-001` | Bind local-input authorization, validation, and byte consumption to one no-follow file handle and recheck its identity. | `AAR-014-trusted-nuclei` |
+| `PR-scorchkit-adapter-terminal-state-authority-001` | Derive module and scan terminal state from typed adapter assessments and assert status plus lifecycle events in every runner mode. | `AAR-014-trusted-nuclei` |
+| `PR-scorchkit-preprocess-budget-composition-001` | Reserve fixed workspace cost and accumulate all trusted input bytes and entries before creating artifacts or a subprocess. | `AAR-014-trusted-nuclei` |
+| `PR-scorchkit-compound-guard-boundaries-001` | Assert each independent predicate and exact boundary; use typed flag unions when bitwise alternatives are behaviorally equivalent. | `AAR-014-trusted-nuclei` |
 
 ## Register
 
@@ -157,3 +161,8 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-url-only-operation-coverage-001` | coverage-integrity bug | `AAR-013-authenticated-dast` |
 | `BF-scorchkit-graphql-import-variant-001` | schema-boundary bug | `AAR-013-authenticated-dast` |
 | `BF-scorchkit-artifact-entry-undercount-001` | resource-budget bug | `AAR-013-authenticated-dast` |
+| `BF-scorchkit-trusted-input-reopen-race-001` | provenance-integrity bug | `AAR-014-trusted-nuclei` |
+| `BF-scorchkit-adapter-incomplete-status-elevation-001` | coverage-integrity bug | `AAR-014-trusted-nuclei` |
+| `BF-scorchkit-preprocess-aggregate-budget-gap-001` | resource-budget bug | `AAR-014-trusted-nuclei` |
+| `BF-scorchkit-address-authorization-artifact-order-001` | authorization-order bug | `AAR-014-trusted-nuclei` |
+| `BF-scorchkit-compound-guard-mutation-gap-001` | test-gap bug | `AAR-014-trusted-nuclei` |

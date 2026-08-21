@@ -124,18 +124,26 @@ fn build_sarif(result: &ScanResult) -> serde_json::Value {
                 }
             },
             "results": results,
-            "invocations": [{
-                "executionSuccessful": result.execution_successful(),
-                "startTimeUtc": result.started_at.to_rfc3339(),
-                "endTimeUtc": result.completed_at.to_rfc3339(),
-                "properties": {
-                    "scorchkit/executionStatus": execution_status,
-                    "scorchkit/moduleOutcomes": result.module_outcomes,
-                    "scorchkit/supplyChain": result.supply_chain,
-                    "scorchkit/applicationDast": result.application_dast,
-                },
-            }]
+            "invocations": [sarif_invocation(result, execution_status)]
         }]
+    })
+}
+
+fn sarif_invocation(
+    result: &ScanResult,
+    execution_status: crate::engine::scan_result::ScanExecutionStatus,
+) -> serde_json::Value {
+    serde_json::json!({
+        "executionSuccessful": result.execution_successful(),
+        "startTimeUtc": result.started_at.to_rfc3339(),
+        "endTimeUtc": result.completed_at.to_rfc3339(),
+        "properties": {
+            "scorchkit/executionStatus": execution_status,
+            "scorchkit/moduleOutcomes": result.module_outcomes,
+            "scorchkit/supplyChain": result.supply_chain,
+            "scorchkit/applicationDast": result.application_dast,
+            "scorchkit/adapterExecutions": result.adapter_executions,
+        },
     })
 }
 
@@ -351,6 +359,37 @@ mod tests {
         assert_eq!(invocation["properties"]["scorchkit/executionStatus"], "degraded");
         assert_eq!(invocation["properties"]["scorchkit/moduleOutcomes"][0]["status"], "failed");
         assert!(!serde_json::to_string(&sarif).expect("serialize SARIF").contains("sarif-secret"));
+    }
+
+    #[test]
+    fn sarif_projects_external_adapter_identity_and_degraded_status() {
+        let assessment = scorchkit_core::AdapterExecutionAssessment::new("nuclei").with_gap(
+            scorchkit_core::AdapterExecutionStatus::Degraded,
+            scorchkit_core::AdapterExecutionGap::new(
+                scorchkit_core::AdapterExecutionGapKind::SignatureRejected,
+                "native-signature",
+                "api_key=sarif-adapter-secret",
+            ),
+        );
+        let result = result_with(Finding::new(
+            "nuclei",
+            Severity::Info,
+            "Adapter coverage",
+            "Description",
+            "https://example.com",
+        ))
+        .with_adapter_executions(vec![assessment]);
+
+        let sarif = build_sarif(&result);
+        let invocation = &sarif["runs"][0]["invocations"][0];
+        assert_eq!(invocation["executionSuccessful"], false);
+        assert_eq!(
+            invocation["properties"]["scorchkit/adapterExecutions"][0]["adapter_id"],
+            "nuclei"
+        );
+        assert!(!serde_json::to_string(&sarif)
+            .expect("serialize SARIF")
+            .contains("sarif-adapter-secret"));
     }
 
     #[test]

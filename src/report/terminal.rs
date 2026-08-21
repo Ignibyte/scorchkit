@@ -147,42 +147,70 @@ pub fn print_report(result: &ScanResult) {
 }
 
 fn print_execution_status(result: &ScanResult) {
+    use std::collections::BTreeSet;
+
     use crate::engine::scan_result::ScanExecutionStatus;
 
-    let failures = result
+    let failed_modules: BTreeSet<_> = result
         .module_outcomes
         .iter()
         .filter(|outcome| outcome.status == crate::engine::scan_result::ModuleOutcomeStatus::Failed)
-        .count();
+        .map(|outcome| outcome.module_id.as_str())
+        .collect();
+    let failures = failed_modules.len();
     let dast_failures = result.application_dast.as_ref().map_or(0, |assessment| {
         assessment.gaps.iter().filter(|gap| gap.kind.is_degraded()).count()
     });
+    let adapter_failures = result
+        .adapter_executions
+        .iter()
+        .filter(|assessment| {
+            assessment.status == scorchkit_core::AdapterExecutionStatus::Degraded
+                && !failed_modules.contains(assessment.adapter_id.as_str())
+        })
+        .count();
     match result.execution_status {
         ScanExecutionStatus::Complete => println!("  {} Complete", "Status:".bold()),
         ScanExecutionStatus::Incomplete => {
-            let skipped = result
+            let skipped_modules: BTreeSet<_> = result
                 .module_outcomes
                 .iter()
                 .filter(|outcome| {
                     outcome.status == crate::engine::scan_result::ModuleOutcomeStatus::Skipped
+                })
+                .map(|outcome| outcome.module_id.as_str())
+                .collect();
+            let skipped = skipped_modules.len();
+            let adapter_gaps = result
+                .adapter_executions
+                .iter()
+                .filter(|assessment| {
+                    assessment.status == scorchkit_core::AdapterExecutionStatus::Incomplete
+                        && !skipped_modules.contains(assessment.adapter_id.as_str())
                 })
                 .count();
             println!(
                 "  {} {} ({} coverage gap{})",
                 "Status:".bold(),
                 "INCOMPLETE".yellow().bold(),
-                skipped,
-                if skipped == 1 { "" } else { "s" }
+                skipped + adapter_gaps,
+                if skipped + adapter_gaps == 1 { "" } else { "s" }
             );
         }
         ScanExecutionStatus::Degraded => println!(
             "  {} {} ({} execution failure{})",
             "Status:".bold(),
             "DEGRADED".yellow().bold(),
-            failures + dast_failures,
-            if failures + dast_failures == 1 { "" } else { "s" }
+            failures + dast_failures + adapter_failures,
+            if failures + dast_failures + adapter_failures == 1 { "" } else { "s" }
         ),
     }
+    print_supply_chain_status(result);
+    print_application_dast_status(result);
+    print_adapter_status(result);
+}
+
+fn print_supply_chain_status(result: &ScanResult) {
     if let Some(assessment) = &result.supply_chain {
         println!(
             "  {} {} ({} gap{})",
@@ -203,6 +231,9 @@ fn print_execution_status(result: &ScanResult) {
             );
         }
     }
+}
+
+fn print_application_dast_status(result: &ScanResult) {
     if let Some(assessment) = &result.application_dast {
         println!(
             "  {} {} ({} persona{}, {} gap{})",
@@ -230,6 +261,45 @@ fn print_execution_status(result: &ScanResult) {
                 gap.phase.as_str(),
                 gap.kind.as_str(),
                 escape_terminal_text(&gap.detail)
+            );
+        }
+    }
+}
+
+fn print_adapter_status(result: &ScanResult) {
+    for assessment in &result.adapter_executions {
+        println!(
+            "  {} {}: {:?} (tool {}, collection {}, effect {}, {} verified input{}, {} gap{})",
+            "Adapter:".bold(),
+            escape_terminal_text(&assessment.adapter_id),
+            assessment.status,
+            escape_terminal_text(assessment.tool_version.as_deref().unwrap_or("unknown")),
+            escape_terminal_text(
+                assessment.configuration_identity.as_deref().unwrap_or("unavailable")
+            ),
+            escape_terminal_text(assessment.strongest_effect.as_deref().unwrap_or("unknown")),
+            assessment.inputs.len(),
+            if assessment.inputs.len() == 1 { "" } else { "s" },
+            assessment.gaps.len(),
+            if assessment.gaps.len() == 1 { "" } else { "s" },
+        );
+        for input in &assessment.inputs {
+            println!(
+                "    - {}/{} sha256:{}{}",
+                escape_terminal_text(&input.kind),
+                escape_terminal_text(&input.id),
+                escape_terminal_text(&input.sha256),
+                input.signer_identity.as_deref().map_or_else(String::new, |signer| {
+                    format!(" signer:{}", escape_terminal_text(signer))
+                }),
+            );
+        }
+        for gap in &assessment.gaps {
+            println!(
+                "    - {:?}/{}: {}",
+                gap.kind,
+                escape_terminal_text(&gap.component),
+                escape_terminal_text(&gap.detail),
             );
         }
     }

@@ -21,6 +21,9 @@ pub struct AppConfig {
     /// Authenticated, schema-driven application DAST configuration.
     #[serde(default)]
     pub dast: DastConfig,
+    /// Approved, digest-pinned Nuclei application-template runtime.
+    #[serde(default)]
+    pub nuclei: NucleiConfig,
     pub tools: ToolsConfig,
     /// Reproducible static-analysis configuration.
     #[serde(default)]
@@ -307,6 +310,55 @@ impl Default for DastConfig {
             client_spider_depth: 10,
             client_spider_children: 100,
             browser_id: "chrome-headless".to_string(),
+        }
+    }
+}
+
+/// Bounded trusted Nuclei collection and execution configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NucleiConfig {
+    /// Path to one `scorchkit.nuclei-collection/v1` JSON manifest.
+    pub collection_manifest: Option<PathBuf>,
+    /// Maximum accepted manifest bytes.
+    pub manifest_limit_bytes: usize,
+    /// Maximum accepted certificate bytes.
+    pub certificate_limit_bytes: usize,
+    /// Maximum accepted bytes for one template.
+    pub template_limit_bytes: usize,
+    /// Maximum approved templates in one collection.
+    pub template_limit_count: usize,
+    /// Maximum captured bytes for each Nuclei output stream.
+    pub output_limit_bytes: usize,
+    /// Maximum aggregate regular-file bytes in the owned workspace.
+    pub artifact_limit_bytes: u64,
+    /// Maximum filesystem entries in the owned workspace.
+    pub artifact_limit_files: u64,
+    /// Complete validation or scan process timeout in seconds.
+    pub timeout_seconds: u64,
+    /// Maximum HTTP requests per second.
+    pub rate_limit_per_second: u64,
+    /// Maximum templates executed concurrently.
+    pub concurrency: usize,
+    /// Per-request timeout passed to Nuclei in seconds.
+    pub request_timeout_seconds: u64,
+}
+
+impl Default for NucleiConfig {
+    fn default() -> Self {
+        Self {
+            collection_manifest: None,
+            manifest_limit_bytes: 1024 * 1024,
+            certificate_limit_bytes: 64 * 1024,
+            template_limit_bytes: 1024 * 1024,
+            template_limit_count: 256,
+            output_limit_bytes: 8 * 1024 * 1024,
+            artifact_limit_bytes: 64 * 1024 * 1024,
+            artifact_limit_files: 1024,
+            timeout_seconds: 10 * 60,
+            rate_limit_per_second: 20,
+            concurrency: 4,
+            request_timeout_seconds: 10,
         }
     }
 }

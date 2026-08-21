@@ -140,6 +140,7 @@ fn render_html(result: &ScanResult) -> String {
         )
     });
     let application_dast_html = application_dast_html(result);
+    let adapter_executions_html = adapter_executions_html(result);
 
     format!(
         r#"<!DOCTYPE html>
@@ -207,6 +208,7 @@ fn render_html(result: &ScanResult) -> String {
 
   {supply_chain}
   {application_dast}
+  {adapter_executions}
 
   <h2>Findings ({total})</h2>
   {findings}
@@ -230,10 +232,64 @@ fn render_html(result: &ScanResult) -> String {
         findings = findings_html,
         supply_chain = supply_chain_html,
         application_dast = application_dast_html,
+        adapter_executions = adapter_executions_html,
         version = env!("CARGO_PKG_VERSION"),
         modules = result.modules_run.len(),
         duration = format_duration(result.started_at, result.completed_at),
     )
+}
+
+fn adapter_executions_html(result: &ScanResult) -> String {
+    if result.adapter_executions.is_empty() {
+        return String::new();
+    }
+    let assessments = result.adapter_executions.iter().fold(
+        String::new(),
+        |mut rendered, assessment| {
+            let inputs = assessment.inputs.iter().fold(String::new(), |mut rendered, input| {
+                let signer = input.signer_identity.as_deref().map_or_else(String::new, |signer| {
+                    format!(" signer:{}", html_escape(signer))
+                });
+                let _ = write!(
+                    rendered,
+                    "<li><code>{}/{}</code> sha256:{}{}</li>",
+                    html_escape(&input.kind),
+                    html_escape(&input.id),
+                    html_escape(&input.sha256),
+                    signer,
+                );
+                rendered
+            });
+            let gaps = assessment.gaps.iter().fold(String::new(), |mut rendered, gap| {
+                let _ = write!(
+                    rendered,
+                    "<li><code>{:?}/{}</code>: {}</li>",
+                    gap.kind,
+                    html_escape(&gap.component),
+                    html_escape(&gap.detail),
+                );
+                rendered
+            });
+            let collection = assessment.configuration_identity.as_deref().map_or_else(
+                String::new,
+                |identity| format!(" | Collection: <code>{}</code>", html_escape(identity)),
+            );
+            let _ = write!(
+                rendered,
+                "<h3>{}</h3><p>Schema: <code>{}</code> | Status: <strong>{:?}</strong> | Tool: <code>{}</code> | Effect: <code>{}</code>{}</p><h4>Verified inputs</h4><ul>{}</ul><h4>Coverage gaps</h4><ul>{}</ul>",
+                html_escape(&assessment.adapter_id),
+                html_escape(&assessment.schema_version),
+                assessment.status,
+                html_escape(assessment.tool_version.as_deref().unwrap_or("unknown")),
+                html_escape(assessment.strongest_effect.as_deref().unwrap_or("unknown")),
+                collection,
+                inputs,
+                gaps,
+            );
+            rendered
+        },
+    );
+    format!("<h2>External adapter execution</h2>{assessments}")
 }
 
 fn application_dast_html(result: &ScanResult) -> String {
@@ -374,5 +430,43 @@ mod tests {
         assert!(document.contains("user&lt;script&gt;"));
         assert!(!document.contains("2.17.0<script>"));
         assert!(!document.contains("malformed <script>"));
+    }
+
+    #[test]
+    fn html_report_projects_and_escapes_external_adapter_evidence() {
+        let mut assessment = scorchkit_core::AdapterExecutionAssessment::new("nuclei<script>");
+        assessment.configuration_identity = Some("collection<script>".to_string());
+        assessment.inputs.push(
+            scorchkit_core::AdapterInputIdentity::new(
+                "nuclei_template",
+                "probe<script>",
+                "a".repeat(64),
+            )
+            .with_signer("reviewer<script>"),
+        );
+        assessment = assessment.with_gap(
+            scorchkit_core::AdapterExecutionStatus::Degraded,
+            scorchkit_core::AdapterExecutionGap::new(
+                scorchkit_core::AdapterExecutionGapKind::OutputInvalid,
+                "output<script>",
+                "token=html-adapter-secret",
+            ),
+        );
+        let result = ScanResult::new(
+            "html-adapter".to_string(),
+            Target::parse("https://example.com").expect("target"),
+            Utc::now(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .with_adapter_executions(vec![assessment]);
+
+        let document = render_html(&result);
+        assert!(document.contains("External adapter execution"));
+        assert!(document.contains("nuclei&lt;script&gt;"));
+        assert!(document.contains("collection&lt;script&gt;"));
+        assert!(!document.contains("html-adapter-secret"));
+        assert!(!document.contains("nuclei<script>"));
     }
 }

@@ -12,13 +12,19 @@ use crate::engine::events::ScanEvent;
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
-use crate::engine::scan_result::ScanResult;
+use crate::engine::scan_result::{
+    ModuleOutcome, ModuleOutcomeReason, ModuleOutcomeStatus, ScanResult,
+};
 use crate::runner::job::{JobProgressSink, JobProgressUpdate};
 use crate::runner::job_executor::{
     cancel_on_token, ensure_not_cancelled, CancellationToken, JobExecutor, JobOutcome,
 };
 use crate::runner::progress;
-use crate::runner::subprocess::missing_required_tool;
+use crate::runner::subprocess::is_tool_available;
+use scorchkit_core::{
+    AdapterExecutionAssessment, AdapterExecutionGap, AdapterExecutionGapKind,
+    AdapterExecutionStatus,
+};
 
 /// Returns all available modules (recon + scanner + external tools).
 #[must_use]
@@ -350,11 +356,11 @@ impl Orchestrator {
         // Separate modules into runnable and skipped
         let mut runnable: Vec<&dyn ScanModule> = Vec::new();
         let mut modules_skipped: Vec<(String, String)> = Vec::new();
+        let mut module_outcomes: Vec<ModuleOutcome> = Vec::new();
 
         for module in &self.modules {
-            if let Some(tool) =
-                missing_required_tool(module.requires_external_tool(), module.required_tool())
-            {
+            if let Some(tool) = missing_configured_tool(&self.ctx, module.as_ref()) {
+                publish_missing_adapter_assessment(&self.ctx, module.id(), &tool);
                 if progress::is_visible(quiet) {
                     println!(
                         "  {} {} (requires: {})",
@@ -375,6 +381,10 @@ impl Orchestrator {
                     })?;
                 }
                 modules_skipped.push((module.id().to_string(), reason));
+                module_outcomes.push(ModuleOutcome::skipped(
+                    module.id(),
+                    ModuleOutcomeReason::MissingTool { tool },
+                ));
                 continue;
             }
             runnable.push(module.as_ref());
@@ -479,21 +489,37 @@ impl Orchestrator {
                                 findings: findings.clone(),
                             })?;
                         }
+                        module_outcomes.push(ModuleOutcome::ran(&module_id, findings.len()));
                         modules_run.push(module_id);
                         all_findings.extend(findings);
                     }
                     Err(error) => {
-                        let error = error.to_string();
-                        self.ctx.events.publish(ScanEvent::ModuleError {
-                            scan_id: scan_id.clone(),
-                            module_id: module_id.clone(),
-                            error: error.clone(),
-                        });
-                        if let Some(sink) = &self.job_progress {
-                            sink.publish(JobProgressUpdate::Failed {
+                        let error = crate::engine::observation::redact_text(&error.to_string());
+                        let outcome = module_error_outcome(&self.ctx, &module_id, &error);
+                        if outcome.status == ModuleOutcomeStatus::Skipped {
+                            self.ctx.events.publish(ScanEvent::ModuleSkipped {
+                                scan_id: scan_id.clone(),
                                 module_id: module_id.clone(),
-                            })?;
+                                reason: error.clone(),
+                            });
+                            if let Some(sink) = &self.job_progress {
+                                sink.publish(JobProgressUpdate::Skipped {
+                                    module_id: module_id.clone(),
+                                })?;
+                            }
+                        } else {
+                            self.ctx.events.publish(ScanEvent::ModuleError {
+                                scan_id: scan_id.clone(),
+                                module_id: module_id.clone(),
+                                error: error.clone(),
+                            });
+                            if let Some(sink) = &self.job_progress {
+                                sink.publish(JobProgressUpdate::Failed {
+                                    module_id: module_id.clone(),
+                                })?;
+                            }
                         }
+                        module_outcomes.push(outcome);
                         modules_skipped.push((module_id, error));
                     }
                 }
@@ -540,7 +566,9 @@ impl Orchestrator {
             all_findings,
             modules_run,
             modules_skipped,
-        ))
+        )
+        .with_module_outcomes(module_outcomes)
+        .with_adapter_executions(self.ctx.shared_data.adapter_assessments()))
     }
 
     /// Run all modules with checkpoint support for resume-on-interrupt.
@@ -597,6 +625,10 @@ impl Orchestrator {
             Clone::clone,
         );
 
+        // A trusted Nuclei collection can change between processes. Rerunning the adapter is the
+        // fail-closed resume behavior until collection identity is prebound in the checkpoint.
+        cp.rerun_module("nuclei");
+
         let resumed_count = cp.completed_modules.len();
         if progress::has_visible_items(resumed_count, quiet) {
             println!(
@@ -610,14 +642,14 @@ impl Orchestrator {
         // Filter to modules that haven't completed yet
         let mut runnable: Vec<&dyn ScanModule> = Vec::new();
         let mut modules_skipped: Vec<(String, String)> = Vec::new();
+        let mut terminal_outcomes: Vec<ModuleOutcome> = Vec::new();
 
         for module in &self.modules {
             if cp.is_completed(module.id()) {
                 continue; // Already done in previous run
             }
-            if let Some(tool) =
-                missing_required_tool(module.requires_external_tool(), module.required_tool())
-            {
+            if let Some(tool) = missing_configured_tool(&self.ctx, module.as_ref()) {
+                publish_missing_adapter_assessment(&self.ctx, module.id(), &tool);
                 if progress::is_visible(quiet) {
                     println!(
                         "  {} {} (requires: {})",
@@ -633,13 +665,17 @@ impl Orchestrator {
                     reason: reason.clone(),
                 });
                 modules_skipped.push((module.id().to_string(), reason));
+                terminal_outcomes.push(ModuleOutcome::skipped(
+                    module.id(),
+                    ModuleOutcomeReason::MissingTool { tool },
+                ));
                 continue;
             }
             runnable.push(module.as_ref());
         }
 
         if progress::is_visible(quiet) {
-            let total = runnable.len() + resumed_count;
+            let total = runnable.len().saturating_add(resumed_count);
             println!(
                 "{} {}/{} module{} remaining",
                 "Running".bold(),
@@ -688,19 +724,32 @@ impl Orchestrator {
                         duration_ms,
                     });
                     cp.record_module(&module_id, &findings);
+                    if let Some(assessment) = self.ctx.shared_data.adapter_assessment(&module_id) {
+                        cp.record_adapter_assessment(assessment);
+                    }
                     // Save checkpoint after each module
                     let _ = checkpoint::save_checkpoint(&cp, checkpoint_path);
                 }
                 Err(e) => {
-                    let err_str = e.to_string();
+                    let err_str = crate::engine::observation::redact_text(&e.to_string());
                     if let Some(pb) = &spinner {
                         progress::finish_error(pb, &module_name, &err_str);
                     }
-                    self.ctx.events.publish(ScanEvent::ModuleError {
-                        scan_id: scan_id.clone(),
-                        module_id: module_id.clone(),
-                        error: err_str.clone(),
-                    });
+                    let outcome = module_error_outcome(&self.ctx, &module_id, &err_str);
+                    if outcome.status == ModuleOutcomeStatus::Skipped {
+                        self.ctx.events.publish(ScanEvent::ModuleSkipped {
+                            scan_id: scan_id.clone(),
+                            module_id: module_id.clone(),
+                            reason: err_str.clone(),
+                        });
+                    } else {
+                        self.ctx.events.publish(ScanEvent::ModuleError {
+                            scan_id: scan_id.clone(),
+                            module_id: module_id.clone(),
+                            error: err_str.clone(),
+                        });
+                    }
+                    terminal_outcomes.push(outcome);
                     modules_skipped.push((module_id, err_str));
                 }
             }
@@ -710,6 +759,12 @@ impl Orchestrator {
         checkpoint::remove_checkpoint(checkpoint_path);
 
         let modules_run = cp.completed_modules.clone();
+        let mut module_outcomes = cp.module_outcomes.clone();
+        module_outcomes.extend(terminal_outcomes);
+        let adapter_executions = merge_adapter_assessments(
+            cp.adapter_executions.clone(),
+            self.ctx.shared_data.adapter_assessments(),
+        );
         let mut all_findings = cp.findings;
         all_findings.sort_by_key(|finding| std::cmp::Reverse(finding.severity));
 
@@ -728,7 +783,9 @@ impl Orchestrator {
             all_findings,
             modules_run,
             modules_skipped,
-        ))
+        )
+        .with_module_outcomes(module_outcomes)
+        .with_adapter_executions(adapter_executions))
     }
 
     /// Run modules in two phases: recon first, then scanners/tools.
@@ -791,6 +848,7 @@ impl Orchestrator {
         let mut all_findings: Vec<Finding> = Vec::new();
         let mut modules_run: Vec<String> = Vec::new();
         let mut modules_skipped: Vec<(String, String)> = Vec::new();
+        let mut module_outcomes: Vec<ModuleOutcome> = Vec::new();
 
         // Phase 1: Run recon modules
         run_module_batch(
@@ -804,6 +862,7 @@ impl Orchestrator {
             &mut all_findings,
             &mut modules_run,
             &mut modules_skipped,
+            &mut module_outcomes,
         )
         .await?;
 
@@ -826,6 +885,7 @@ impl Orchestrator {
             &mut all_findings,
             &mut modules_run,
             &mut modules_skipped,
+            &mut module_outcomes,
         )
         .await?;
 
@@ -847,8 +907,80 @@ impl Orchestrator {
             all_findings,
             modules_run,
             modules_skipped,
-        ))
+        )
+        .with_module_outcomes(module_outcomes)
+        .with_adapter_executions(self.ctx.shared_data.adapter_assessments()))
     }
+}
+
+fn missing_configured_tool(context: &ScanContext, module: &dyn ScanModule) -> Option<String> {
+    if !module.requires_external_tool() {
+        return None;
+    }
+    let tool = module.required_tool()?;
+    let program = context.config.tools.get_path(tool);
+    (!is_tool_available(&program)).then_some(program)
+}
+
+fn publish_missing_adapter_assessment(context: &ScanContext, module_id: &str, program: &str) {
+    if module_id != "nuclei" {
+        return;
+    }
+    context.shared_data.publish_adapter_assessment(
+        AdapterExecutionAssessment::new(module_id).with_gap(
+            AdapterExecutionStatus::Incomplete,
+            AdapterExecutionGap::new(
+                AdapterExecutionGapKind::ConfigurationUnavailable,
+                "program",
+                format!("configured Nuclei executable is unavailable: {program}"),
+            ),
+        ),
+    );
+}
+
+fn module_error_outcome(context: &ScanContext, module_id: &str, message: &str) -> ModuleOutcome {
+    if let Some(assessment) = context.shared_data.adapter_assessment(module_id) {
+        if assessment.status == AdapterExecutionStatus::Incomplete {
+            let gap = assessment.gaps.first();
+            return ModuleOutcome::skipped(
+                module_id,
+                ModuleOutcomeReason::CoverageUnavailable {
+                    gap: gap
+                        .map_or("adapter_incomplete", |gap| adapter_gap_name(gap.kind))
+                        .to_string(),
+                    component: gap
+                        .map_or_else(|| module_id.to_string(), |gap| gap.component.clone()),
+                },
+            );
+        }
+    }
+    ModuleOutcome::failed(
+        module_id,
+        ModuleOutcomeReason::ExecutionFailed { message: message.to_string() },
+    )
+}
+
+const fn adapter_gap_name(kind: AdapterExecutionGapKind) -> &'static str {
+    match kind {
+        AdapterExecutionGapKind::ConfigurationUnavailable => "configuration_unavailable",
+        AdapterExecutionGapKind::InputRejected => "input_rejected",
+        AdapterExecutionGapKind::SignatureRejected => "signature_rejected",
+        AdapterExecutionGapKind::UnsupportedCapability => "unsupported_capability",
+        AdapterExecutionGapKind::VersionUnsupported => "version_unsupported",
+        AdapterExecutionGapKind::ExecutionFailed => "execution_failed",
+        AdapterExecutionGapKind::OutputInvalid => "output_invalid",
+    }
+}
+
+fn merge_adapter_assessments(
+    retained: Vec<scorchkit_core::AdapterExecutionAssessment>,
+    current: Vec<scorchkit_core::AdapterExecutionAssessment>,
+) -> Vec<scorchkit_core::AdapterExecutionAssessment> {
+    let mut by_id = std::collections::BTreeMap::new();
+    for assessment in retained.into_iter().chain(current) {
+        by_id.insert(assessment.adapter_id.clone(), assessment);
+    }
+    by_id.into_values().collect()
 }
 
 struct ModuleExecution {
@@ -919,13 +1051,13 @@ async fn run_module_batch(
     findings: &mut Vec<Finding>,
     modules_run: &mut Vec<String>,
     modules_skipped: &mut Vec<(String, String)>,
+    module_outcomes: &mut Vec<ModuleOutcome>,
 ) -> Result<()> {
     let mut runnable: Vec<&dyn ScanModule> = Vec::new();
 
     for &module in modules {
-        if let Some(tool) =
-            missing_required_tool(module.requires_external_tool(), module.required_tool())
-        {
+        if let Some(tool) = missing_configured_tool(ctx, module) {
+            publish_missing_adapter_assessment(ctx, module.id(), &tool);
             if progress::is_visible(quiet) {
                 println!(
                     "  {} {} (requires: {})",
@@ -944,6 +1076,10 @@ async fn run_module_batch(
                 sink.publish(JobProgressUpdate::Skipped { module_id: module.id().to_string() })?;
             }
             modules_skipped.push((module.id().to_string(), reason));
+            module_outcomes.push(ModuleOutcome::skipped(
+                module.id(),
+                ModuleOutcomeReason::MissingTool { tool },
+            ));
             continue;
         }
         runnable.push(module);
@@ -977,19 +1113,33 @@ async fn run_module_batch(
                         findings: found.clone(),
                     })?;
                 }
+                module_outcomes.push(ModuleOutcome::ran(&module_id, found.len()));
                 modules_run.push(module_id);
                 findings.extend(found);
             }
             Err(e) => {
-                let err_str = e.to_string();
-                ctx.events.publish(ScanEvent::ModuleError {
-                    scan_id: scan_id.to_string(),
-                    module_id: module_id.clone(),
-                    error: err_str.clone(),
-                });
-                if let Some(sink) = progress_sink {
-                    sink.publish(JobProgressUpdate::Failed { module_id: module_id.clone() })?;
+                let err_str = crate::engine::observation::redact_text(&e.to_string());
+                let outcome = module_error_outcome(ctx, &module_id, &err_str);
+                if outcome.status == ModuleOutcomeStatus::Skipped {
+                    ctx.events.publish(ScanEvent::ModuleSkipped {
+                        scan_id: scan_id.to_string(),
+                        module_id: module_id.clone(),
+                        reason: err_str.clone(),
+                    });
+                    if let Some(sink) = progress_sink {
+                        sink.publish(JobProgressUpdate::Skipped { module_id: module_id.clone() })?;
+                    }
+                } else {
+                    ctx.events.publish(ScanEvent::ModuleError {
+                        scan_id: scan_id.to_string(),
+                        module_id: module_id.clone(),
+                        error: err_str.clone(),
+                    });
+                    if let Some(sink) = progress_sink {
+                        sink.publish(JobProgressUpdate::Failed { module_id: module_id.clone() })?;
+                    }
                 }
+                module_outcomes.push(outcome);
                 modules_skipped.push((module_id, err_str));
             }
         }
@@ -1081,6 +1231,45 @@ mod tests {
         category: ModuleCategory,
         required_tool: Option<&'static str>,
         findings: usize,
+    }
+
+    struct IncompleteAdapterModule {
+        category: ModuleCategory,
+    }
+
+    #[async_trait]
+    impl ScanModule for IncompleteAdapterModule {
+        fn name(&self) -> &'static str {
+            "incomplete adapter"
+        }
+
+        fn id(&self) -> &'static str {
+            "fixture-incomplete-adapter"
+        }
+
+        fn category(&self) -> ModuleCategory {
+            self.category
+        }
+
+        fn description(&self) -> &'static str {
+            "publishes an incomplete prerequisite before execution"
+        }
+
+        async fn run(&self, context: &ScanContext) -> Result<Vec<Finding>> {
+            context.shared_data.publish_adapter_assessment(
+                AdapterExecutionAssessment::new(self.id()).with_gap(
+                    AdapterExecutionStatus::Incomplete,
+                    AdapterExecutionGap::new(
+                        AdapterExecutionGapKind::ConfigurationUnavailable,
+                        "collection",
+                        "fixture collection is unavailable",
+                    ),
+                ),
+            );
+            Err(crate::engine::error::ScorchError::Config(
+                "fixture collection is unavailable".to_string(),
+            ))
+        }
     }
 
     struct SharedDataProducer;
@@ -1308,6 +1497,14 @@ mod tests {
         assert!(normal_result.modules_run.is_empty());
         assert_eq!(normal_result.modules_skipped.len(), 1);
         assert_eq!(normal_result.modules_skipped[0].0, "missing");
+        assert_eq!(
+            normal_result.module_outcomes[0].status,
+            crate::engine::scan_result::ModuleOutcomeStatus::Skipped
+        );
+        assert_eq!(
+            normal_result.execution_status,
+            crate::engine::scan_result::ScanExecutionStatus::Incomplete
+        );
 
         let checkpoint_dir = tempfile::tempdir().expect("checkpoint directory");
         let checkpoint_path = checkpoint_dir.path().join("scan.json");
@@ -1320,6 +1517,10 @@ mod tests {
         assert!(checkpoint_result.modules_run.is_empty());
         assert_eq!(checkpoint_result.modules_skipped.len(), 1);
         assert_eq!(checkpoint_result.modules_skipped[0].0, "missing");
+        assert_eq!(
+            checkpoint_result.module_outcomes[0].status,
+            crate::engine::scan_result::ModuleOutcomeStatus::Skipped
+        );
 
         let mut phased = Orchestrator::new(fixture_context());
         phased.add_module(missing());
@@ -1334,6 +1535,102 @@ mod tests {
         assert_eq!(phased_result.modules_skipped.len(), 1);
         assert_eq!(phased_result.modules_skipped[0].0, "missing");
         assert_eq!(phased_result.findings.len(), 1);
+        assert_eq!(phased_result.module_outcomes.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn every_dast_execution_mode_preserves_incomplete_adapter_status() {
+        let incomplete =
+            |category| Box::new(IncompleteAdapterModule { category }) as Box<dyn ScanModule>;
+
+        let normal_context = fixture_context();
+        let mut normal_events = normal_context.events.subscribe();
+        let mut normal = Orchestrator::new(normal_context);
+        normal.add_module(incomplete(ModuleCategory::Recon));
+        let normal_result = normal.run(true).await.expect("normal incomplete adapter");
+
+        let checkpoint_dir = tempfile::tempdir().expect("checkpoint directory");
+        let checkpoint_path = checkpoint_dir.path().join("scan.json");
+        let checkpoint_context = fixture_context();
+        let mut checkpoint_events = checkpoint_context.events.subscribe();
+        let mut checkpointed = Orchestrator::new(checkpoint_context);
+        checkpointed.add_module(incomplete(ModuleCategory::Recon));
+        let checkpoint_result = checkpointed
+            .run_with_checkpoint(true, &checkpoint_path, None)
+            .await
+            .expect("checkpoint incomplete adapter");
+
+        let phased_context = fixture_context();
+        let mut phased_events = phased_context.events.subscribe();
+        let mut phased = Orchestrator::new(phased_context);
+        phased.add_module(incomplete(ModuleCategory::Scanner));
+        let phased_result = phased.run_phased(true).await.expect("phased incomplete adapter");
+
+        for (result, events) in [
+            (normal_result, &mut normal_events),
+            (checkpoint_result, &mut checkpoint_events),
+            (phased_result, &mut phased_events),
+        ] {
+            assert_eq!(
+                result.execution_status,
+                crate::engine::scan_result::ScanExecutionStatus::Incomplete
+            );
+            assert_eq!(result.module_outcomes[0].status, ModuleOutcomeStatus::Skipped);
+            assert!(matches!(
+                result.module_outcomes[0].reason,
+                Some(ModuleOutcomeReason::CoverageUnavailable { ref gap, ref component })
+                    if gap == "configuration_unavailable" && component == "collection"
+            ));
+            let emitted: Vec<_> = std::iter::from_fn(|| events.try_recv().ok()).collect();
+            assert_eq!(
+                emitted
+                    .iter()
+                    .filter(|event| matches!(event, ScanEvent::ModuleSkipped { .. }))
+                    .count(),
+                1
+            );
+            assert!(!emitted.iter().any(|event| matches!(event, ScanEvent::ModuleError { .. })));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_external_tool_path_controls_preflight_availability() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let executable = tempfile::NamedTempFile::new().expect("fixture executable");
+        std::fs::set_permissions(executable.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("executable mode");
+        let target = Target::parse("https://example.com").expect("target");
+        let mut config = AppConfig::default();
+        config.tools.nuclei = Some(executable.path().to_string_lossy().into_owned());
+        let context =
+            ScanContext::new(target, Arc::new(config), reqwest::Client::new(), Vec::new());
+        let module = FixtureModule {
+            module_id: "nuclei",
+            category: ModuleCategory::Scanner,
+            required_tool: Some("nuclei"),
+            findings: 0,
+        };
+
+        assert_eq!(missing_configured_tool(&context, &module), None);
+    }
+
+    #[test]
+    fn missing_nuclei_program_publishes_typed_incomplete_assessment() {
+        let context = fixture_context();
+        publish_missing_adapter_assessment(
+            &context,
+            "nuclei",
+            "/missing/nuclei?api_key=fixture-secret",
+        );
+
+        let assessment =
+            context.shared_data.adapter_assessment("nuclei").expect("missing-program assessment");
+        assert_eq!(assessment.status, AdapterExecutionStatus::Incomplete);
+        assert_eq!(assessment.gaps[0].kind, AdapterExecutionGapKind::ConfigurationUnavailable);
+        assert_eq!(assessment.gaps[0].component, "program");
+        assert!(!assessment.gaps[0].detail.contains("fixture-secret"));
     }
 
     #[tokio::test]

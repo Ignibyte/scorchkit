@@ -1,0 +1,19 @@
+id: scorchkit-loopback-probe
+info:
+  name: ScorchKit loopback probe
+  author: scorchkit-security-review
+  severity: info
+  description: Detects the inert ScorchKit trusted-Nuclei loopback fixture.
+  tags:
+    - scorchkit
+    - integration
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/scorchkit-nuclei-fixture"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "scorchkit-trusted-nuclei"
+# digest: 490a0046304402202c868dc50a8bce45ee50405c2db1d1a0a2a3600a164c936078f880661e7cfaf802200f61c27fb02ad8fa3fdc896ce6e5674d9ff686c3609ed336d296aa96d3516081:d99f5d6c797c165484555f270cff3d6e

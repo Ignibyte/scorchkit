@@ -94,6 +94,7 @@ pub fn execution_evidence(result: &crate::engine::scan_result::ScanResult) -> se
         "module_outcomes": result.module_outcomes,
         "supply_chain": result.supply_chain,
         "application_dast": result.application_dast,
+        "adapter_executions": result.adapter_executions,
     })
 }
 
@@ -196,5 +197,32 @@ mod tests {
         assert_eq!(evidence["execution_status"], "degraded");
         assert_eq!(evidence["application_dast"]["gaps"][0]["kind"], "authentication_lost");
         assert!(!evidence.to_string().contains("storage-dast-secret"));
+    }
+
+    #[test]
+    fn execution_evidence_preserves_redacted_external_adapter_state() {
+        let assessment = scorchkit_core::AdapterExecutionAssessment::new("nuclei").with_gap(
+            scorchkit_core::AdapterExecutionStatus::Degraded,
+            scorchkit_core::AdapterExecutionGap::new(
+                scorchkit_core::AdapterExecutionGapKind::SignatureRejected,
+                "native-signature",
+                "token=storage-adapter-secret",
+            ),
+        );
+        let result = ScanResult::new(
+            "storage-adapter-evidence".to_string(),
+            Target::parse("https://example.com").expect("target"),
+            Utc::now(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .with_adapter_executions(vec![assessment]);
+
+        let evidence = execution_evidence(&result);
+        assert_eq!(evidence["execution_status"], "degraded");
+        assert_eq!(evidence["adapter_executions"][0]["adapter_id"], "nuclei");
+        assert_eq!(evidence["adapter_executions"][0]["gaps"][0]["kind"], "signature_rejected");
+        assert!(!evidence.to_string().contains("storage-adapter-secret"));
     }
 }

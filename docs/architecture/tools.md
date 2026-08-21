@@ -125,6 +125,11 @@ Semgrep materializes its embedded rule pack as an owned temporary file and recor
 `ScanResult` records typed module outcomes in addition to the legacy run/skipped lists. Missing
 tools, unsupported languages, valid runs, and execution/parser failures therefore remain distinct.
 
+Nuclei is a stricter adapter boundary. It accepts only one versioned local collection of signed
+application HTTP templates, resolves the target to an authorized concrete address, disables
+ambient templates and updates, and publishes exact collection, template, signer, version, effect,
+and gap evidence. See [Trusted Nuclei application probes](trusted-nuclei.md).
+
 Application supply-chain execution is deliberately not another unordered code-module batch. The
 ordered service runs OSV Scanner against source lockfiles, creates or imports one exact CycloneDX
 1.6 SBOM, then passes those verified bytes to Grype and Trivy. The old independent OSV, Grype, and
@@ -179,7 +184,7 @@ When implementing a wrapper, check `ctx.config.tools.<tool>` for a custom path b
 
 | ID | Name | Binary | Description |
 |----|------|--------|-------------|
-| `nuclei` | Nuclei Template Scanner | `nuclei` | Template-based vulnerability scanning via nuclei |
+| `nuclei` | Trusted Nuclei application probes | `nuclei` | Exact signed local HTTP templates with typed execution evidence |
 | `sqlmap` | SQLMap Injection Scanner | `sqlmap` | Automated SQL injection detection via sqlmap |
 | `dalfox` | Dalfox XSS Scanner | `dalfox` | Advanced XSS scanning via Dalfox |
 | `nmap` | Nmap Port Scanner | `nmap` | Port scanning and service detection via nmap |

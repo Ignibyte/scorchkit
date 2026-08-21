@@ -99,7 +99,7 @@ Use this table to select the right modules for your target type. Filter by OWASP
 | Module ID | Tool | Purpose | OWASP | Target Type | Confidence |
 |-----------|------|---------|-------|-------------|------------|
 | `nmap` | Nmap | Port scanning and service detection | A05 | Infrastructure | 0.9 |
-| `nuclei` | Nuclei | Template-based vulnerability scanning (CVEs, misconfigs) | Multiple | All Web | 0.8 |
+| `nuclei` | Nuclei 3.11.1 | Signed, manifest-pinned HTTP application probes | Multiple | Approved Web Targets | 0.8 |
 | `nikto` | Nikto | Legacy web server scanner | A05 | Web Servers | 0.6 |
 | `sqlmap` | SQLMap | Automated SQL injection confirmation and exploitation | A03 | Web Apps | 0.9 |
 | `feroxbuster` | Feroxbuster | Recursive directory brute-force | A01 | Web Apps | 0.6 |

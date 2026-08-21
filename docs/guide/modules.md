@@ -1090,11 +1090,12 @@ the module is automatically skipped.
 | **Category** | Scanner |
 | **External tool** | `nuclei` |
 | **Confidence** | 0.8 |
-| **Description** | Template-based vulnerability scanning via nuclei |
+| **Description** | Trusted, signed, manifest-pinned HTTP template execution with typed coverage evidence |
 
-**Example findings:**
-- Nuclei: CVE-2021-44228 Log4Shell (Critical)
-- Nuclei: Exposed Admin Panel (Medium)
+Nuclei never selects ambient community templates. Operators must configure an exact local collection
+whose certificate and template bytes match the manifest, pass ScorchKit's HTTP-only classifier, and
+receive the required effect and capability grants before any workspace or process is created. The
+supported executable is exactly Nuclei 3.11.1. See [Trusted Nuclei](../tools/nuclei.md).
 
 ---
 

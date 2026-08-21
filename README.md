@@ -101,6 +101,12 @@ state. Scans cannot refresh databases, pull registry images, use a container dae
 builds or package managers, or inherit ambient credentials. Provider refresh is a separate explicit
 operation. See [application supply-chain evidence](docs/architecture/application-supply-chain.md).
 
+Nuclei execution is also explicit and local. ScorchKit accepts only a configured manifest of exact,
+signed HTTP template bytes; classifies each template before authorization; and runs the pinned
+Nuclei 3.11.1 executable without ambient templates, updates, credentials, protocols, or redirects.
+Missing, rejected, failed, clean, and finding-producing runs remain distinct in every report. See
+[the trusted Nuclei runtime contract](docs/tools/nuclei.md).
+
 Common commands:
 
 ```bash

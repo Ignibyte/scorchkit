@@ -14,7 +14,7 @@ use scorchkit::runner::subprocess::{
     EnvironmentPolicy, ExitPolicy, ToolExecutor, ToolInvocation, ToolOutput,
     DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
 };
-use scorchkit::{Engine, Result, ScopeRule};
+use scorchkit::{AdapterExecutionStatus, Engine, Result, ScopeRule};
 
 #[cfg(feature = "cloud")]
 use scorchkit::engine::cloud_context::CloudContext;
@@ -249,7 +249,19 @@ async fn every_dast_tool_wrapper_executes_its_declared_invocation() -> Result<()
         }
 
         let before = recorder.len();
-        let _module_outcome = module.run(&context).await;
+        let module_outcome = module.run(&context).await;
+        if module.id() == "nuclei" {
+            // Trusted Nuclei has no ambient-template fallback. Without an explicitly configured
+            // collection it must publish incomplete coverage before starting any process.
+            assert!(module_outcome.is_err());
+            assert_eq!(recorder.len(), before);
+            let assessment = context
+                .shared_data
+                .adapter_assessment("nuclei")
+                .expect("missing collection must publish typed Nuclei coverage");
+            assert_eq!(assessment.status, AdapterExecutionStatus::Incomplete);
+            continue;
+        }
         assert_eq!(
             recorder.len(),
             before + 1,
@@ -260,7 +272,10 @@ async fn every_dast_tool_wrapper_executes_its_declared_invocation() -> Result<()
         process_backed += 1;
     }
 
-    assert_eq!(process_backed, 43, "all non-session DAST wrappers must use the shared executor");
+    assert_eq!(
+        process_backed, 42,
+        "all configured non-session DAST wrappers must use the shared executor"
+    );
     Ok(())
 }
 

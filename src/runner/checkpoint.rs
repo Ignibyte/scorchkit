@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
+use crate::engine::scan_result::ModuleOutcome;
+use scorchkit_core::AdapterExecutionAssessment;
 
 /// Persistent scan state for resume-on-interrupt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +32,12 @@ pub struct ScanCheckpoint {
     pub completed_modules: Vec<String>,
     /// Findings accumulated from completed modules.
     pub findings: Vec<Finding>,
+    /// Typed outcomes accumulated from completed modules.
+    #[serde(default)]
+    pub module_outcomes: Vec<ModuleOutcome>,
+    /// External-adapter evidence needed to preserve resume integrity.
+    #[serde(default)]
+    pub adapter_executions: Vec<AdapterExecutionAssessment>,
     /// When the scan was originally started.
     pub started_at: DateTime<Utc>,
     /// When this checkpoint was last updated.
@@ -48,6 +56,8 @@ impl ScanCheckpoint {
             config_hash,
             completed_modules: Vec::new(),
             findings: Vec::new(),
+            module_outcomes: Vec::new(),
+            adapter_executions: Vec::new(),
             started_at: now,
             updated_at: now,
         }
@@ -57,6 +67,24 @@ impl ScanCheckpoint {
     pub fn record_module(&mut self, module_id: &str, findings: &[Finding]) {
         self.completed_modules.push(module_id.to_string());
         self.findings.extend_from_slice(findings);
+        self.module_outcomes.push(ModuleOutcome::ran(module_id, findings.len()));
+        self.updated_at = Utc::now();
+    }
+
+    /// Preserve the exact external-adapter assessment for one completed module.
+    pub fn record_adapter_assessment(&mut self, assessment: AdapterExecutionAssessment) {
+        self.adapter_executions.retain(|current| current.adapter_id != assessment.adapter_id);
+        self.adapter_executions.push(assessment);
+        self.adapter_executions.sort_by(|left, right| left.adapter_id.cmp(&right.adapter_id));
+        self.updated_at = Utc::now();
+    }
+
+    /// Remove a previously completed module so a security-sensitive adapter is rerun safely.
+    pub fn rerun_module(&mut self, module_id: &str) {
+        self.completed_modules.retain(|id| id != module_id);
+        self.findings.retain(|finding| finding.module_id != module_id);
+        self.module_outcomes.retain(|outcome| outcome.module_id != module_id);
+        self.adapter_executions.retain(|assessment| assessment.adapter_id != module_id);
         self.updated_at = Utc::now();
     }
 
@@ -161,6 +189,23 @@ mod tests {
         assert_eq!(loaded.config_hash, 99);
         assert!(loaded.is_completed("headers"));
         assert_eq!(loaded.findings.len(), 1);
+    }
+
+    #[test]
+    fn checkpoint_preserves_adapter_evidence_and_rerun_removes_stale_nuclei_state() {
+        let mut checkpoint = ScanCheckpoint::new("scan-1", "https://example.com", "thorough", 99);
+        checkpoint
+            .record_module("nuclei", &[Finding::new("nuclei", Severity::Info, "T", "D", "url")]);
+        let assessment = AdapterExecutionAssessment::new("nuclei");
+        checkpoint.record_adapter_assessment(assessment);
+        assert_eq!(checkpoint.module_outcomes.len(), 1);
+        assert_eq!(checkpoint.adapter_executions.len(), 1);
+
+        checkpoint.rerun_module("nuclei");
+        assert!(!checkpoint.is_completed("nuclei"));
+        assert!(checkpoint.findings.is_empty());
+        assert!(checkpoint.module_outcomes.is_empty());
+        assert!(checkpoint.adapter_executions.is_empty());
     }
 
     /// Verify `remove_checkpoint` deletes the file without error.
