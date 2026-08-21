@@ -142,6 +142,7 @@ fn sarif_invocation(
             "scorchkit/moduleOutcomes": result.module_outcomes,
             "scorchkit/supplyChain": result.supply_chain,
             "scorchkit/applicationDast": result.application_dast,
+            "scorchkit/applicationPentest": result.application_pentest,
             "scorchkit/adapterExecutions": result.adapter_executions,
         },
     })
@@ -460,6 +461,30 @@ mod tests {
         assert!(!serde_json::to_string(&sarif)
             .expect("serialize SARIF")
             .contains("sarif-dast-secret"));
+    }
+
+    #[test]
+    fn sarif_preserves_canonical_application_pentest_plan_without_secrets() {
+        let assessment = crate::report::application_pentest_fixture();
+        let plan_identity = assessment.plan_identity.clone();
+        let result = result_with(Finding::new(
+            "manual-application-evidence",
+            Severity::Info,
+            "Manual coverage",
+            "Incomplete scenario",
+            "https://example.com/upload",
+        ))
+        .with_application_pentest(assessment)
+        .expect("valid application-pentest fixture");
+
+        let sarif = build_sarif(&result);
+        let application =
+            &sarif["runs"][0]["invocations"][0]["properties"]["scorchkit/applicationPentest"];
+        assert_eq!(application["plan_identity"], plan_identity);
+        assert_eq!(application["plan"]["scenarios"][0]["executor_id"], "manual-upload-v1");
+        assert_eq!(application["scenarios"][0]["gaps"][0]["kind"], "cleanup_required");
+        let encoded = serde_json::to_string(&sarif).expect("serialize SARIF");
+        assert!(!encoded.contains("report-secret"));
     }
 
     #[test]

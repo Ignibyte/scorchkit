@@ -110,6 +110,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
             assessment.coverage_status.as_str(), assessment.profile.as_str(), html_escape(&assessment.zap_version), personas, gaps
         )
     });
+    let application_pentest_html = render_application_pentest(result);
     let adapter_executions_html = render_adapter_executions(result);
 
     let risk_rating = overall_risk_rating(s.critical, s.high, s.medium);
@@ -183,6 +184,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
   </table>
   {supply_chain}
   {application_dast}
+  {application_pentest}
   {adapter_executions}
   <h3>Methodology</h3>
   <p>The assessment followed the PTES (Penetration Testing Execution Standard)
@@ -218,6 +220,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
         execution_status = execution_status,
         supply_chain = supply_chain_html,
         application_dast = application_dast_html,
+        application_pentest = application_pentest_html,
         adapter_executions = adapter_executions_html,
         total = s.total_findings,
         categories = count_categories(s.critical, s.high, s.medium, s.low, s.info),
@@ -232,6 +235,42 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
         findings_html = findings_html,
         modules_list = modules_list,
     )
+}
+
+fn render_application_pentest(result: &ScanResult) -> String {
+    result.application_pentest.as_ref().map_or_else(String::new, |assessment| {
+        let canonical_plan = serde_json::to_string_pretty(&assessment.plan)
+            .unwrap_or_else(|_| "{}".to_string());
+        let scenarios = assessment.scenarios.iter().map(|scenario| {
+            let authorization = serde_json::to_string(&scenario.authorization_requirements)
+                .unwrap_or_else(|_| "[]".to_string());
+            let gaps = scenario.gaps.iter().map(|gap| {
+                format!("<li><code>{}</code>: {}</li>", gap.kind.as_str(), html_escape(&gap.detail))
+            }).collect::<Vec<_>>().join("\n");
+            format!(
+                "<li><code>{}</code>: <strong>{}</strong>/{} via <code>{}</code> ({})<br>authorization: <code>{}</code><br>started: {} | completed: {}<br>findings: <code>{}</code><br>evidence: <code>{}</code><ul>{}</ul></li>",
+                html_escape(&scenario.scenario_identity),
+                scenario.status.as_str(),
+                scenario.invariant.map_or("not_applicable", |value| value.as_str()),
+                html_escape(&scenario.executor_id),
+                scenario.executor_kind.as_str(),
+                html_escape(&authorization),
+                scenario.started_at.to_rfc3339(),
+                scenario.completed_at.to_rfc3339(),
+                html_escape(&scenario.finding_identities.join(", ")),
+                html_escape(&scenario.evidence_identities.join(", ")),
+                gaps,
+            )
+        }).collect::<Vec<_>>().join("\n");
+        format!(
+            "<h3>Application pentest coverage</h3><p>Status: <strong>{}</strong>; plan: <code>{}</code>; target: <code>{}</code></p><h4>Canonical plan</h4><pre>{}</pre><h4>Scenario outcomes</h4><ol>{}</ol>",
+            assessment.coverage_status.as_str(),
+            html_escape(&assessment.plan_identity),
+            html_escape(&redact_url(&assessment.target).0),
+            html_escape(&canonical_plan),
+            scenarios,
+        )
+    })
 }
 
 fn render_adapter_executions(result: &ScanResult) -> String {
@@ -524,6 +563,7 @@ mod tests {
             execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
             supply_chain: None,
             application_dast: None,
+            application_pentest: None,
             adapter_executions: Vec::new(),
             findings,
             summary: ScanSummary {
@@ -552,6 +592,24 @@ mod tests {
         assert!(html.contains("Appendix A"), "Missing appendix");
         assert!(html.contains("SCORCHKIT"), "Missing branding");
         assert!(html.contains("CONFIDENTIAL"), "Missing classification");
+    }
+
+    #[test]
+    fn pdf_html_preserves_canonical_application_pentest_plan_and_outcomes() {
+        let assessment = crate::report::application_pentest_fixture();
+        let plan_identity = assessment.plan_identity.clone();
+        let result = test_result()
+            .with_application_pentest(assessment)
+            .expect("valid application-pentest fixture");
+
+        let html = render_pdf_html(&result);
+        assert!(html.contains("Application pentest coverage"));
+        assert!(html.contains(&plan_identity));
+        assert!(html.contains("manual-upload-v1"));
+        assert!(html.contains("cleanup_required"));
+        assert!(html.contains("codex&lt;script&gt;"));
+        assert!(!html.contains("report-secret"));
+        assert!(!html.contains("codex<script>"));
     }
 
     #[test]

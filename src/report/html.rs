@@ -140,6 +140,7 @@ fn render_html(result: &ScanResult) -> String {
         )
     });
     let application_dast_html = application_dast_html(result);
+    let application_pentest_html = application_pentest_html(result);
     let adapter_executions_html = adapter_executions_html(result);
 
     format!(
@@ -187,6 +188,7 @@ fn render_html(result: &ScanResult) -> String {
   .remediation {{ color: #3fb950; }}
   .agent-analysis {{ color: #d2a8ff; border-left: 2px solid #8957e5; padding-left: 0.5rem; }}
   .tags {{ color: #8b949e; font-size: 0.85rem; margin-top: 0.5rem; }}
+  pre {{ white-space: pre-wrap; word-break: break-word; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; }}
   .footer {{ margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #30363d; color: #8b949e; font-size: 0.85rem; }}
   @media print {{ body {{ background: #fff; color: #000; }} .finding {{ border-color: #ddd; background: #fff; }} }}
 </style>
@@ -208,6 +210,7 @@ fn render_html(result: &ScanResult) -> String {
 
   {supply_chain}
   {application_dast}
+  {application_pentest}
   {adapter_executions}
 
   <h2>Findings ({total})</h2>
@@ -232,6 +235,7 @@ fn render_html(result: &ScanResult) -> String {
         findings = findings_html,
         supply_chain = supply_chain_html,
         application_dast = application_dast_html,
+        application_pentest = application_pentest_html,
         adapter_executions = adapter_executions_html,
         version = env!("CARGO_PKG_VERSION"),
         modules = result.modules_run.len(),
@@ -334,6 +338,56 @@ fn application_dast_html(result: &ScanResult) -> String {
     })
 }
 
+fn application_pentest_html(result: &ScanResult) -> String {
+    result.application_pentest.as_ref().map_or_else(String::new, |assessment| {
+        let canonical_plan = serde_json::to_string_pretty(&assessment.plan)
+            .unwrap_or_else(|_| "{}".to_string());
+        let outcomes = assessment
+            .scenarios
+            .iter()
+            .map(|scenario| {
+                let authorization = serde_json::to_string(&scenario.authorization_requirements)
+                    .unwrap_or_else(|_| "[]".to_string());
+                let gaps = scenario
+                    .gaps
+                    .iter()
+                    .map(|gap| {
+                        format!(
+                            "<li><code>{}</code>: {}</li>",
+                            gap.kind.as_str(),
+                            html_escape(&gap.detail)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    "<li><code>{}</code>: <strong>{}</strong>/{} via <code>{}</code> ({})<br>authorization: <code>{}</code><br>started: {} | completed: {}<br>findings: <code>{}</code><br>evidence: <code>{}</code><ul>{}</ul></li>",
+                    html_escape(&scenario.scenario_identity),
+                    scenario.status.as_str(),
+                    scenario.invariant.map_or("not_applicable", |value| value.as_str()),
+                    html_escape(&scenario.executor_id),
+                    scenario.executor_kind.as_str(),
+                    html_escape(&authorization),
+                    scenario.started_at.to_rfc3339(),
+                    scenario.completed_at.to_rfc3339(),
+                    html_escape(&scenario.finding_identities.join(", ")),
+                    html_escape(&scenario.evidence_identities.join(", ")),
+                    gaps,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "<h2>Application pentest coverage</h2><p>Status: <strong>{}</strong>; plan: <code>{}</code>; target: <code>{}</code></p><h3>Canonical plan</h3><pre>{}</pre><h3>Scenario outcomes</h3><ol>{}</ol>",
+            assessment.coverage_status.as_str(),
+            html_escape(&assessment.plan_identity),
+            html_escape(&redact_url(&assessment.target).0),
+            html_escape(&canonical_plan),
+            outcomes,
+        )
+    })
+}
+
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
@@ -430,6 +484,31 @@ mod tests {
         assert!(document.contains("user&lt;script&gt;"));
         assert!(!document.contains("2.17.0<script>"));
         assert!(!document.contains("malformed <script>"));
+    }
+
+    #[test]
+    fn html_report_preserves_canonical_application_pentest_plan_and_outcomes() {
+        let assessment = crate::report::application_pentest_fixture();
+        let plan_identity = assessment.plan_identity.clone();
+        let result = ScanResult::new(
+            "html-application-pentest".to_string(),
+            Target::parse("https://example.com/upload").expect("target"),
+            Utc::now(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .with_application_pentest(assessment)
+        .expect("valid application-pentest fixture");
+
+        let document = render_html(&result);
+        assert!(document.contains("Application pentest coverage"));
+        assert!(document.contains(&plan_identity));
+        assert!(document.contains("manual-upload-v1"));
+        assert!(document.contains("cleanup_required"));
+        assert!(document.contains("codex&lt;script&gt;"));
+        assert!(!document.contains("report-secret"));
+        assert!(!document.contains("codex<script>"));
     }
 
     #[test]

@@ -6,7 +6,7 @@
 
 use async_trait::async_trait;
 
-use crate::engine::error::Result;
+use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
 use crate::engine::module_trait::{ModuleCategory, ScanModule};
 use crate::engine::scan_context::ScanContext;
@@ -38,7 +38,29 @@ impl ScanModule for MassAssignmentModule {
         let url = ctx.target.url.as_str();
         let mut findings = Vec::new();
 
-        test_mass_assignment(ctx, url, &mut findings).await?;
+        let selected_field = if let Some(scenario) = ctx.shared_data.application_pentest_scenario()
+        {
+            let parameter = scenario.operation.parameter.as_ref().ok_or_else(|| {
+                ScorchError::Config(
+                    "application-pentest object-binding scenario has no selected field".to_string(),
+                )
+            })?;
+            if scenario.class != scorchkit_core::ApplicationPentestScenarioClass::ApiObjectBinding
+                || scenario.operation.method != "POST"
+                || parameter.location != "json"
+                || !supports_application_pentest_field(&parameter.name)
+            {
+                return Err(ScorchError::Config(
+                    "application-pentest object-binding scenario is incompatible with its executor"
+                        .to_string(),
+                ));
+            }
+            Some(parameter.name.clone())
+        } else {
+            None
+        };
+
+        test_mass_assignment(ctx, url, &mut findings, selected_field.as_deref()).await?;
 
         Ok(findings)
     }
@@ -60,6 +82,10 @@ const PRIVILEGED_FIELDS: &[(&str, &str, &str)] = &[
     ("active", "true", "Account activation bypass"),
 ];
 
+pub(super) fn supports_application_pentest_field(name: &str) -> bool {
+    PRIVILEGED_FIELDS.iter().any(|(field, _, _)| *field == name)
+}
+
 /// Check if a privileged field name appears in the response, suggesting
 /// the server accepted or processed the injected field.
 fn check_field_reflected(body: &str, field_name: &str) -> bool {
@@ -76,6 +102,7 @@ async fn test_mass_assignment(
     ctx: &ScanContext,
     url_str: &str,
     findings: &mut Vec<Finding>,
+    selected_field: Option<&str>,
 ) -> Result<()> {
     // Get baseline POST response
     let Ok(baseline) = ctx
@@ -89,10 +116,13 @@ async fn test_mass_assignment(
         return Ok(());
     };
 
-    let baseline_body = baseline.text().await.unwrap_or_default();
+    let baseline_body = crate::scanner::bounded_response_text(baseline).await?;
 
     // Test each privileged field
     for &(field_name, field_value, description) in PRIVILEGED_FIELDS {
+        if selected_field.is_some_and(|selected| selected != field_name) {
+            continue;
+        }
         // Skip if field already naturally appears in baseline
         if check_field_reflected(&baseline_body, field_name) {
             continue;
@@ -111,7 +141,7 @@ async fn test_mass_assignment(
             continue;
         };
 
-        let resp_body = response.text().await.unwrap_or_default();
+        let resp_body = crate::scanner::bounded_response_text(response).await?;
 
         if check_field_reflected(&resp_body, field_name) {
             let severity = if field_name.contains("admin")
@@ -200,5 +230,35 @@ mod tests {
             names.iter().any(|n| *n == "price" || *n == "discount"),
             "must cover business logic fields"
         );
+    }
+
+    #[tokio::test]
+    async fn application_pentest_posts_only_the_exact_selected_json_field() {
+        let server = httpmock::MockServer::start_async().await;
+        let requests = server
+            .mock_async(|when, then| {
+                when.any_request();
+                then.status(200).body("{}");
+            })
+            .await;
+        let target = crate::engine::target::Target::parse(&server.url("/")).expect("target");
+        let context = crate::engine::scan_context::ScanContext::new(
+            target,
+            std::sync::Arc::new(crate::config::AppConfig::default()),
+            reqwest::Client::new(),
+            Vec::new(),
+        );
+        context.shared_data.publish_application_pentest_scenario(
+            crate::application_pentest::test_scenario(
+                scorchkit_core::ApplicationPentestScenarioClass::ApiObjectBinding,
+                "POST",
+                Some(scorchkit_core::HttpParameterIdentity::new("role", "json")),
+            ),
+        );
+
+        let findings = MassAssignmentModule.run(&context).await.expect("selected binding run");
+
+        assert!(findings.is_empty());
+        assert_eq!(requests.calls_async().await, 2);
     }
 }

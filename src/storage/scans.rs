@@ -94,6 +94,7 @@ pub fn execution_evidence(result: &crate::engine::scan_result::ScanResult) -> se
         "module_outcomes": result.module_outcomes,
         "supply_chain": result.supply_chain,
         "application_dast": result.application_dast,
+        "application_pentest": result.application_pentest,
         "adapter_executions": result.adapter_executions,
     })
 }
@@ -197,6 +198,32 @@ mod tests {
         assert_eq!(evidence["execution_status"], "degraded");
         assert_eq!(evidence["application_dast"]["gaps"][0]["kind"], "authentication_lost");
         assert!(!evidence.to_string().contains("storage-dast-secret"));
+    }
+
+    #[test]
+    fn execution_evidence_preserves_complete_application_pentest_plan_and_outcomes() {
+        let assessment = crate::report::application_pentest_fixture();
+        let plan_identity = assessment.plan_identity.clone();
+        let result = ScanResult::new(
+            "storage-application-pentest".to_string(),
+            Target::parse("https://example.com/upload").expect("target"),
+            Utc::now(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .with_application_pentest(assessment)
+        .expect("valid application-pentest fixture");
+
+        let evidence = execution_evidence(&result);
+        assert_eq!(evidence["execution_status"], "incomplete");
+        assert_eq!(evidence["application_pentest"]["plan"]["identity"], plan_identity);
+        assert_eq!(
+            evidence["application_pentest"]["plan"]["scenarios"][0]["scenario"]["proposal_source"]
+                ["label"],
+            "codex<script>"
+        );
+        assert!(!evidence.to_string().contains("report-secret"));
     }
 
     #[test]

@@ -23,7 +23,7 @@ async fn main() {
         .with_target(false)
         .init();
 
-    if let Err(e) = runner::execute(cli).await {
+    if let Err(e) = Box::pin(runner::execute(cli)).await {
         eprintln!("error: {}", scorchkit::report::terminal::escape_terminal_text(&e.to_string()));
         std::process::exit(1);
     }

@@ -3,6 +3,7 @@
 pub mod adapter;
 pub mod adapter_execution;
 pub mod application_dast;
+pub mod application_pentest;
 pub mod attack_path;
 pub mod compliance;
 pub mod compliance_framework;
@@ -24,7 +25,7 @@ pub mod target;
 /// Compatibility namespace used by extracted source modules and doctests.
 pub mod engine {
     pub use crate::{
-        adapter, adapter_execution, application_dast, attack_path, compliance,
+        adapter, adapter_execution, application_dast, application_pentest, attack_path, compliance,
         compliance_framework, correlation, cve, error, events, evidence, finding, observation,
         risk_score, scan_result, service_fingerprint, severity, shared_data, supply_chain, target,
     };
@@ -51,6 +52,26 @@ pub use application_dast::{
     ApplicationDastPhase, ApplicationDastPhaseOutcome, ApplicationDastPhaseStatus,
     ApplicationDastProfile, ApplicationDastRouteCoverage, ApplicationDastSchemaIdentity,
     ApplicationDastSchemaKind, APPLICATION_DAST_ASSESSMENT_SCHEMA_V1,
+};
+pub use application_pentest::{
+    application_pentest_evidence_satisfies, canonical_application_pentest_target,
+    ApplicationEvidenceFormat, ApplicationEvidenceImportAssessment, ApplicationEvidenceSourceKind,
+    ApplicationPentestAccessExpectation, ApplicationPentestAssessment,
+    ApplicationPentestAuthorizationRequirement, ApplicationPentestBlastRadius,
+    ApplicationPentestCleanupDisposition, ApplicationPentestCoverageStatus,
+    ApplicationPentestEvidenceRequirement, ApplicationPentestExecutorKind, ApplicationPentestGap,
+    ApplicationPentestGapKind, ApplicationPentestInvariantResult, ApplicationPentestOperation,
+    ApplicationPentestPayloadClass, ApplicationPentestPersonaExpectation, ApplicationPentestPlan,
+    ApplicationPentestProposalKind, ApplicationPentestProposalSource, ApplicationPentestScenario,
+    ApplicationPentestScenarioClass, ApplicationPentestScenarioOutcome,
+    ApplicationPentestScenarioStatus, ApplicationPentestValidationError,
+    PlannedApplicationPentestScenario, APPLICATION_EVIDENCE_IMPORT_SCHEMA_V1,
+    APPLICATION_PENTEST_ASSESSMENT_SCHEMA_V1, APPLICATION_PENTEST_PLAN_SCHEMA_V1,
+    APPLICATION_PENTEST_SCENARIO_SCHEMA_V1, MAX_APPLICATION_PENTEST_CONCURRENCY,
+    MAX_APPLICATION_PENTEST_EVIDENCE_REQUIREMENTS, MAX_APPLICATION_PENTEST_PERSONAS,
+    MAX_APPLICATION_PENTEST_PRECONDITIONS, MAX_APPLICATION_PENTEST_REFERENCES,
+    MAX_APPLICATION_PENTEST_SCENARIOS, MAX_APPLICATION_PENTEST_SECONDS,
+    MAX_APPLICATION_PENTEST_VALUE_BYTES,
 };
 pub use attack_path::{
     correlate_attack_paths, AttackPath, AttackPathCorrelation, AttackPathCorrelationGap,

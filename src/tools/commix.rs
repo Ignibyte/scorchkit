@@ -42,15 +42,39 @@ impl ScanModule for CommixModule {
 
     async fn run(&self, ctx: &ScanContext) -> Result<Vec<Finding>> {
         let url = ctx.target.url.as_str();
-        let output = ctx
-            .run_tool_lenient(
-                "commix",
-                &["-u", url, "--batch", "--skip-waf"],
-                Duration::from_mins(3),
-            )
-            .await?;
+        let scenario = ctx.shared_data.application_pentest_scenario();
+        let args = commix_args(url, scenario.as_ref())?;
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let output = ctx.run_tool_lenient("commix", &args, Duration::from_mins(3)).await?;
         Ok(parse_commix_output(&output.stdout, url))
     }
+}
+
+fn commix_args(
+    url: &str,
+    scenario: Option<&scorchkit_core::ApplicationPentestScenario>,
+) -> Result<Vec<String>> {
+    let mut args =
+        vec!["-u".to_string(), url.to_string(), "--batch".to_string(), "--skip-waf".to_string()];
+    let Some(scenario) = scenario else {
+        return Ok(args);
+    };
+    let parameter = scenario.operation.parameter.as_ref().ok_or_else(|| {
+        crate::engine::error::ScorchError::Config(
+            "application-pentest command-injection scenario has no selected parameter".to_string(),
+        )
+    })?;
+    if scenario.class != scorchkit_core::ApplicationPentestScenarioClass::CommandInjection
+        || scenario.operation.method != "GET"
+        || parameter.location != "query"
+    {
+        return Err(crate::engine::error::ScorchError::Config(
+            "application-pentest command-injection scenario is incompatible with its executor"
+                .to_string(),
+        ));
+    }
+    args.extend(["--method=GET".to_string(), "-p".to_string(), parameter.name.clone()]);
+    Ok(args)
 }
 
 /// Parse commix text output for vulnerability indicators.
@@ -110,5 +134,26 @@ mod tests {
     #[test]
     fn parse_commix_output_empty() {
         assert!(parse_commix_output("", "https://example.com").is_empty());
+    }
+
+    #[test]
+    fn application_pentest_commix_args_bind_the_exact_get_parameter() {
+        let scenario = crate::application_pentest::test_scenario(
+            scorchkit_core::ApplicationPentestScenarioClass::CommandInjection,
+            "GET",
+            Some(scorchkit_core::HttpParameterIdentity::new("cmd", "query")),
+        );
+        assert_eq!(
+            commix_args("https://example.com/run?cmd=id", Some(&scenario)).expect("args"),
+            [
+                "-u",
+                "https://example.com/run?cmd=id",
+                "--batch",
+                "--skip-waf",
+                "--method=GET",
+                "-p",
+                "cmd",
+            ]
+        );
     }
 }

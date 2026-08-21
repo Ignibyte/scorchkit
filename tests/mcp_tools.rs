@@ -6,6 +6,7 @@
 
 #![cfg(feature = "mcp")]
 
+use std::path::Path;
 use std::sync::Arc;
 
 use httpmock::MockServer;
@@ -20,12 +21,15 @@ use scorchkit::engine::observation::{
     ThreadFlow,
 };
 use scorchkit::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
+use scorchkit::engine::scan_result::ScanResult;
 use scorchkit::engine::scope::ScopeRule;
 use scorchkit::engine::severity::Severity;
+use scorchkit::engine::target::Target;
 use scorchkit::mcp::contract::{tool_contract, MCP_OUTPUT_SCHEMA_VERSION};
 use scorchkit::mcp::server::ScorchKitServer;
 use scorchkit::mcp::types::*;
 use scorchkit::storage;
+use uuid::Uuid;
 
 /// Helper to get a database pool or skip the test.
 async fn get_pool_or_skip() -> Option<sqlx::PgPool> {
@@ -45,6 +49,31 @@ async fn get_pool_or_skip() -> Option<sqlx::PgPool> {
 /// Generate a unique project name.
 fn unique_name(prefix: &str) -> String {
     format!("{prefix}-{}", uuid::Uuid::new_v4())
+}
+
+fn application_persona_scenario() -> ApplicationPentestScenarioParams {
+    ApplicationPentestScenarioParams {
+        name: "anonymous access invariant".to_string(),
+        proposal_kind: "agent".to_string(),
+        proposal_label: "codex".to_string(),
+        scenario_class: "authorization_invariant".to_string(),
+        payload_class: "persona_comparison".to_string(),
+        method: "GET".to_string(),
+        route: "/".to_string(),
+        parameter_name: None,
+        parameter_location: None,
+        personas: vec![ApplicationPentestPersonaParams {
+            persona: "anonymous".to_string(),
+            expected: "allow".to_string(),
+        }],
+        max_seconds: 5,
+        max_concurrency: 1,
+        cleanup: "not_required".to_string(),
+        preconditions: vec!["loopback fixture is reachable".to_string()],
+        evidence_requirements: vec!["status_code".to_string()],
+        source_finding_identities: vec!["a".repeat(64)],
+        source_path_identities: Vec::new(),
+    }
 }
 
 fn test_engagement() -> Engagement {
@@ -68,6 +97,7 @@ fn test_engagement() -> Engagement {
         .allow_capability(Capability::DastScan)
         .allow_capability(Capability::CodeScan)
         .allow_capability(Capability::ExternalTool)
+        .allow_capability(Capability::LocalState)
         .allow_effect(EffectClass::Passive)
         .allow_effect(EffectClass::ActiveSafe)
         .allow_effect(EffectClass::Intrusive);
@@ -404,7 +434,7 @@ async fn stateless_job_runs_through_mcp_transport_without_database() {
     });
     let client = ().serve(client_transport).await.expect("initialize MCP client");
     let tools = client.list_all_tools().await.expect("list MCP tools");
-    assert_eq!(tools.len(), 34, "every routed MCP tool has a canonical contract");
+    assert_eq!(tools.len(), 37, "every routed MCP tool has a canonical contract");
     let expected_output_schema: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/mcp/tool-output-schema-v1.json"))
             .expect("decode output schema fixture");
@@ -2312,6 +2342,385 @@ async fn test_tool_project_status_empty() -> Result<(), Box<dyn std::error::Erro
 // ═══════════════════════════════════════════════════════════════════════
 // Plan Scan Tests
 // ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn application_pentest_planning_is_effect_free_and_returns_a_canonical_plan() {
+    let server = test_server_without_database();
+    let plan_json = server
+        .do_plan_application_pentest(ApplicationPentestPlanParams {
+            target: "https://example.com/?credential=fixture-secret".to_string(),
+            scenarios: vec![application_persona_scenario()],
+        })
+        .expect("compile application-pentest plan");
+    let plan: scorchkit_core::ApplicationPentestPlan =
+        serde_json::from_str(&plan_json).expect("decode canonical plan");
+
+    plan.validate().expect("validate plan identity");
+    assert!(!plan.target.contains("fixture-secret"));
+    assert_eq!(url::Url::parse(&plan.target).expect("target").query(), Some("credential="));
+    assert_eq!(plan.scenarios.len(), 1);
+    assert_eq!(
+        plan.scenarios[0].executor_kind,
+        scorchkit_core::ApplicationPentestExecutorKind::PersonaComparator
+    );
+    assert_eq!(
+        plan.scenarios[0].authorization_requirements,
+        [scorchkit_core::ApplicationPentestAuthorizationRequirement {
+            capability: Capability::DastScan,
+            effect: EffectClass::Intrusive,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn application_pentest_requires_the_exact_plan_and_persists_complete_coverage(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pool) = get_pool_or_skip().await else {
+        return Ok(());
+    };
+    let target = MockServer::start_async().await;
+    let response = target
+        .mock_async(|when, then| {
+            when.method("GET").path("/");
+            then.status(200).body("allowed");
+        })
+        .await;
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-application-pentest");
+    let project = storage::projects::create_project(&pool, &name, "application pentest").await?;
+    let target_url = target.url("/");
+    storage::projects::add_target(&pool, project.id, &target_url, "loopback").await?;
+    let plan_json = server.do_plan_application_pentest(ApplicationPentestPlanParams {
+        target: target_url.clone(),
+        scenarios: vec![application_persona_scenario()],
+    })?;
+    let plan: scorchkit_core::ApplicationPentestPlan = serde_json::from_str(&plan_json)?;
+
+    let mismatch = server
+        .do_application_pentest(ApplicationPentestExecuteParams {
+            project: name.clone(),
+            target: target_url.clone(),
+            approved_plan_identity: "0".repeat(64),
+            scenarios: vec![application_persona_scenario()],
+        })
+        .await;
+    assert!(mismatch.is_err_and(|error| error.contains("identity")));
+    assert_eq!(response.calls_async().await, 0, "identity mismatch must precede target I/O");
+
+    let output = server
+        .do_application_pentest(ApplicationPentestExecuteParams {
+            project: name.clone(),
+            target: target_url,
+            approved_plan_identity: plan.identity.clone(),
+            scenarios: vec![application_persona_scenario()],
+        })
+        .await?;
+    let output: serde_json::Value = serde_json::from_str(&output)?;
+    assert_eq!(output["plan"]["identity"], plan.identity);
+    assert_eq!(output["assessment"]["coverage_status"], "complete");
+    assert_eq!(
+        output["assessment"]["plan"]["scenarios"][0]["scenario"]["proposal_source"]["label"],
+        "codex"
+    );
+    assert_eq!(response.calls_async().await, 1);
+    let scans = storage::scans::list_scans(&pool, project.id).await?;
+    assert_eq!(scans.len(), 1);
+    assert_eq!(scans[0].profile, "application-pentest");
+    assert_eq!(
+        scans[0].execution_evidence["application_pentest"]["plan"]["identity"],
+        plan.identity
+    );
+
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn application_pentest_storage_rolls_back_scan_and_findings_as_one_unit(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pool) = get_pool_or_skip().await else {
+        return Ok(());
+    };
+    let suffix = Uuid::new_v4().simple().to_string();
+    let trigger = format!("scorchkit_t16_{suffix}");
+    let function = format!("scorchkit_t16_fail_{suffix}");
+    let failing_module = format!("transaction-failure-{suffix}");
+    let create_function = format!(
+        "CREATE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN IF NEW.module_id = '{failing_module}' THEN \
+         RAISE EXCEPTION 'fixture transaction failure'; END IF; RETURN NEW; END $$"
+    );
+    sqlx::query(&create_function).execute(&pool).await?;
+    let create_trigger = format!(
+        "CREATE TRIGGER {trigger} BEFORE INSERT OR UPDATE ON tracked_findings \
+         FOR EACH ROW EXECUTE FUNCTION {function}()"
+    );
+    sqlx::query(&create_trigger).execute(&pool).await?;
+
+    let project =
+        storage::projects::create_project(&pool, &unique_name("mcp-atomic-pentest"), "").await?;
+    let now = chrono::Utc::now();
+    let mut result = ScanResult::new(
+        Uuid::new_v4().to_string(),
+        Target::parse("https://example.com/")?,
+        now,
+        vec![
+            Finding::new(
+                "transaction-success",
+                Severity::Low,
+                "First transaction fixture",
+                "must roll back",
+                "https://example.com/first",
+            ),
+            Finding::new(
+                &failing_module,
+                Severity::High,
+                "Second transaction fixture",
+                "forces rollback",
+                "https://example.com/second",
+            ),
+        ],
+        vec!["persona-comparator-v1".to_string()],
+        Vec::new(),
+    );
+    result.completed_at = now;
+    result.summary = scorchkit_core::ScanSummary::from_findings(&result.findings);
+    let stored = storage::findings::save_application_pentest_scan(&pool, project.id, &result).await;
+    assert!(stored.is_err_and(|error| error.to_string().contains("fixture transaction failure")));
+    assert!(storage::scans::list_scans(&pool, project.id).await?.is_empty());
+    assert!(storage::findings::list_findings(&pool, project.id).await?.is_empty());
+
+    sqlx::query(&format!("DROP TRIGGER {trigger} ON tracked_findings")).execute(&pool).await?;
+    sqlx::query(&format!("DROP FUNCTION {function}()")).execute(&pool).await?;
+    let stored =
+        storage::findings::save_application_pentest_scan(&pool, project.id, &result).await?;
+    assert_eq!(stored.findings_new, 2);
+    assert_eq!(storage::scans::list_scans(&pool, project.id).await?.len(), 1);
+    assert_eq!(storage::findings::list_findings(&pool, project.id).await?.len(), 2);
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn application_evidence_import_is_atomic_attributed_and_evidence_idempotent(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pool) = get_pool_or_skip().await else {
+        return Ok(());
+    };
+    let target = MockServer::start_async().await;
+    let target_url = target.url("/");
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-application-evidence");
+    let project = storage::projects::create_project(&pool, &name, "manual evidence").await?;
+    storage::projects::add_target(&pool, project.id, &target_url, "loopback").await?;
+    let root = tempfile::Builder::new()
+        .prefix("ticket-016-evidence-")
+        .tempdir_in(std::env::current_dir()?)?;
+    let bytes = format!(
+        "{{\"log\":{{\"entries\":[{{\"request\":{{\"method\":\"GET\",\"url\":{url},\"headers\":[]}},\"response\":{{\"status\":403,\"headers\":[],\"content\":{{\"text\":\"token=fixture-secret\"}}}}}}]}}}}",
+        url = serde_json::to_string(&target_url)?
+    );
+    let path = root.path().join("evidence.har");
+    std::fs::write(&path, &bytes)?;
+    let digest = scorchkit_core::sha256_hex(bytes.as_bytes());
+    let request = || ApplicationEvidenceImportParams {
+        project: name.clone(),
+        target: target_url.clone(),
+        path: path.display().to_string(),
+        sha256: digest.clone(),
+        format: "har".to_string(),
+        source_kind: "proxy".to_string(),
+        source_label: "reviewed-proxy".to_string(),
+        finding_id: None,
+        new_finding: Some(ManualApplicationFindingParams {
+            severity: "high".to_string(),
+            title: "Manual authorization finding".to_string(),
+            description: "Observed denied response".to_string(),
+            remediation: Some("Review authorization policy".to_string()),
+            cwe_id: Some(862),
+        }),
+    };
+
+    let first: serde_json::Value =
+        serde_json::from_str(&server.do_import_application_evidence(request()).await?)?;
+    assert_eq!(first["finding_created"], true);
+    assert_eq!(first["evidence_appended"], 1);
+    assert_eq!(first["assessment"]["source_kind"], "proxy");
+    assert!(!first.to_string().contains("fixture-secret"));
+    let finding_id = Uuid::parse_str(first["finding_id"].as_str().ok_or("finding ID")?)?;
+    assert_eq!(storage::findings::list_evidence(&pool, finding_id).await?.len(), 1);
+    assert!(storage::attack_paths::list_attack_paths(&pool, project.id).await?.is_empty());
+
+    let second: serde_json::Value =
+        serde_json::from_str(&server.do_import_application_evidence(request()).await?)?;
+    assert_eq!(second["finding_id"], first["finding_id"]);
+    assert_eq!(second["finding_created"], false);
+    assert_eq!(second["evidence_appended"], 0);
+    assert_eq!(storage::findings::list_evidence(&pool, finding_id).await?.len(), 1);
+    assert_eq!(storage::scans::list_scans(&pool, project.id).await?.len(), 2);
+
+    let distinct_digest = append_distinct_application_evidence(
+        &server,
+        &pool,
+        project.id,
+        &name,
+        &target_url,
+        &path,
+        finding_id,
+    )
+    .await?;
+    assert_cross_project_application_evidence_rolls_back(
+        &server,
+        &pool,
+        &name,
+        &target_url,
+        &path,
+        &distinct_digest,
+    )
+    .await?;
+    assert_cross_target_application_evidence_rolls_back(
+        &server, &pool, project.id, &name, &path, finding_id,
+    )
+    .await?;
+    assert_eq!(storage::scans::list_scans(&pool, project.id).await?.len(), 3);
+
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+async fn assert_cross_target_application_evidence_rolls_back(
+    server: &ScorchKitServer,
+    pool: &sqlx::PgPool,
+    project_id: Uuid,
+    project_name: &str,
+    path: &Path,
+    finding_id: Uuid,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let other = MockServer::start_async().await;
+    let other_target = other.url("/other");
+    storage::projects::add_target(pool, project_id, &other_target, "other loopback").await?;
+    let bytes = format!(
+        "{{\"log\":{{\"entries\":[{{\"request\":{{\"method\":\"GET\",\"url\":{url},\"headers\":[]}},\"response\":{{\"status\":200,\"headers\":[],\"content\":{{\"text\":\"unrelated proof\"}}}}}}]}}}}",
+        url = serde_json::to_string(&other_target)?
+    );
+    std::fs::write(path, &bytes)?;
+    let before = storage::scans::list_scans(pool, project_id).await?.len();
+    let mismatch = server
+        .do_import_application_evidence(ApplicationEvidenceImportParams {
+            project: project_name.to_string(),
+            target: other_target,
+            path: path.display().to_string(),
+            sha256: scorchkit_core::sha256_hex(bytes.as_bytes()),
+            format: "har".to_string(),
+            source_kind: "proxy".to_string(),
+            source_label: "unrelated-proxy".to_string(),
+            finding_id: Some(finding_id.to_string()),
+            new_finding: None,
+        })
+        .await;
+    assert!(mismatch.is_err_and(|error| error.contains("does not match")));
+    assert_eq!(storage::scans::list_scans(pool, project_id).await?.len(), before);
+    assert_eq!(storage::findings::list_evidence(pool, finding_id).await?.len(), 2);
+    Ok(())
+}
+
+async fn append_distinct_application_evidence(
+    server: &ScorchKitServer,
+    pool: &sqlx::PgPool,
+    project_id: Uuid,
+    project_name: &str,
+    target_url: &str,
+    path: &Path,
+    finding_id: Uuid,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let bytes = format!(
+        "{{\"log\":{{\"entries\":[{{\"request\":{{\"method\":\"GET\",\"url\":{url},\"headers\":[]}},\"response\":{{\"status\":200,\"headers\":[],\"content\":{{\"text\":\"reviewed distinct proof\"}}}}}}]}}}}",
+        url = serde_json::to_string(target_url)?
+    );
+    std::fs::write(path, &bytes)?;
+    let digest = scorchkit_core::sha256_hex(bytes.as_bytes());
+    let existing: serde_json::Value = serde_json::from_str(
+        &server
+            .do_import_application_evidence(ApplicationEvidenceImportParams {
+                project: project_name.to_string(),
+                target: target_url.to_string(),
+                path: path.display().to_string(),
+                sha256: digest.clone(),
+                format: "har".to_string(),
+                source_kind: "human".to_string(),
+                source_label: "reviewed-human".to_string(),
+                finding_id: Some(finding_id.to_string()),
+                new_finding: None,
+            })
+            .await?,
+    )?;
+    assert_eq!(existing["finding_id"], finding_id.to_string());
+    assert_eq!(existing["finding_created"], false);
+    assert_eq!(existing["evidence_appended"], 1);
+    assert_eq!(storage::findings::list_evidence(pool, finding_id).await?.len(), 2);
+    assert_eq!(storage::scans::list_scans(pool, project_id).await?.len(), 3);
+    assert!(storage::attack_paths::list_attack_paths(pool, project_id).await?.is_empty());
+    Ok(digest)
+}
+
+async fn assert_cross_project_application_evidence_rolls_back(
+    server: &ScorchKitServer,
+    pool: &sqlx::PgPool,
+    project_name: &str,
+    target_url: &str,
+    path: &Path,
+    digest: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let foreign = storage::projects::create_project(
+        pool,
+        &unique_name("mcp-foreign-evidence"),
+        "foreign finding",
+    )
+    .await?;
+    let now = chrono::Utc::now();
+    let foreign_scan = storage::scans::save_scan(
+        pool,
+        foreign.id,
+        target_url,
+        "fixture",
+        now,
+        Some(now),
+        &[],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await?;
+    storage::findings::save_findings(
+        pool,
+        foreign.id,
+        foreign_scan.id,
+        &[Finding::new(
+            "fixture",
+            Severity::High,
+            "Foreign finding",
+            "Must not receive evidence",
+            target_url,
+        )],
+    )
+    .await?;
+    let foreign_finding = storage::findings::list_findings(pool, foreign.id).await?[0].id;
+    let mismatch = server
+        .do_import_application_evidence(ApplicationEvidenceImportParams {
+            project: project_name.to_string(),
+            target: target_url.to_string(),
+            path: path.display().to_string(),
+            sha256: digest.to_string(),
+            format: "har".to_string(),
+            source_kind: "proxy".to_string(),
+            source_label: "reviewed-proxy".to_string(),
+            finding_id: Some(foreign_finding.to_string()),
+            new_finding: None,
+        })
+        .await;
+    assert!(mismatch.is_err_and(|error| error.contains("does not belong")));
+    storage::projects::delete_project(pool, foreign.id).await?;
+    Ok(())
+}
 
 /// Verify `PlanScanParams` serialization round-trips correctly with
 /// the expected target field.

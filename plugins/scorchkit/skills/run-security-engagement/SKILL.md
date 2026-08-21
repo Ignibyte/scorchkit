@@ -53,3 +53,20 @@ empty finding set as clean.
 
 Use `$report-security-findings` after a persisted project scan when the user requests analysis or a
 report. Do not change finding lifecycle state during execution.
+
+## Code-informed application-pentest path
+
+For an approved application scenario plan, require the project, exact registered target, complete
+canonical proposals, and exact identity returned by `plan_application_pentest`. Call
+`application_pentest` with those unchanged values. Do not replace an identity mismatch with a new
+identity, weaken a scenario/effect, inject a payload, or select a module directly. The engine's
+recompilation and engagement grant matrix are authoritative.
+
+Report the persisted scan ID, canonical plan, every scenario status and invariant, selected trusted
+executor, exact authorization requirements, finding/evidence identities, and every typed gap.
+Incomplete, failed, manual-only, unsupported-persona, and cleanup-required scenarios are not clean
+coverage.
+
+Use `import_application_evidence` only when the user separately selects a local evidence file,
+project, exact registered target, source attribution, digest, and existing or new manual finding.
+Import never substitutes for an unexecuted scenario or proves agent analysis by itself.

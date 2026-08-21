@@ -20,7 +20,7 @@ const MAX_BODY_SIZE: usize = 10 * 1024;
 /// Stores the full request and response data that triggered or
 /// demonstrates a vulnerability. Response bodies are truncated
 /// to a fixed maximum (10 KiB) to prevent memory bloat.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpEvidence {
     /// HTTP method (GET, POST, PUT, etc.).
     pub method: String,
@@ -282,15 +282,26 @@ fn redact_headers(
     let headers = headers
         .into_iter()
         .map(|(name, value)| {
-            if is_sensitive_key(&name) {
+            if is_sensitive_key(&name) || is_url_bearing_header(&name) {
                 fields.push(format!("{prefix}.{name}"));
                 (name, "[REDACTED]".to_string())
             } else {
-                (name, value)
+                let redacted = redact_text(&value);
+                if redacted != value {
+                    fields.push(format!("{prefix}.{name}"));
+                }
+                (name, redacted)
             }
         })
         .collect();
     (headers, fields)
+}
+
+fn is_url_bearing_header(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "location" | "content-location" | "link" | "refresh"
+    )
 }
 
 fn floor_char_boundary(value: &str, maximum: usize) -> usize {
@@ -358,6 +369,46 @@ mod tests {
         assert_eq!(evidence.authentication_persona.as_deref(), Some("standard-user"));
         assert!(evidence.redacted_fields().contains(&"request.body".to_string()));
         assert!(evidence.redacted_fields().contains(&"response.body".to_string()));
+    }
+
+    #[test]
+    fn http_evidence_redacts_url_bearing_response_headers() {
+        let evidence = HttpEvidence::new("GET", "https://example.com/", 302).with_response_headers(
+            HashMap::from([
+                (
+                    "Location".to_string(),
+                    "https://example.com/reset?credential=fixture-secret".to_string(),
+                ),
+                ("Content-Type".to_string(), "text/plain".to_string()),
+            ]),
+        );
+
+        assert_eq!(
+            evidence.response_headers.get("Location").map(String::as_str),
+            Some("[REDACTED]")
+        );
+        assert_eq!(
+            evidence.response_headers.get("Content-Type").map(String::as_str),
+            Some("text/plain")
+        );
+        assert!(evidence.redacted_fields().contains(&"response.header.Location".to_string()));
+        assert!(!serde_json::to_string(&evidence)
+            .expect("serialize evidence")
+            .contains("fixture-secret"));
+    }
+
+    #[test]
+    fn http_evidence_records_redaction_of_secret_bearing_ordinary_headers() {
+        let evidence = HttpEvidence::new("GET", "https://example.com/", 200).with_response_headers(
+            HashMap::from([("X-Trace".to_string(), "api_key=fixture-secret".to_string())]),
+        );
+
+        assert!(!evidence
+            .response_headers
+            .get("X-Trace")
+            .expect("retained header")
+            .contains("fixture-secret"));
+        assert!(evidence.redacted_fields().contains(&"response.header.X-Trace".to_string()));
     }
 
     #[test]

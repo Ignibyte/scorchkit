@@ -34,6 +34,25 @@ impl ScanModule for SsrfModule {
         let url = ctx.target.url.as_str();
         let mut findings = Vec::new();
 
+        if let Some(scenario) = ctx.shared_data.application_pentest_scenario() {
+            let parameter = scenario.operation.parameter.as_ref().ok_or_else(|| {
+                ScorchError::Config(
+                    "application-pentest SSRF scenario has no selected parameter".to_string(),
+                )
+            })?;
+            if scenario.class != scorchkit_core::ApplicationPentestScenarioClass::Ssrf
+                || scenario.operation.method != "GET"
+                || parameter.location != "query"
+            {
+                return Err(ScorchError::Config(
+                    "application-pentest SSRF scenario is incompatible with its executor"
+                        .to_string(),
+                ));
+            }
+            test_ssrf_param(ctx, url, &parameter.name, &mut findings).await?;
+            return Ok(findings);
+        }
+
         // Spider for URL-like parameters
         let response = ctx
             .http_client
@@ -42,7 +61,7 @@ impl ScanModule for SsrfModule {
             .await
             .map_err(|e| ScorchError::Http { url: url.to_string(), source: e })?;
 
-        let body = response.text().await.unwrap_or_default();
+        let body = crate::scanner::bounded_response_text(response).await?;
 
         // Find parameters that look like they accept URLs
         let links = extract_url_params(&body, &ctx.target.url);
@@ -90,7 +109,7 @@ async fn test_ssrf_param(
         };
 
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = crate::scanner::bounded_response_text(response).await?;
 
         // Check for indicators that the server fetched the internal resource
         if contains_ssrf_indicator(&body, payload) {
@@ -343,5 +362,36 @@ mod tests {
         assert_eq!(results[0].1, "url");
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn application_pentest_tests_only_the_exact_selected_ssrf_parameter() {
+        let server = httpmock::MockServer::start_async().await;
+        let requests = server
+            .mock_async(|when, then| {
+                when.any_request();
+                then.status(200).body("normal response");
+            })
+            .await;
+        let target = crate::engine::target::Target::parse(&server.url("/?url=/safe&next=/other"))
+            .expect("target");
+        let context = crate::engine::scan_context::ScanContext::new(
+            target,
+            std::sync::Arc::new(crate::config::AppConfig::default()),
+            reqwest::Client::new(),
+            Vec::new(),
+        );
+        context.shared_data.publish_application_pentest_scenario(
+            crate::application_pentest::test_scenario(
+                scorchkit_core::ApplicationPentestScenarioClass::Ssrf,
+                "GET",
+                Some(scorchkit_core::HttpParameterIdentity::new("url", "query")),
+            ),
+        );
+
+        let findings = SsrfModule.run(&context).await.expect("selected SSRF run");
+
+        assert!(findings.is_empty());
+        assert_eq!(requests.calls_async().await, SSRF_PAYLOADS.len());
     }
 }

@@ -186,17 +186,20 @@ const fn contract(
 }
 
 #[doc(hidden)]
-const TOOL_CONTRACTS: [McpToolContract; 34] = [
+const TOOL_CONTRACTS: [McpToolContract; 37] = [
     contract("analyze_findings", McpToolClass::ExternalEffect, false, false, true),
     contract("application_dast", McpToolClass::ExternalEffect, true, false, true),
+    contract("application_pentest", McpToolClass::ExternalEffect, true, false, true),
     contract("auto_scan", McpToolClass::ExternalEffect, true, false, true),
     contract("check_tools", McpToolClass::Read, false, true, false),
     contract("correlate_findings", McpToolClass::Read, false, true, false),
     contract("db_migrate", McpToolClass::LocalState, true, true, false),
     contract("finding_show", McpToolClass::Read, false, true, false),
     contract("finding_update_status", McpToolClass::LocalState, true, true, false),
+    contract("import_application_evidence", McpToolClass::LocalState, true, false, false),
     contract("list_code_modules", McpToolClass::Read, false, true, false),
     contract("list_modules", McpToolClass::Read, false, true, false),
+    contract("plan_application_pentest", McpToolClass::Read, false, true, false),
     contract("plan_scan", McpToolClass::ExternalEffect, false, false, true),
     contract("project_create", McpToolClass::LocalState, false, true, false),
     contract("project_delete", McpToolClass::LocalState, true, true, false),

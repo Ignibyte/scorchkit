@@ -40,8 +40,28 @@ impl ScanModule for PathTraversalModule {
         let url = ctx.target.url.as_str();
         let mut findings = Vec::new();
 
+        if let Some(scenario) = ctx.shared_data.application_pentest_scenario() {
+            let parameter = scenario.operation.parameter.as_ref().ok_or_else(|| {
+                ScorchError::Config(
+                    "application-pentest path-traversal scenario has no selected parameter"
+                        .to_string(),
+                )
+            })?;
+            if scenario.class != scorchkit_core::ApplicationPentestScenarioClass::PathTraversal
+                || scenario.operation.method != "GET"
+                || parameter.location != "query"
+            {
+                return Err(ScorchError::Config(
+                    "application-pentest path-traversal scenario is incompatible with its executor"
+                        .to_string(),
+                ));
+            }
+            test_url_params_traversal(ctx, url, &mut findings, Some(&parameter.name)).await?;
+            return Ok(findings);
+        }
+
         // 1. Test any parameters already in the target URL
-        test_url_params_traversal(ctx, url, &mut findings).await?;
+        test_url_params_traversal(ctx, url, &mut findings, None).await?;
 
         // 2. Spider the page for links with parameters and forms
         let response = ctx
@@ -51,11 +71,11 @@ impl ScanModule for PathTraversalModule {
             .await
             .map_err(|e| ScorchError::Http { url: url.to_string(), source: e })?;
 
-        let body = response.text().await.unwrap_or_default();
+        let body = crate::scanner::bounded_response_text(response).await?;
 
         let links = extract_parameterized_links(&body, &ctx.target.url);
         for link in &links {
-            test_url_params_traversal(ctx, link, &mut findings).await?;
+            test_url_params_traversal(ctx, link, &mut findings, None).await?;
         }
 
         let forms = extract_forms(&body, &ctx.target.url);
@@ -203,6 +223,7 @@ async fn test_url_params_traversal(
     ctx: &ScanContext,
     url_str: &str,
     findings: &mut Vec<Finding>,
+    selected_parameter: Option<&str>,
 ) -> Result<()> {
     let Ok(parsed) = Url::parse(url_str) else {
         return Ok(());
@@ -216,6 +237,9 @@ async fn test_url_params_traversal(
     }
 
     for (param_name, _) in &params {
+        if selected_parameter.is_some_and(|selected| selected != param_name) {
+            continue;
+        }
         for traversal in TRAVERSAL_PAYLOADS {
             let mut test_url = parsed.clone();
             {
@@ -234,7 +258,7 @@ async fn test_url_params_traversal(
                 continue;
             };
 
-            let resp_body = response.text().await.unwrap_or_default();
+            let resp_body = crate::scanner::bounded_response_text(response).await?;
 
             if let Some((pattern, file_desc)) = check_traversal_response(&resp_body) {
                 findings.push(
@@ -314,7 +338,7 @@ async fn test_form_traversal(
                 continue;
             };
 
-            let resp_body = response.text().await.unwrap_or_default();
+            let resp_body = crate::scanner::bounded_response_text(response).await?;
 
             if let Some((pattern, file_desc)) = check_traversal_response(&resp_body) {
                 findings.push(
@@ -552,5 +576,37 @@ mod tests {
             descriptions.iter().any(|d| d.contains("boot.ini") || d.contains("hosts")),
             "must cover boot.ini or hosts"
         );
+    }
+
+    #[tokio::test]
+    async fn application_pentest_tests_only_the_exact_selected_traversal_parameter() {
+        let server = httpmock::MockServer::start_async().await;
+        let requests = server
+            .mock_async(|when, then| {
+                when.any_request();
+                then.status(200).body("normal response");
+            })
+            .await;
+        let target = crate::engine::target::Target::parse(&server.url("/?file=readme&other=value"))
+            .expect("target");
+        let context = crate::engine::scan_context::ScanContext::new(
+            target,
+            std::sync::Arc::new(crate::config::AppConfig::default()),
+            reqwest::Client::new(),
+            Vec::new(),
+        );
+        context.shared_data.publish_application_pentest_scenario(
+            crate::application_pentest::test_scenario(
+                scorchkit_core::ApplicationPentestScenarioClass::PathTraversal,
+                "GET",
+                Some(scorchkit_core::HttpParameterIdentity::new("file", "query")),
+            ),
+        );
+
+        let findings =
+            PathTraversalModule.run(&context).await.expect("selected path-traversal run");
+
+        assert!(findings.is_empty());
+        assert_eq!(requests.calls_async().await, TRAVERSAL_PAYLOADS.len());
     }
 }

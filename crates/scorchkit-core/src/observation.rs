@@ -425,7 +425,7 @@ pub struct RedactionMetadata {
 }
 
 /// Scanner evidence payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EvidencePayload {
     /// Redacted scanner text or code excerpt.
@@ -446,7 +446,7 @@ pub enum EvidencePayload {
 }
 
 /// Immutable, independently identifiable scanner evidence.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvidenceRecord {
     /// Evidence schema.
     pub schema: String,

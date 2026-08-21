@@ -169,6 +169,16 @@ fn print_execution_status(result: &ScanResult) {
                 && !failed_modules.contains(assessment.adapter_id.as_str())
         })
         .count();
+    let application_pentest_failures =
+        result.application_pentest.as_ref().map_or(0, |assessment| {
+            assessment
+                .scenarios
+                .iter()
+                .filter(|scenario| {
+                    scenario.status == scorchkit_core::ApplicationPentestScenarioStatus::Failed
+                })
+                .count()
+        });
     match result.execution_status {
         ScanExecutionStatus::Complete => println!("  {} Complete", "Status:".bold()),
         ScanExecutionStatus::Incomplete => {
@@ -189,24 +199,40 @@ fn print_execution_status(result: &ScanResult) {
                         && !skipped_modules.contains(assessment.adapter_id.as_str())
                 })
                 .count();
+            let application_pentest_gaps =
+                result.application_pentest.as_ref().map_or(0, |assessment| {
+                    assessment
+                        .scenarios
+                        .iter()
+                        .filter(|scenario| {
+                            scenario.status
+                                == scorchkit_core::ApplicationPentestScenarioStatus::Incomplete
+                        })
+                        .count()
+                });
             println!(
                 "  {} {} ({} coverage gap{})",
                 "Status:".bold(),
                 "INCOMPLETE".yellow().bold(),
-                skipped + adapter_gaps,
-                if skipped + adapter_gaps == 1 { "" } else { "s" }
+                skipped + adapter_gaps + application_pentest_gaps,
+                if skipped + adapter_gaps + application_pentest_gaps == 1 { "" } else { "s" }
             );
         }
         ScanExecutionStatus::Degraded => println!(
             "  {} {} ({} execution failure{})",
             "Status:".bold(),
             "DEGRADED".yellow().bold(),
-            failures + dast_failures + adapter_failures,
-            if failures + dast_failures + adapter_failures == 1 { "" } else { "s" }
+            failures + dast_failures + adapter_failures + application_pentest_failures,
+            if failures + dast_failures + adapter_failures + application_pentest_failures == 1 {
+                ""
+            } else {
+                "s"
+            }
         ),
     }
     print_supply_chain_status(result);
     print_application_dast_status(result);
+    print_application_pentest_status(result);
     print_adapter_status(result);
 }
 
@@ -262,6 +288,59 @@ fn print_application_dast_status(result: &ScanResult) {
                 gap.kind.as_str(),
                 escape_terminal_text(&gap.detail)
             );
+        }
+    }
+}
+
+fn print_application_pentest_status(result: &ScanResult) {
+    if let Some(assessment) = &result.application_pentest {
+        println!(
+            "  {} {} ({} scenario{})",
+            "Application pentest:".bold(),
+            assessment.coverage_status.as_str(),
+            assessment.scenarios.len(),
+            if assessment.scenarios.len() == 1 { "" } else { "s" }
+        );
+        println!(
+            "    plan: {} | target: {}",
+            escape_terminal_text(&assessment.plan_identity),
+            escape_terminal_text(&redact_url(&assessment.target).0)
+        );
+        let canonical_plan =
+            serde_json::to_string(&assessment.plan).unwrap_or_else(|_| "{}".to_string());
+        println!("    canonical plan: {}", escape_terminal_text(&canonical_plan));
+        for scenario in &assessment.scenarios {
+            let authorization = serde_json::to_string(&scenario.authorization_requirements)
+                .unwrap_or_else(|_| "[]".to_string());
+            println!(
+                "    - {}: {}/{} via {} ({})",
+                escape_terminal_text(&scenario.scenario_identity),
+                scenario.status.as_str(),
+                scenario.invariant.map_or("not_applicable", |value| value.as_str()),
+                escape_terminal_text(&scenario.executor_id),
+                scenario.executor_kind.as_str(),
+            );
+            println!(
+                "      authorization: {} | started: {} | completed: {}",
+                escape_terminal_text(&authorization),
+                scenario.started_at.to_rfc3339(),
+                scenario.completed_at.to_rfc3339()
+            );
+            if !scenario.finding_identities.is_empty() {
+                println!(
+                    "      findings: {}",
+                    escape_terminal_text(&scenario.finding_identities.join(", "))
+                );
+            }
+            if !scenario.evidence_identities.is_empty() {
+                println!(
+                    "      evidence: {}",
+                    escape_terminal_text(&scenario.evidence_identities.join(", "))
+                );
+            }
+            for gap in &scenario.gaps {
+                println!("      gap/{}: {}", gap.kind.as_str(), escape_terminal_text(&gap.detail));
+            }
         }
     }
 }

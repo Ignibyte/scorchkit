@@ -97,6 +97,9 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-durable-canonical-parity-001` | Compare canonical raw JSON with every duplicated identity, schema, time, and projection column at durable API boundaries. | `AAR-015-source-runtime-correlation` |
 | `PR-scorchkit-correlation-facet-strength-001` | Classify correlation facets by evidentiary strength; generic method or weakness matches cannot prove reachability alone. | `AAR-015-source-runtime-correlation` |
 | `PR-scorchkit-projection-validate-canonical-001` | Validate nested records, ordering, identities, state, and coverage before every public projection. | `AAR-015-source-runtime-correlation` |
+| `PR-scorchkit-declared-evidence-must-match-001` | Require every completed scenario to prove each declared evidence class with typed matching records at executor and durable boundaries. | `AAR-016-application-pentest` |
+| `PR-scorchkit-native-response-byte-ceiling-001` | Consume decoded target responses through one hard byte-ceiling primitive; direct whole-body scanner reads are forbidden. | `AAR-016-application-pentest` |
+| `PR-scorchkit-runtime-evidence-link-compatibility-001` | Attach manual runtime evidence only when project, canonical origin, route, and parameter match inside one transaction. | `AAR-016-application-pentest` |
 
 ## Register
 
@@ -178,3 +181,6 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-durable-raw-column-divergence-001` | persistence-integrity bug | `AAR-015-source-runtime-correlation` |
 | `BF-scorchkit-method-only-correlation-001` | correlation-integrity bug | `AAR-015-source-runtime-correlation` |
 | `BF-scorchkit-report-before-validation-001` | projection-integrity bug | `AAR-015-source-runtime-correlation` |
+| `BF-scorchkit-status-only-persona-certification-001` | evidence-integrity bug | `AAR-016-application-pentest` |
+| `BF-scorchkit-native-response-unbounded-001` | resource-budget bug | `AAR-016-application-pentest` |
+| `BF-scorchkit-application-scan-split-transaction-001` | persistence-integrity bug | `AAR-016-application-pentest` |

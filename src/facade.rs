@@ -30,11 +30,15 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use scorchkit_code::SupplyChainProfile;
+use scorchkit_core::{ApplicationPentestPlan, ApplicationPentestScenario};
 use scorchkit_core::{ProviderSnapshot, SupplyChainTargetKind};
 
 use crate::application_dast::{
     canonical_schema_path, path_is_under, validate_schema, ApplicationDastOrchestrator,
     ApplicationDastRequest, ResolvedPersona, ResolvedPersonaKind,
+};
+use crate::application_pentest::{
+    ApplicationEvidenceImportRequest, PreparedApplicationEvidenceImport,
 };
 use crate::config::AppConfig;
 use crate::config::{DastPersonaConfig, DastVerificationConfig};
@@ -223,6 +227,61 @@ impl Engine {
             self.engagement.as_ref().map(Arc::clone),
         );
         ApplicationDastOrchestrator::new(context, request.clone(), schemas, personas).run().await
+    }
+
+    /// Compile inert application scenarios into one exact provider-neutral plan.
+    ///
+    /// This method performs no target, credential, local-file, or subprocess effect. The returned
+    /// identity binds later confirmation to the exact scenario and executor inventory.
+    ///
+    /// # Errors
+    ///
+    /// Returns a configuration error for an invalid target, scenario, operation, or unsupported
+    /// application-pentest workflow.
+    pub fn plan_application_pentest(
+        &self,
+        target: &str,
+        scenarios: Vec<ApplicationPentestScenario>,
+    ) -> Result<ApplicationPentestPlan> {
+        crate::application_pentest::compile_application_pentest_plan(target, scenarios)
+            .map_err(|error| ScorchError::Config(error.to_string()))
+    }
+
+    /// Recompile and execute one confirmed application-pentest plan through trusted executors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error before effects for a plan-identity mismatch or denied exact grant, and for
+    /// a fatal bounded-executor failure that cannot be retained as typed scenario coverage.
+    pub async fn application_pentest(
+        &self,
+        target: &str,
+        scenarios: Vec<ApplicationPentestScenario>,
+        approved_plan_identity: &str,
+    ) -> Result<ScanResult> {
+        let plan = self.plan_application_pentest(target, scenarios)?;
+        crate::application_pentest::execute_application_pentest_plan(
+            self,
+            &plan,
+            approved_plan_identity,
+        )
+        .await
+    }
+
+    /// Authorize, verify, scope, parse, and redact one local manual/proxy evidence input.
+    ///
+    /// This prepares canonical evidence without writing project state. Storage adapters use the
+    /// returned records in one transaction with the import execution and finding linkage.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for denied local state, an unsafe or changed file, digest mismatch,
+    /// malformed or oversized input, out-of-scope HTTP traffic, or invalid finding linkage shape.
+    pub fn prepare_application_evidence_import(
+        &self,
+        request: &ApplicationEvidenceImportRequest,
+    ) -> Result<PreparedApplicationEvidenceImport> {
+        crate::application_pentest::prepare_application_evidence_import(self, request)
     }
 
     /// Run a SAST code scan against a filesystem path.
@@ -893,7 +952,7 @@ impl Engine {
         Ok(())
     }
 
-    fn authorized_http_client(
+    pub(crate) fn authorized_http_client(
         &self,
         capability: Capability,
         effect: EffectClass,
@@ -907,7 +966,7 @@ impl Engine {
         build_authorized_http_client(&self.config, engagement, capability, effect, follow_redirects)
     }
 
-    fn policy_network(
+    pub(crate) fn policy_network(
         &self,
         capability: Capability,
         effect: EffectClass,

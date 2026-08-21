@@ -27,6 +27,9 @@ pub enum ScorchError {
     #[error("provider response from '{url}' exceeded the limit of {limit_bytes} bytes")]
     ProviderDownloadLimit { url: String, limit_bytes: usize },
 
+    #[error("HTTP response body exceeded the scanner limit of {limit_bytes} bytes")]
+    HttpResponseLimit { limit_bytes: usize },
+
     #[error("provider artifact integrity failure for '{provider}': {reason}")]
     ProviderIntegrity { provider: String, reason: String },
 

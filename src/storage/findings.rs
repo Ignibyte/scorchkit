@@ -6,12 +6,16 @@
 
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, Transaction};
+use url::Url;
 use uuid::Uuid;
 
-use super::models::{FindingEvidence, StoredAgentAnalysis, TrackedFinding, VulnStatus};
+use super::models::{FindingEvidence, ScanRecord, StoredAgentAnalysis, TrackedFinding, VulnStatus};
+use crate::application_pentest::PreparedApplicationEvidenceImport;
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
-use crate::engine::observation::{redact_text, redact_url, FindingRecordV2};
+use crate::engine::observation::{
+    redact_text, redact_url, EvidencePayload, EvidenceRecord, FindingRecordV2,
+};
 
 struct FindingWrite<'a> {
     finding: &'a Finding,
@@ -102,6 +106,61 @@ pub async fn save_findings(
     Ok(new_count)
 }
 
+/// Durable result of one atomic application-pentest scan and finding write.
+pub struct StoredApplicationPentestScan {
+    pub scan: ScanRecord,
+    pub findings_new: usize,
+}
+
+/// Store an application-pentest execution record and every finding in one transaction.
+///
+/// # Errors
+///
+/// Returns a database or canonical finding error. No scan or finding change is committed unless
+/// the complete batch succeeds.
+pub async fn save_application_pentest_scan(
+    pool: &PgPool,
+    project_id: Uuid,
+    result: &crate::engine::scan_result::ScanResult,
+) -> Result<StoredApplicationPentestScan> {
+    let writes = result.findings.iter().map(FindingWrite::prepare).collect::<Result<Vec<_>>>()?;
+    let modules_skipped: Vec<String> =
+        result.modules_skipped.iter().map(|(id, reason)| format!("{id}: {reason}")).collect();
+    let summary = serde_json::to_value(&result.summary)
+        .map_err(|error| ScorchError::Database(format!("serialize scan summary: {error}")))?;
+    let execution_evidence = super::scans::execution_evidence(result);
+    let mut transaction = pool.begin().await.map_err(|error| {
+        ScorchError::Database(format!("begin application-pentest scan: {error}"))
+    })?;
+    let scan = sqlx::query_as::<_, ScanRecord>(
+        "INSERT INTO scan_records \
+         (project_id, target_url, profile, started_at, completed_at, modules_run, \
+          modules_skipped, summary, execution_evidence) \
+         VALUES ($1, $2, 'application-pentest', $3, $4, $5, $6, $7, $8) RETURNING *",
+    )
+    .bind(project_id)
+    .bind(result.target.url.as_str())
+    .bind(result.started_at)
+    .bind(result.completed_at)
+    .bind(&result.modules_run)
+    .bind(&modules_skipped)
+    .bind(&summary)
+    .bind(&execution_evidence)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|error| ScorchError::Database(format!("insert application-pentest scan: {error}")))?;
+    let mut findings_new = 0;
+    for write in &writes {
+        let (_, created) =
+            save_finding_in_transaction(&mut transaction, project_id, scan.id, write).await?;
+        findings_new += usize::from(created);
+    }
+    transaction.commit().await.map_err(|error| {
+        ScorchError::Database(format!("commit application-pentest scan: {error}"))
+    })?;
+    Ok(StoredApplicationPentestScan { scan, findings_new })
+}
+
 async fn save_finding(
     pool: &PgPool,
     project_id: Uuid,
@@ -114,17 +173,251 @@ async fn save_finding(
         .await
         .map_err(|e| ScorchError::Database(format!("begin finding transaction: {e}")))?;
 
-    lock_finding_identity(&mut transaction, project_id, &write).await?;
-    let existing_id = find_existing_id(&mut transaction, project_id, &write).await?;
-    let (tracked_finding_id, created) =
-        upsert_tracked_finding(&mut transaction, project_id, scan_id, &write, existing_id).await?;
-    append_observations(&mut transaction, tracked_finding_id, scan_id, &write.appsec).await?;
+    let (_, created) =
+        save_finding_in_transaction(&mut transaction, project_id, scan_id, &write).await?;
 
     transaction
         .commit()
         .await
         .map_err(|e| ScorchError::Database(format!("commit finding transaction: {e}")))?;
     Ok(created)
+}
+
+async fn save_finding_in_transaction(
+    transaction: &mut Transaction<'_, Postgres>,
+    project_id: Uuid,
+    scan_id: Uuid,
+    write: &FindingWrite<'_>,
+) -> Result<(Uuid, bool)> {
+    lock_finding_identity(transaction, project_id, write).await?;
+    let existing_id = find_existing_id(transaction, project_id, write).await?;
+    let (tracked_finding_id, created) =
+        upsert_tracked_finding(transaction, project_id, scan_id, write, existing_id).await?;
+    append_observations(transaction, tracked_finding_id, scan_id, &write.appsec).await?;
+    Ok((tracked_finding_id, created))
+}
+
+/// Durable result of one atomic manual/proxy application-evidence import.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StoredApplicationEvidenceImport {
+    pub scan_id: Uuid,
+    pub finding_id: Uuid,
+    pub finding_identity: String,
+    pub finding_created: bool,
+    pub evidence_appended: usize,
+    pub assessment: scorchkit_core::ApplicationEvidenceImportAssessment,
+}
+
+/// Atomically store one verified import execution and its existing/new finding evidence linkage.
+///
+/// # Errors
+///
+/// Returns a database or canonical evidence error. Existing finding IDs must belong to the same
+/// project. The transaction rolls back the scan row, finding change, and evidence together.
+pub async fn save_application_evidence_import(
+    pool: &PgPool,
+    project_id: Uuid,
+    prepared: &PreparedApplicationEvidenceImport,
+) -> Result<StoredApplicationEvidenceImport> {
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|error| ScorchError::Database(format!("begin evidence import: {error}")))?;
+
+    let (existing_finding_id, existing_identity) = if let Some(finding_id) =
+        prepared.existing_finding_id
+    {
+        let row = sqlx::query_as::<_, (Uuid, String, String)>(
+                "SELECT id, stable_identity, affected_target FROM tracked_findings \
+                 WHERE id = $1 AND project_id = $2 FOR UPDATE",
+            )
+            .bind(finding_id)
+            .bind(project_id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|error| {
+                ScorchError::Database(format!("lock imported-evidence finding: {error}"))
+            })?
+            .ok_or_else(|| {
+                ScorchError::Config(format!(
+                    "application evidence finding '{finding_id}' does not belong to project {project_id}"
+                ))
+            })?;
+        validate_existing_finding_evidence_target(&row.2, prepared)?;
+        (Some(row.0), Some(row.1))
+    } else {
+        (None, None)
+    };
+
+    let new_identity =
+        prepared.new_finding.as_ref().map(|finding| finding.canonical_appsec().identity.value);
+    let finding_identity = existing_identity.or(new_identity).ok_or_else(|| {
+        ScorchError::Config(
+            "application evidence import has no existing or new finding identity".to_string(),
+        )
+    })?;
+    let mut assessment = prepared.assessment.clone();
+    assessment.finding_identity = Some(finding_identity.clone());
+    assessment = assessment
+        .canonicalize()
+        .map_err(|error| ScorchError::Database(format!("canonicalize evidence import: {error}")))?;
+
+    let scan_id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+    let execution_evidence = serde_json::json!({
+        "schema": "scorchkit.scan-execution-evidence.v1",
+        "application_evidence_import": assessment,
+    });
+    let modules_run = vec!["manual-application-evidence".to_string()];
+    let modules_skipped: Vec<String> = Vec::new();
+    let summary = serde_json::json!({
+        "total_findings": usize::from(prepared.new_finding.is_some()),
+        "evidence_entries": prepared.evidence.len(),
+    });
+    sqlx::query(
+        "INSERT INTO scan_records \
+         (id, project_id, target_url, profile, started_at, completed_at, modules_run, \
+          modules_skipped, summary, execution_evidence) \
+         VALUES ($1, $2, $3, 'manual-application-evidence', $4, $4, $5, $6, $7, $8)",
+    )
+    .bind(scan_id)
+    .bind(project_id)
+    .bind(&assessment.target)
+    .bind(now)
+    .bind(&modules_run)
+    .bind(&modules_skipped)
+    .bind(&summary)
+    .bind(&execution_evidence)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| ScorchError::Database(format!("insert evidence import scan: {error}")))?;
+
+    let (finding_id, finding_created) = if let Some(finding_id) = existing_finding_id {
+        (finding_id, false)
+    } else {
+        let mut finding = prepared.new_finding.clone().ok_or_else(|| {
+            ScorchError::Config("application evidence new finding is missing".to_string())
+        })?;
+        finding.evidence = None;
+        finding.http_evidence = None;
+        finding.appsec.evidence.clear();
+        let write = FindingWrite::prepare(&finding)?;
+        save_finding_in_transaction(&mut transaction, project_id, scan_id, &write).await?
+    };
+    let evidence_appended =
+        append_manual_evidence(&mut transaction, finding_id, scan_id, &prepared.evidence).await?;
+
+    transaction
+        .commit()
+        .await
+        .map_err(|error| ScorchError::Database(format!("commit evidence import: {error}")))?;
+    Ok(StoredApplicationEvidenceImport {
+        scan_id,
+        finding_id,
+        finding_identity,
+        finding_created,
+        evidence_appended,
+        assessment,
+    })
+}
+
+fn validate_existing_finding_evidence_target(
+    affected_target: &str,
+    prepared: &PreparedApplicationEvidenceImport,
+) -> Result<()> {
+    let finding_url = Url::parse(affected_target).map_err(|_| {
+        ScorchError::Config(
+            "manual application evidence requires an existing runtime HTTP(S) finding".to_string(),
+        )
+    })?;
+    let assessment_url = Url::parse(&prepared.assessment.target).map_err(|_| {
+        ScorchError::Config("application evidence assessment target is invalid".to_string())
+    })?;
+    if !same_origin(&finding_url, &assessment_url) {
+        return Err(ScorchError::Config(
+            "application evidence target does not match the existing finding origin".to_string(),
+        ));
+    }
+    let finding_parameters: Vec<String> =
+        finding_url.query_pairs().map(|(name, _)| name.into_owned()).collect();
+    let compatible = prepared.evidence.iter().all(|record| {
+        let EvidencePayload::Http { exchange } = &record.payload else {
+            return false;
+        };
+        let Ok(evidence_url) = Url::parse(&exchange.url) else {
+            return false;
+        };
+        same_origin(&finding_url, &evidence_url)
+            && path_is_under(finding_url.path(), evidence_url.path())
+            && finding_parameters.iter().all(|required| {
+                evidence_url.query_pairs().any(|(name, _)| name.as_ref() == required)
+            })
+    });
+    if !compatible {
+        return Err(ScorchError::Config(
+            "application evidence route or parameter does not match the existing finding"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn same_origin(left: &Url, right: &Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host_str() == right.host_str()
+        && left.port_or_known_default() == right.port_or_known_default()
+}
+
+fn path_is_under(base: &str, candidate: &str) -> bool {
+    let base = base.trim_end_matches('/');
+    base.is_empty()
+        || candidate == base
+        || candidate.strip_prefix(base).is_some_and(|rest| rest.starts_with('/'))
+}
+
+async fn append_manual_evidence(
+    transaction: &mut Transaction<'_, Postgres>,
+    tracked_finding_id: Uuid,
+    scan_id: Uuid,
+    records: &[EvidenceRecord],
+) -> Result<usize> {
+    let mut appended = 0;
+    for record in records {
+        let normalized = record.clone().normalized();
+        let raw_evidence = serde_json::to_value(&normalized)
+            .map_err(|error| ScorchError::Database(format!("serialize evidence: {error}")))?;
+        if normalized.identity != record.identity
+            || normalized.schema != record.schema
+            || serde_json::to_value(record).ok().as_ref() != Some(&raw_evidence)
+        {
+            return Err(ScorchError::Database(
+                "manual evidence is not canonical at the persistence boundary".to_string(),
+            ));
+        }
+        let result = sqlx::query(
+            "INSERT INTO finding_evidence \
+             (tracked_finding_id, scan_id, evidence_identity, evidence_schema, raw_evidence, collected_at) \
+             SELECT $1, $2, $3, $4, $5, $6 \
+             WHERE NOT EXISTS (SELECT 1 FROM finding_evidence \
+                               WHERE tracked_finding_id = $1 AND evidence_identity = $3) \
+             ON CONFLICT (tracked_finding_id, scan_id, evidence_identity) DO NOTHING",
+        )
+        .bind(tracked_finding_id)
+        .bind(scan_id)
+        .bind(&normalized.identity)
+        .bind(&normalized.schema)
+        .bind(raw_evidence)
+        .bind(normalized.provenance.collected_at)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| {
+            ScorchError::Database(format!("insert manual finding evidence: {error}"))
+        })?;
+        appended += usize::try_from(result.rows_affected()).map_err(|_| {
+            ScorchError::Database("manual evidence row count exceeds usize".to_string())
+        })?;
+    }
+    Ok(appended)
 }
 
 async fn lock_finding_identity(
@@ -501,6 +794,8 @@ pub async fn get_finding(pool: &PgPool, id: Uuid) -> Result<Option<TrackedFindin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::evidence::HttpEvidence;
+    use crate::engine::observation::ScannerProvenance;
     use crate::engine::severity::Severity;
 
     #[tokio::test]
@@ -531,6 +826,64 @@ mod tests {
 
         assert!(!acquired_elsewhere, "identity lock must serialize competing upserts");
         transaction.rollback().await.expect("release identity lock");
+    }
+
+    fn prepared_evidence(url: &str) -> PreparedApplicationEvidenceImport {
+        let record = EvidenceRecord::http(
+            HttpEvidence::new("GET", url, 200),
+            ScannerProvenance::new("fixture", chrono::Utc::now()),
+        );
+        PreparedApplicationEvidenceImport {
+            assessment: scorchkit_core::ApplicationEvidenceImportAssessment {
+                schema: scorchkit_core::APPLICATION_EVIDENCE_IMPORT_SCHEMA_V1.to_string(),
+                identity: "a".repeat(64),
+                target: "https://example.com/api/items?id=".to_string(),
+                source_kind: scorchkit_core::ApplicationEvidenceSourceKind::Human,
+                source_label: "fixture".to_string(),
+                format: scorchkit_core::ApplicationEvidenceFormat::HttpExchange,
+                input_sha256: "b".repeat(64),
+                entries_imported: 1,
+                evidence_identities: vec![record.identity.clone()],
+                finding_identity: None,
+            },
+            evidence: vec![record],
+            new_finding: None,
+            existing_finding_id: None,
+        }
+    }
+
+    #[test]
+    fn existing_finding_evidence_requires_exact_route_and_parameter_compatibility() {
+        let finding = "https://example.com/api/items?id=fixture";
+        validate_existing_finding_evidence_target(
+            finding,
+            &prepared_evidence("https://example.com/api/items?id=proof"),
+        )
+        .expect("matching runtime evidence");
+        assert!(validate_existing_finding_evidence_target(
+            finding,
+            &prepared_evidence("https://example.com/other?id=proof")
+        )
+        .is_err());
+        assert!(validate_existing_finding_evidence_target(
+            finding,
+            &prepared_evidence("https://example.com/api/items")
+        )
+        .is_err());
+        assert!(validate_existing_finding_evidence_target(
+            finding,
+            &prepared_evidence("https://example.com/api/items?other=proof")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn route_prefix_matching_respects_segment_boundaries() {
+        assert!(path_is_under("", "/anything"));
+        assert!(path_is_under("/api/items/", "/api/items"));
+        assert!(path_is_under("/api/items", "/api/items/1"));
+        assert!(!path_is_under("/api/items", "/api/itemsets"));
+        assert!(!path_is_under("/api/items", "/other"));
     }
 
     /// Verify that the same finding inputs always produce the same

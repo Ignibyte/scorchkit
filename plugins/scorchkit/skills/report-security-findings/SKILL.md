@@ -36,5 +36,10 @@ Lead with scanner evidence, then add clearly labeled interpretation.
    top risks, affected targets, uncertainty, attack chains when supported, remediation priorities,
    and explicit limitations. Keep severity and confidence distinct.
 
+For an application-pentest result, preserve the canonical plan and proposal attribution separately
+from scanner evidence. Include every scenario identity, executor, grant requirement, status,
+invariant, finding/evidence reference, and gap. Label manual/proxy imports by their recorded source;
+do not treat them as agent verification or infer attack-path promotion from the import alone.
+
 Report empty, partial, stale, or failed evidence honestly. Never infer that a missing detail was
 tested.

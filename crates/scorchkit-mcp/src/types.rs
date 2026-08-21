@@ -78,6 +78,120 @@ pub struct ApplicationDastParams {
     pub schemas: Vec<ApplicationDastSchemaParams>,
 }
 
+/// One expected access result for an application-pentest persona.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplicationPentestPersonaParams {
+    /// `anonymous` or a stable persona ID configured under `[dast.personas]`.
+    pub persona: String,
+    /// `allow` or `deny`.
+    pub expected: String,
+}
+
+/// One inert application-pentest proposal. It contains no payload or credential values.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplicationPentestScenarioParams {
+    /// Human-readable scenario name.
+    pub name: String,
+    /// Untrusted proposal attribution: `human`, `agent`, or `tool`.
+    pub proposal_kind: String,
+    /// Stable source label such as `operator`, `codex`, or a scanner ID.
+    pub proposal_label: String,
+    /// Reviewed scenario class: `authorization_invariant`, `business_logic_invariant`,
+    /// `injection`, `ssrf`, `path_traversal`, `api_object_binding`, `command_injection`, or
+    /// `file_upload`.
+    pub scenario_class: String,
+    /// Reviewed payload class: `persona_comparison`, `syntax_boundary`,
+    /// `internal_destination`, `path_normalization`, `field_boundary`, `command_proof`, or
+    /// `inert_upload`. This is a class label, never an executable payload.
+    pub payload_class: String,
+    /// Exact HTTP method. Version 1 accepts `GET`, `HEAD`, or the reviewed `POST` scenario classes.
+    pub method: String,
+    /// Exact normalized route, including its leading slash.
+    pub route: String,
+    /// Optional parameter name without a value.
+    pub parameter_name: Option<String>,
+    /// Optional parameter carrier: `query` or `json`.
+    pub parameter_location: Option<String>,
+    /// Persona expectations for authorization and business-logic comparisons.
+    #[serde(default)]
+    pub personas: Vec<ApplicationPentestPersonaParams>,
+    /// Scenario deadline ceiling in seconds.
+    pub max_seconds: u64,
+    /// Scenario concurrency ceiling from 1 through 4.
+    pub max_concurrency: usize,
+    /// `not_required` or `manual_required`.
+    pub cleanup: String,
+    /// Explicit conditions that must already hold.
+    #[serde(default)]
+    pub preconditions: Vec<String>,
+    /// Required evidence classes such as `status_code`, `response_difference`,
+    /// `error_signature`, `out_of_band_callback`, `file_marker`, or `cleanup_proof`.
+    #[serde(default)]
+    pub evidence_requirements: Vec<String>,
+    /// Stable finding identities that motivated the proposal.
+    #[serde(default)]
+    pub source_finding_identities: Vec<String>,
+    /// Stable attack-path identities that motivated the proposal.
+    #[serde(default)]
+    pub source_path_identities: Vec<String>,
+}
+
+/// Parameters for compiling an inert application-pentest plan without effects.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplicationPentestPlanParams {
+    /// Exact credential-free authorized application URL. The scenario route must match its path.
+    pub target: String,
+    /// One or more inert scenarios compiled through `ScorchKit`'s closed executor inventory.
+    pub scenarios: Vec<ApplicationPentestScenarioParams>,
+}
+
+/// Parameters for executing an exact previously reviewed application-pentest plan.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplicationPentestExecuteParams {
+    /// Project name or UUID. The exact target must already be registered to this project.
+    pub project: String,
+    /// Exact credential-free authorized application URL.
+    pub target: String,
+    /// Exact plan identity returned by `plan_application_pentest`.
+    pub approved_plan_identity: String,
+    /// The same inert scenarios used to produce the approved identity.
+    pub scenarios: Vec<ApplicationPentestScenarioParams>,
+}
+
+/// Metadata for a new explicitly manual finding created during evidence import.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ManualApplicationFindingParams {
+    /// `critical`, `high`, `medium`, `low`, or `info`.
+    pub severity: String,
+    pub title: String,
+    pub description: String,
+    pub remediation: Option<String>,
+    pub cwe_id: Option<u32>,
+}
+
+/// Parameters for importing digest-pinned local HAR or HTTP-exchange evidence.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplicationEvidenceImportParams {
+    /// Project name or UUID. The exact target must already be registered to this project.
+    pub project: String,
+    /// Exact credential-free registered application base URL and path scope.
+    pub target: String,
+    /// Existing local regular file. Symbolic links are rejected.
+    pub path: String,
+    /// Expected lowercase SHA-256 of the exact file bytes.
+    pub sha256: String,
+    /// `har` or `http_exchange`.
+    pub format: String,
+    /// `human`, `proxy`, or `tool`.
+    pub source_kind: String,
+    /// Redacted source name used in evidence provenance.
+    pub source_label: String,
+    /// Existing finding UUID to append evidence to. Mutually exclusive with `new_finding`.
+    pub finding_id: Option<String>,
+    /// New explicitly manual finding. Mutually exclusive with `finding_id`.
+    pub new_finding: Option<ManualApplicationFindingParams>,
+}
+
 /// Parameters for creating a new project.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProjectCreateParams {

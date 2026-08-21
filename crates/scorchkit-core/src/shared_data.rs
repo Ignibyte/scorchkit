@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use crate::AdapterExecutionAssessment;
+use crate::{AdapterExecutionAssessment, ApplicationPentestScenario};
 
 /// Well-known keys for shared data.
 pub mod keys {
@@ -31,6 +31,7 @@ pub mod keys {
 pub struct SharedData {
     store: RwLock<HashMap<String, Vec<String>>>,
     adapter_assessments: RwLock<HashMap<String, AdapterExecutionAssessment>>,
+    application_pentest_scenario: RwLock<Option<ApplicationPentestScenario>>,
 }
 
 impl SharedData {
@@ -40,6 +41,7 @@ impl SharedData {
         Self {
             store: RwLock::new(HashMap::new()),
             adapter_assessments: RwLock::new(HashMap::new()),
+            application_pentest_scenario: RwLock::new(None),
         }
     }
 
@@ -94,6 +96,19 @@ impl SharedData {
         let mut values: Vec<_> = assessments.values().cloned().collect();
         values.sort_by(|left, right| left.adapter_id.cmp(&right.adapter_id));
         values
+    }
+
+    /// Bind one exact application-pentest scenario to its selected trusted module.
+    pub fn publish_application_pentest_scenario(&self, scenario: ApplicationPentestScenario) {
+        if let Ok(mut selected) = self.application_pentest_scenario.write() {
+            *selected = Some(scenario);
+        }
+    }
+
+    /// Return the exact application-pentest scenario selected for this isolated module context.
+    #[must_use]
+    pub fn application_pentest_scenario(&self) -> Option<ApplicationPentestScenario> {
+        self.application_pentest_scenario.read().ok().and_then(|selected| selected.clone())
     }
 }
 

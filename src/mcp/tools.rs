@@ -14,8 +14,10 @@ use uuid::Uuid;
 use super::contract::{McpCallContext, McpToolCallResult};
 use super::server::ScorchKitServer;
 use super::types::{
-    AnalyzeFindingsParams, ApplicationDastParams, AutoScanParams, CorrelateFindingsParams,
-    FindingListParams, FindingRefParams, FindingUpdateStatusParams, PlanScanParams,
+    AnalyzeFindingsParams, ApplicationDastParams, ApplicationEvidenceImportParams,
+    ApplicationPentestExecuteParams, ApplicationPentestPersonaParams, ApplicationPentestPlanParams,
+    ApplicationPentestScenarioParams, AutoScanParams, CorrelateFindingsParams, FindingListParams,
+    FindingRefParams, FindingUpdateStatusParams, ManualApplicationFindingParams, PlanScanParams,
     ProjectCreateParams, ProjectDeleteParams, ProjectRefParams, ProjectScanParams,
     ProjectStatusParams, ScanJobRefParams, ScanParams, ScanProgressParams, ScheduleScanParams,
     SupplyChainCacheRefreshParams, SupplyChainScanParams, TargetAddParams,
@@ -205,6 +207,194 @@ fn comma_separated(value: &str) -> Vec<String> {
     value.split(',').map(str::trim).filter(|item| !item.is_empty()).map(str::to_string).collect()
 }
 
+fn application_pentest_scenarios(
+    params: Vec<ApplicationPentestScenarioParams>,
+) -> Result<Vec<scorchkit_core::ApplicationPentestScenario>, String> {
+    params.into_iter().map(application_pentest_scenario).collect()
+}
+
+fn application_pentest_scenario(
+    params: ApplicationPentestScenarioParams,
+) -> Result<scorchkit_core::ApplicationPentestScenario, String> {
+    let proposal_kind = application_pentest_proposal_kind(&params.proposal_kind)?;
+    let class = application_pentest_class(&params.scenario_class)?;
+    let payload_class = application_pentest_payload(&params.payload_class)?;
+    let parameter =
+        application_pentest_parameter(params.parameter_name, params.parameter_location)?;
+    let personas = application_pentest_personas(params.personas)?;
+    let cleanup = application_pentest_cleanup(&params.cleanup)?;
+    let evidence_requirements = application_pentest_evidence(params.evidence_requirements)?;
+
+    Ok(scorchkit_core::ApplicationPentestScenario {
+        schema: String::new(),
+        identity: String::new(),
+        name: params.name,
+        proposal_source: scorchkit_core::ApplicationPentestProposalSource {
+            kind: proposal_kind,
+            label: params.proposal_label,
+        },
+        class,
+        payload_class,
+        operation: scorchkit_core::ApplicationPentestOperation {
+            method: params.method,
+            route: params.route,
+            parameter,
+        },
+        personas,
+        blast_radius: scorchkit_core::ApplicationPentestBlastRadius {
+            max_seconds: params.max_seconds,
+            max_concurrency: params.max_concurrency,
+        },
+        cleanup,
+        preconditions: params.preconditions,
+        evidence_requirements,
+        source_finding_identities: params.source_finding_identities,
+        source_path_identities: params.source_path_identities,
+        source_references_verified: false,
+    })
+}
+
+fn application_pentest_proposal_kind(
+    value: &str,
+) -> Result<scorchkit_core::ApplicationPentestProposalKind, String> {
+    match value {
+        "human" => Ok(scorchkit_core::ApplicationPentestProposalKind::Human),
+        "agent" => Ok(scorchkit_core::ApplicationPentestProposalKind::Agent),
+        "tool" => Ok(scorchkit_core::ApplicationPentestProposalKind::Tool),
+        other => Err(format!(
+            "unknown application-pentest proposal kind '{other}'; expected human, agent, or tool"
+        )),
+    }
+}
+
+fn application_pentest_class(
+    value: &str,
+) -> Result<scorchkit_core::ApplicationPentestScenarioClass, String> {
+    use scorchkit_core::ApplicationPentestScenarioClass as Class;
+    match value {
+        "authorization_invariant" => Ok(Class::AuthorizationInvariant),
+        "business_logic_invariant" => Ok(Class::BusinessLogicInvariant),
+        "injection" => Ok(Class::Injection),
+        "ssrf" => Ok(Class::Ssrf),
+        "path_traversal" => Ok(Class::PathTraversal),
+        "api_object_binding" => Ok(Class::ApiObjectBinding),
+        "command_injection" => Ok(Class::CommandInjection),
+        "file_upload" => Ok(Class::FileUpload),
+        other => Err(format!("unknown application-pentest scenario class '{other}'")),
+    }
+}
+
+fn application_pentest_payload(
+    value: &str,
+) -> Result<scorchkit_core::ApplicationPentestPayloadClass, String> {
+    use scorchkit_core::ApplicationPentestPayloadClass as Payload;
+    match value {
+        "persona_comparison" => Ok(Payload::PersonaComparison),
+        "syntax_boundary" => Ok(Payload::SyntaxBoundary),
+        "internal_destination" => Ok(Payload::InternalDestination),
+        "path_normalization" => Ok(Payload::PathNormalization),
+        "field_boundary" => Ok(Payload::FieldBoundary),
+        "command_proof" => Ok(Payload::CommandProof),
+        "inert_upload" => Ok(Payload::InertUpload),
+        other => Err(format!("unknown application-pentest payload class '{other}'")),
+    }
+}
+
+fn application_pentest_parameter(
+    name: Option<String>,
+    location: Option<String>,
+) -> Result<Option<scorchkit_core::HttpParameterIdentity>, String> {
+    match (name, location) {
+        (None, None) => Ok(None),
+        (Some(name), Some(location)) => {
+            Ok(Some(scorchkit_core::HttpParameterIdentity::new(name, location)))
+        }
+        _ => Err(
+            "application-pentest parameter_name and parameter_location must be supplied together"
+                .to_string(),
+        ),
+    }
+}
+
+fn application_pentest_personas(
+    personas: Vec<ApplicationPentestPersonaParams>,
+) -> Result<Vec<scorchkit_core::ApplicationPentestPersonaExpectation>, String> {
+    personas
+        .into_iter()
+        .map(|persona| {
+            let expected = match persona.expected.as_str() {
+                "allow" => scorchkit_core::ApplicationPentestAccessExpectation::Allow,
+                "deny" => scorchkit_core::ApplicationPentestAccessExpectation::Deny,
+                other => {
+                    return Err(format!(
+                        "unknown application-pentest access expectation '{other}'; expected allow or deny"
+                    ));
+                }
+            };
+            Ok(scorchkit_core::ApplicationPentestPersonaExpectation {
+                persona: persona.persona,
+                expected,
+            })
+        })
+        .collect()
+}
+
+fn application_pentest_cleanup(
+    value: &str,
+) -> Result<scorchkit_core::ApplicationPentestCleanupDisposition, String> {
+    match value {
+        "not_required" => Ok(scorchkit_core::ApplicationPentestCleanupDisposition::NotRequired),
+        "manual_required" => {
+            Ok(scorchkit_core::ApplicationPentestCleanupDisposition::ManualRequired)
+        }
+        other => Err(format!(
+            "unknown application-pentest cleanup disposition '{other}'; expected not_required or manual_required"
+        )),
+    }
+}
+
+fn application_pentest_evidence(
+    requirements: Vec<String>,
+) -> Result<Vec<scorchkit_core::ApplicationPentestEvidenceRequirement>, String> {
+    use scorchkit_core::ApplicationPentestEvidenceRequirement as Evidence;
+    requirements
+        .into_iter()
+        .map(|requirement| match requirement.as_str() {
+            "status_code" => Ok(Evidence::StatusCode),
+            "response_difference" => Ok(Evidence::ResponseDifference),
+            "error_signature" => Ok(Evidence::ErrorSignature),
+            "out_of_band_callback" => Ok(Evidence::OutOfBandCallback),
+            "file_marker" => Ok(Evidence::FileMarker),
+            "cleanup_proof" => Ok(Evidence::CleanupProof),
+            other => Err(format!("unknown application-pentest evidence requirement '{other}'")),
+        })
+        .collect()
+}
+
+fn manual_application_finding(
+    params: ManualApplicationFindingParams,
+) -> Result<crate::application_pentest::ManualApplicationFinding, String> {
+    let severity = match params.severity.as_str() {
+        "critical" => scorchkit_core::Severity::Critical,
+        "high" => scorchkit_core::Severity::High,
+        "medium" => scorchkit_core::Severity::Medium,
+        "low" => scorchkit_core::Severity::Low,
+        "info" => scorchkit_core::Severity::Info,
+        other => {
+            return Err(format!(
+                "unknown manual finding severity '{other}'; expected critical, high, medium, low, or info"
+            ));
+        }
+    };
+    Ok(crate::application_pentest::ManualApplicationFinding {
+        severity,
+        title: params.title,
+        description: params.description,
+        remediation: params.remediation,
+        cwe_id: params.cwe_id,
+    })
+}
+
 fn job_id(value: &str) -> Result<Uuid, String> {
     Uuid::parse_str(value).map_err(|error| format!("invalid scan job UUID '{value}': {error}"))
 }
@@ -341,6 +531,130 @@ impl ScorchKitServer {
             .await
             .map_err(|error| error.to_string())?;
         serde_json::to_string_pretty(&result).map_err(|error| error.to_string())
+    }
+
+    /// Compile inert proposals into a canonical application-pentest plan without performing any
+    /// target, credential, filesystem, or subprocess effect.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed message when a target, scenario, or closed executor mapping is invalid.
+    pub fn do_plan_application_pentest(
+        &self,
+        params: ApplicationPentestPlanParams,
+    ) -> Result<String, String> {
+        let scenarios = application_pentest_scenarios(params.scenarios)?;
+        let plan = Engine::new(Arc::clone(&self.config))
+            .plan_application_pentest(&params.target, scenarios)
+            .map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&plan).map_err(|error| error.to_string())
+    }
+
+    /// Execute one exact, reviewed application-pentest plan and persist its typed coverage.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed message before target effects for an unknown project/target, plan mismatch,
+    /// denied grant, invalid scenario, or persistence failure.
+    pub async fn do_application_pentest(
+        &self,
+        params: ApplicationPentestExecuteParams,
+    ) -> Result<String, String> {
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|error| error.to_string())?;
+        let target = Target::parse(&params.target).map_err(|error| error.to_string())?;
+        require_registered_project_target(self.require_pool()?, project.id, &target)
+            .await
+            .map_err(|error| error.to_string())?;
+        let scenarios = application_pentest_scenarios(params.scenarios)?;
+        let engine = Engine::new(Arc::clone(&self.config));
+        let plan = engine
+            .plan_application_pentest(&params.target, scenarios.clone())
+            .map_err(|error| error.to_string())?;
+        let result = engine
+            .application_pentest(&params.target, scenarios, &params.approved_plan_identity)
+            .await
+            .map_err(|error| error.to_string())?;
+        let stored =
+            findings::save_application_pentest_scan(self.require_pool()?, project.id, &result)
+                .await
+                .map_err(|error| error.to_string())?;
+        let output = serde_json::json!({
+            "scan_id": stored.scan.id,
+            "project": project.name,
+            "plan": plan,
+            "assessment": result.application_pentest,
+            "findings_total": result.findings.len(),
+            "findings_new": stored.findings_new,
+            "findings_updated": result.findings.len().saturating_sub(stored.findings_new),
+            "summary": result.summary,
+        });
+        serde_json::to_string_pretty(&output).map_err(|error| error.to_string())
+    }
+
+    /// Verify, redact, and atomically persist one local manual/proxy application evidence file.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed message for an unknown project/target/finding, denied local-file grant,
+    /// unsafe file, digest mismatch, malformed evidence, scope escape, or failed transaction.
+    pub async fn do_import_application_evidence(
+        &self,
+        params: ApplicationEvidenceImportParams,
+    ) -> Result<String, String> {
+        let project = resolve_project(self.require_pool()?, &params.project)
+            .await
+            .map_err(|error| error.to_string())?;
+        let target = Target::parse(&params.target).map_err(|error| error.to_string())?;
+        require_registered_project_target(self.require_pool()?, project.id, &target)
+            .await
+            .map_err(|error| error.to_string())?;
+        let format = match params.format.as_str() {
+            "har" => scorchkit_core::ApplicationEvidenceFormat::Har,
+            "http_exchange" => scorchkit_core::ApplicationEvidenceFormat::HttpExchange,
+            other => {
+                return Err(format!(
+                    "unknown application evidence format '{other}'; expected har or http_exchange"
+                ));
+            }
+        };
+        let source_kind = match params.source_kind.as_str() {
+            "human" => scorchkit_core::ApplicationEvidenceSourceKind::Human,
+            "proxy" => scorchkit_core::ApplicationEvidenceSourceKind::Proxy,
+            "tool" => scorchkit_core::ApplicationEvidenceSourceKind::Tool,
+            other => {
+                return Err(format!(
+                    "unknown application evidence source kind '{other}'; expected human, proxy, or tool"
+                ));
+            }
+        };
+        let finding_id = params
+            .finding_id
+            .map(|value| {
+                Uuid::parse_str(&value)
+                    .map_err(|error| format!("invalid application evidence finding UUID: {error}"))
+            })
+            .transpose()?;
+        let new_finding = params.new_finding.map(manual_application_finding).transpose()?;
+        let request = crate::application_pentest::ApplicationEvidenceImportRequest {
+            target: params.target,
+            path: std::path::PathBuf::from(params.path),
+            expected_sha256: params.sha256,
+            format,
+            source_kind,
+            source_label: params.source_label,
+            finding_id,
+            new_finding,
+        };
+        let prepared = Engine::new(Arc::clone(&self.config))
+            .prepare_application_evidence_import(&request)
+            .map_err(|error| error.to_string())?;
+        let stored =
+            findings::save_application_evidence_import(self.require_pool()?, project.id, &prepared)
+                .await
+                .map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&stored).map_err(|error| error.to_string())
     }
 
     /// Submit a stateless DAST job and return before scanner modules complete.
@@ -1394,6 +1708,39 @@ impl ScorchKitServer {
         Self::mcp_tool_result(context, self.do_application_dast(params.0).await)
     }
 
+    #[tool(
+        description = "Compile inert, code-informed application test scenarios into one canonical reviewed plan. Returns exact scenario, executor, authorization-requirement, and plan identities without contacting the target, reading files, resolving credentials, or launching tools. Review the returned plan identity before calling application_pentest."
+    )]
+    async fn plan_application_pentest(
+        &self,
+        context: McpCallContext,
+        params: Parameters<ApplicationPentestPlanParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_plan_application_pentest(params.0))
+    }
+
+    #[tool(
+        description = "Execute one exact application-pentest plan against a registered project target. ScorchKit recompiles the inert scenarios, rejects any approved-plan identity mismatch before effects, derives every exact grant, and runs only the closed application executor inventory. Results, findings, typed coverage, gaps, authorization requirements, and evidence identities are persisted."
+    )]
+    async fn application_pentest(
+        &self,
+        context: McpCallContext,
+        params: Parameters<ApplicationPentestExecuteParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_application_pentest(params.0).await)
+    }
+
+    #[tool(
+        description = "Import one digest-pinned local HAR or HTTP-exchange file into a registered project's existing or explicitly manual finding. The file is authorized, opened without following links, bounded, digest verified, target scoped, recursively redacted, attributed, and stored atomically with its execution record. It does not execute target traffic or promote attack-path state."
+    )]
+    async fn import_application_evidence(
+        &self,
+        context: McpCallContext,
+        params: Parameters<ApplicationEvidenceImportParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_import_application_evidence(params.0).await)
+    }
+
     #[tool(description = "List the default application-security scan modules with their adapter \
         contracts, categories, descriptions, and external tool requirements. Compatibility \
         network, enterprise, and cloud modules are excluded. Returns a JSON array.")]
@@ -1806,9 +2153,9 @@ async fn require_registered_project_target(
     if registered {
         Ok(())
     } else {
+        let target = scorchkit_core::observation::redact_url(requested.url.as_str()).0;
         Err(ScorchError::Config(format!(
-            "target '{}' is not registered to project {project_id}",
-            requested.url
+            "target '{target}' is not registered to project {project_id}"
         )))
     }
 }

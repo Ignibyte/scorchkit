@@ -60,6 +60,7 @@ pub mod adapter_catalog;
 pub mod agent;
 pub mod ai;
 pub mod application_dast;
+pub mod application_pentest;
 pub mod cli;
 #[cfg(feature = "cloud")]
 pub mod cloud;
@@ -90,6 +91,9 @@ pub(crate) static TEST_ENVIRONMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex
 // Library consumers can use `scorchkit::Finding` instead of
 // `scorchkit::engine::finding::Finding`.
 pub use application_dast::{ApplicationDastRequest, ApplicationDastSchemaRequest};
+pub use application_pentest::{
+    ApplicationEvidenceImportRequest, ManualApplicationFinding, PreparedApplicationEvidenceImport,
+};
 pub use engine::error::{Result, ScorchError};
 pub use engine::finding::Finding;
 pub use engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy, PolicyTarget};
@@ -106,7 +110,17 @@ pub use scorchkit_core::{
     ApplicationDastGapKind, ApplicationDastPersonaAssessment, ApplicationDastPhase,
     ApplicationDastPhaseOutcome, ApplicationDastPhaseStatus, ApplicationDastProfile,
     ApplicationDastRouteCoverage, ApplicationDastSchemaIdentity, ApplicationDastSchemaKind,
-    AttackPath, AttackPathCorrelation, AttackPathCorrelationGap, AttackPathCorrelationGapKind,
+    ApplicationEvidenceFormat, ApplicationEvidenceImportAssessment, ApplicationEvidenceSourceKind,
+    ApplicationPentestAccessExpectation, ApplicationPentestAssessment,
+    ApplicationPentestAuthorizationRequirement, ApplicationPentestBlastRadius,
+    ApplicationPentestCleanupDisposition, ApplicationPentestCoverageStatus,
+    ApplicationPentestEvidenceRequirement, ApplicationPentestExecutorKind, ApplicationPentestGap,
+    ApplicationPentestGapKind, ApplicationPentestInvariantResult, ApplicationPentestOperation,
+    ApplicationPentestPayloadClass, ApplicationPentestPersonaExpectation, ApplicationPentestPlan,
+    ApplicationPentestProposalKind, ApplicationPentestProposalSource, ApplicationPentestScenario,
+    ApplicationPentestScenarioClass, ApplicationPentestScenarioOutcome,
+    ApplicationPentestScenarioStatus, ApplicationPentestValidationError, AttackPath,
+    AttackPathCorrelation, AttackPathCorrelationGap, AttackPathCorrelationGapKind,
     AttackPathCorrelationStatus, AttackPathGap, AttackPathGapKind, AttackPathIdentity,
     AttackPathMember, AttackPathMemberRole, AttackPathState, AttackPathTransition,
     AttackPathTransitionReason, AttackPathValidationError, CorrelationFacet, CorrelationFacetKind,
@@ -117,6 +131,8 @@ pub use scorchkit_core::{
     SupplyChainTarget, SupplyChainTargetKind, VerificationAttempt, VerificationAttemptError,
     VerificationConditions, VerificationCoverage, VerificationOutcome,
     ADAPTER_EXECUTION_ASSESSMENT_SCHEMA_V1, APPLICATION_DAST_ASSESSMENT_SCHEMA_V1,
+    APPLICATION_EVIDENCE_IMPORT_SCHEMA_V1, APPLICATION_PENTEST_ASSESSMENT_SCHEMA_V1,
+    APPLICATION_PENTEST_PLAN_SCHEMA_V1, APPLICATION_PENTEST_SCENARIO_SCHEMA_V1,
     ATTACK_PATH_CORRELATION_SCHEMA_V1, ATTACK_PATH_IDENTITY_SCHEMA_V1, ATTACK_PATH_SCHEMA_V1,
     ATTACK_PATH_TRANSITION_SCHEMA_V1, FOCUSED_VERIFICATION_SCHEMA_V1,
     SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1, VERIFICATION_ATTEMPT_SCHEMA_V1,

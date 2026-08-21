@@ -3,6 +3,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::adapter_execution::{AdapterExecutionAssessment, AdapterExecutionStatus};
 use super::application_dast::{ApplicationDastAssessment, ApplicationDastCoverageStatus};
+use super::application_pentest::{
+    ApplicationPentestAssessment, ApplicationPentestCoverageStatus,
+    ApplicationPentestValidationError,
+};
 use super::finding::Finding;
 use super::severity::Severity;
 use super::supply_chain::{SupplyChainAssessment, SupplyChainCoverageStatus};
@@ -216,6 +220,9 @@ pub struct ScanResult {
     /// Canonical authenticated application DAST evidence when requested.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub application_dast: Option<ApplicationDastAssessment>,
+    /// Canonical code-informed application-pentest evidence when requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_pentest: Option<ApplicationPentestAssessment>,
     /// Reproducible external-adapter execution and coverage evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub adapter_executions: Vec<AdapterExecutionAssessment>,
@@ -283,6 +290,7 @@ impl ScanResult {
             execution_status: ScanExecutionStatus::Complete,
             supply_chain: None,
             application_dast: None,
+            application_pentest: None,
             adapter_executions: Vec::new(),
             summary,
         }
@@ -320,6 +328,8 @@ impl ScanResult {
             self.supply_chain.as_ref().map(|assessment| assessment.coverage_status);
         let dast_status =
             self.application_dast.as_ref().map(|assessment| assessment.coverage_status);
+        let pentest_status =
+            self.application_pentest.as_ref().map(|assessment| assessment.coverage_status);
         let adapter_degraded = self
             .adapter_executions
             .iter()
@@ -331,12 +341,14 @@ impl ScanResult {
         self.execution_status = if self.has_failed_modules()
             || supply_chain_status == Some(SupplyChainCoverageStatus::Degraded)
             || dast_status == Some(ApplicationDastCoverageStatus::Degraded)
+            || pentest_status == Some(ApplicationPentestCoverageStatus::Degraded)
             || adapter_degraded
         {
             ScanExecutionStatus::Degraded
         } else if self.has_incomplete_modules()
             || supply_chain_status == Some(SupplyChainCoverageStatus::Incomplete)
             || dast_status == Some(ApplicationDastCoverageStatus::Incomplete)
+            || pentest_status == Some(ApplicationPentestCoverageStatus::Incomplete)
             || adapter_incomplete
         {
             ScanExecutionStatus::Incomplete
@@ -359,6 +371,22 @@ impl ScanResult {
         self.application_dast = Some(assessment);
         self.refresh_execution_status();
         self
+    }
+
+    /// Attach canonical application-pentest evidence after proving all finding references.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the assessment is noncanonical or its finding identities do not
+    /// exactly match the findings carried by this result.
+    pub fn with_application_pentest(
+        mut self,
+        assessment: ApplicationPentestAssessment,
+    ) -> Result<Self, ApplicationPentestValidationError> {
+        assessment.validate_against_findings(&self.findings)?;
+        self.application_pentest = Some(assessment);
+        self.refresh_execution_status();
+        Ok(self)
     }
 
     /// Attach canonical external-adapter assessments and derive combined execution status.
@@ -419,11 +447,31 @@ impl ScanResult {
         {
             current.merge(additional);
         }
+        let incoming_application_pentest = other.application_pentest;
+        let application_pentest_conflict =
+            match (self.application_pentest.as_ref(), incoming_application_pentest) {
+                (None, Some(additional)) => {
+                    self.application_pentest = Some(additional);
+                    false
+                }
+                (Some(current), Some(additional)) => current != &additional,
+                (None | Some(_), None) => false,
+            };
         self.findings.extend(other.findings);
         self.modules_run.extend(other.modules_run);
         self.modules_skipped.extend(other.modules_skipped);
         self.module_outcomes.extend(other.module_outcomes);
         self.adapter_executions.extend(other.adapter_executions);
+        if application_pentest_conflict {
+            let detail =
+                "cannot merge distinct application-pentest assessments into one scan result";
+            self.modules_skipped
+                .push(("application-pentest-merge".to_string(), detail.to_string()));
+            self.module_outcomes.push(ModuleOutcome::failed(
+                "application-pentest-merge",
+                ModuleOutcomeReason::ExecutionFailed { message: detail.to_string() },
+            ));
+        }
         self.refresh_execution_status();
         self.summary = ScanSummary::from_findings(&self.findings);
     }
@@ -461,6 +509,7 @@ mod tests {
             execution_status: ScanExecutionStatus::Complete,
             supply_chain: None,
             application_dast: None,
+            application_pentest: None,
             adapter_executions: Vec::new(),
             summary: ScanSummary::from_findings(&findings),
             findings,

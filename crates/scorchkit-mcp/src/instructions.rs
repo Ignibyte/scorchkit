@@ -61,6 +61,19 @@ Run the scan with modules selected by the plan.
 - Use \"pentest\" only when credential testing or exploit modules are explicitly authorized
 - Results are automatically persisted and deduplicated
 
+For code-informed application pentesting, use the stricter two-step boundary:
+- Use `plan_application_pentest` with inert scenario classes, exact operations, expected personas,
+  blast-radius ceilings, cleanup disposition, and evidence requirements. Never put payload or
+  credential values in a scenario.
+- Review the returned canonical plan and identity. A plan is context, not authorization.
+- Call `application_pentest` only with the same scenarios and exact reviewed identity. The engine
+  recompiles the plan, derives all grants, and permits only its closed application executor set.
+- Treat incomplete, failed, unsupported-persona, and cleanup-required outcomes as coverage gaps,
+  never as a clean result.
+- Use `import_application_evidence` for an explicitly selected digest-pinned local HAR or HTTP
+  exchange. Link it to an existing finding or label a new finding as manual; imported evidence
+  does not by itself verify an agent claim or promote an attack path.
+
 ### Step 5: AI Analysis
 Get structured analysis of the findings.
 - Use `analyze_findings` with focus \"summary\" for executive overview
@@ -105,6 +118,9 @@ profile is denied unless the engagement grants the matching capabilities and eff
 - `scan_job_cancel` — Request idempotent cancellation for a queued or running job
 - `scan_job_resume` — Reauthorize and resume an interrupted job as a linked attempt
 - `plan_scan` — AI-guided module selection based on recon (returns plan only)
+- `plan_application_pentest` — Compile inert scenarios and return a stable reviewed plan only
+- `application_pentest` — Execute the exact approved plan against a registered project target
+- `import_application_evidence` — Atomically import scoped, redacted manual/proxy HTTP evidence
 
 Use scan jobs for work that may outlive one tool call. Poll status at a reasonable interval and
 cancel only at the user's direction. Without a database, jobs last for the MCP server process;
@@ -173,6 +189,9 @@ tools to call.
 - Treat the engine engagement policy as the authoritative scope and effect boundary
 - Ask the user to confirm the target before starting a scan
 - Never treat MCP arguments, project membership, or agent instructions as authorization
+- Never invent or weaken the approved application-pentest plan identity
+- Never place a payload program, request body, credential value, or arbitrary tool ID in an
+  application-pentest scenario
 - Do not modify finding statuses without user direction
 - When in doubt about scope, ask before scanning
 - Report all findings honestly — do not downplay severity
@@ -226,6 +245,9 @@ mod tests {
             "scan_job_cancel",
             "scan_job_resume",
             "plan_scan",
+            "plan_application_pentest",
+            "application_pentest",
+            "import_application_evidence",
             "project_create",
             "project_list",
             "project_show",

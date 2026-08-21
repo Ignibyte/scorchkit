@@ -35,8 +35,27 @@ impl ScanModule for InjectionModule {
         let url = ctx.target.url.as_str();
         let mut findings = Vec::new();
 
+        if let Some(scenario) = ctx.shared_data.application_pentest_scenario() {
+            let parameter = scenario.operation.parameter.as_ref().ok_or_else(|| {
+                ScorchError::Config(
+                    "application-pentest injection scenario has no selected parameter".to_string(),
+                )
+            })?;
+            if scenario.class != scorchkit_core::ApplicationPentestScenarioClass::Injection
+                || scenario.operation.method != "GET"
+                || parameter.location != "query"
+            {
+                return Err(ScorchError::Config(
+                    "application-pentest injection scenario is incompatible with its executor"
+                        .to_string(),
+                ));
+            }
+            test_url_params(ctx, url, &mut findings, Some(&parameter.name)).await?;
+            return Ok(findings);
+        }
+
         // 1. Test any parameters already in the target URL
-        test_url_params(ctx, url, &mut findings).await?;
+        test_url_params(ctx, url, &mut findings, None).await?;
 
         // 2. Spider the page for forms and links with parameters
         let response = ctx
@@ -46,12 +65,12 @@ impl ScanModule for InjectionModule {
             .await
             .map_err(|e| ScorchError::Http { url: url.to_string(), source: e })?;
 
-        let body = response.text().await.unwrap_or_default();
+        let body = crate::scanner::bounded_response_text(response).await?;
 
         // Extract links with query parameters from the page
         let links = extract_parameterized_links(&body, &ctx.target.url);
         for link in &links {
-            test_url_params(ctx, link, &mut findings).await?;
+            test_url_params(ctx, link, &mut findings, None).await?;
         }
 
         // Extract form actions and test them
@@ -64,7 +83,7 @@ impl ScanModule for InjectionModule {
         let shared_urls = ctx.shared_data.get(crate::engine::shared_data::keys::URLS);
         for shared_url in &shared_urls {
             if shared_url != url && !links.contains(shared_url) {
-                test_url_params(ctx, shared_url, &mut findings).await?;
+                test_url_params(ctx, shared_url, &mut findings, None).await?;
             }
         }
 
@@ -78,7 +97,7 @@ impl ScanModule for InjectionModule {
                     continue;
                 }
                 let probe_url = build_probe_url(&endpoint.url, &endpoint.parameters);
-                test_url_params(ctx, &probe_url, &mut findings).await?;
+                test_url_params(ctx, &probe_url, &mut findings, None).await?;
             }
         }
 
@@ -109,6 +128,7 @@ async fn test_url_params(
     ctx: &ScanContext,
     url_str: &str,
     findings: &mut Vec<Finding>,
+    selected_parameter: Option<&str>,
 ) -> Result<()> {
     let Ok(parsed) = Url::parse(url_str) else {
         return Ok(());
@@ -129,11 +149,14 @@ async fn test_url_params(
         .await
         .map_err(|e| ScorchError::Http { url: url_str.to_string(), source: e })?;
     let baseline_status = baseline.status();
-    let baseline_body = baseline.text().await.unwrap_or_default();
+    let baseline_body = crate::scanner::bounded_response_text(baseline).await?;
     let baseline_len = baseline_body.len();
 
     // Test each parameter with SQL injection payloads
     for (param_name, param_value) in &params {
+        if selected_parameter.is_some_and(|selected| selected != param_name) {
+            continue;
+        }
         for &payload in SQL_PAYLOADS {
             let injected_value = format!("{param_value}{payload}");
 
@@ -156,7 +179,7 @@ async fn test_url_params(
             };
 
             let resp_status = response.status();
-            let resp_body = response.text().await.unwrap_or_default();
+            let resp_body = crate::scanner::bounded_response_text(response).await?;
 
             if let Some(finding) = analyze_injection_response(
                 &resp_body,
@@ -315,7 +338,7 @@ async fn test_form(ctx: &ScanContext, form: &FormInfo, findings: &mut Vec<Findin
                 continue;
             };
 
-            let resp_body = response.text().await.unwrap_or_default();
+            let resp_body = crate::scanner::bounded_response_text(response).await?;
 
             if let Some(db_type) = detect_sql_error(&resp_body) {
                 findings.push(
@@ -667,5 +690,36 @@ mod tests {
         assert!(form.inputs.iter().any(|(n, _)| n == "category"));
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn application_pentest_tests_only_the_exact_selected_query_parameter() {
+        let server = httpmock::MockServer::start_async().await;
+        let requests = server
+            .mock_async(|when, then| {
+                when.any_request();
+                then.status(200).body("normal response");
+            })
+            .await;
+        let target = crate::engine::target::Target::parse(&server.url("/?chosen=1&other=2"))
+            .expect("target");
+        let context = crate::engine::scan_context::ScanContext::new(
+            target,
+            std::sync::Arc::new(crate::config::AppConfig::default()),
+            reqwest::Client::new(),
+            Vec::new(),
+        );
+        context.shared_data.publish_application_pentest_scenario(
+            crate::application_pentest::test_scenario(
+                scorchkit_core::ApplicationPentestScenarioClass::Injection,
+                "GET",
+                Some(scorchkit_core::HttpParameterIdentity::new("chosen", "query")),
+            ),
+        );
+
+        let findings = InjectionModule.run(&context).await.expect("selected injection run");
+
+        assert!(findings.is_empty());
+        assert_eq!(requests.calls_async().await, 1 + SQL_PAYLOADS.len());
     }
 }
