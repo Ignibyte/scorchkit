@@ -22,6 +22,8 @@ projects (id, name, description, settings JSONB, created_at, updated_at)
         └── tracked_findings (id, scan_id FK, project_id FK, stable_identity, identity_schema, correlation_keys JSONB, compatibility fields, raw_finding JSONB, lifecycle fields)
             ├── finding_evidence (scan_id FK, evidence_identity, evidence_schema, raw_evidence JSONB, collected_at)
             └── finding_agent_analysis (analysis_identity, analysis_schema, raw_analysis JSONB, created_at)
+    └── attack_paths (path_identity, schemas, current_state, raw_path JSONB, timestamps)
+        └── attack_path_transitions (transition_identity, schema, raw_transition JSONB, observed_at)
 
 scan_jobs (id, root_job_id, parent_job_id, attempt, state, revision, owner_id, lease_expires_at, document JSONB, timestamps)
     └── scan_job_audit_events (job_id, revision, state, occurred_at, event JSONB)
@@ -47,6 +49,13 @@ supply-chain assessment. Legacy callers continue to write an empty object; produ
 use the evidence-aware save path so missing or degraded analyzer coverage remains durable beside the
 summary.
 
+Canonical attack paths use a separate project/path advisory lock. A snapshot update must contain
+every already-stored transition with identical content; stale or conflicting history is rejected.
+The child table is authoritative on reads, so updating `raw_path` cannot erase verification proof.
+Stored path, selector, attempt, and transition identities are revalidated before use. Project
+deletion cascades through both path tables. See
+`docs/architecture/source-runtime-correlation.md`.
+
 ## Vulnerability Lifecycle
 
 ```
@@ -64,11 +73,12 @@ src/storage/
   models.rs     — compatibility re-exports
   projects.rs   — CRUD + target management
   scans.rs      — save/get/list scan records
-  findings.rs   — stable-identity upsert, append-preserved evidence/analysis, lifecycle queries
+  findings.rs   — stable-identity upsert, batched append-preserved evidence/analysis, lifecycle queries
+  attack_paths.rs — identity-locked snapshots and append-only transition history
   jobs.rs       — provider-neutral job store adapter with transactional revision audit
   migrate.rs    — run embedded migrations
 migrations/
-  001_initial.sql … 010_scan_execution_evidence.sql
+  001_initial.sql … 011_attack_paths.sql
 ```
 
 Scan job domain types, `JobStore`, and the in-memory store live in `scorchkit-executor::job`. The

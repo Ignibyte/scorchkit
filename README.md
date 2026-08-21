@@ -148,6 +148,13 @@ Planning, analysis, correlation, and remediation use the same typed `scorchkit.a
 response contract for both adapters. Invalid or mismatched provider output is rejected. AI failure
 does not alter deterministic scan evidence, rule-based correlation, or local remediation guidance.
 
+Canonical source-to-runtime correlation is deterministic and separate from AI. It links typed
+finding-v2 identities into versioned application attack paths, requires source flow, redacted HTTP
+proof, a shared weakness and precise application facet, and comparable deployment provenance before
+using the `reproduced` state. Focused verification output is inert selector data; it never sends a
+request or runs a test. Legacy title/module chains are compatibility-only and labeled unverified.
+See [source/runtime correlation](docs/architecture/source-runtime-correlation.md).
+
 ```bash
 scorchkit run https://owned.example --profile quick --analyze
 scorchkit analyze report.json --focus prioritize

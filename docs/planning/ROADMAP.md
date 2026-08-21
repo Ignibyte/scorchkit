@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** trusted application probes complete; SK-040 source/runtime correlation is next
+**Status:** SK-040 source/runtime correlation is active as TICKET-015
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-21
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
@@ -171,13 +171,13 @@ None. The feature-readiness baseline and SK-028 through SK-039 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. SK-039 is complete in this delivery; each remaining row has a specified
+The pipeline permits one active ticket. SK-040 is active as TICKET-015; each later row has a specified
 candidate intake under `docs/planning/intake/` and becomes a numbered ticket only when promoted.
 Backlog status is not a waiver of a safety invariant.
 
 | Order | Batch | Planned outcome | Depends on | Planning artifact |
 |---:|---|---|---|---|
-| 1 | SK-040 | Correlate source flows, routes, parameters, components, and runtime proof into versioned attack paths and focused verification selections. | SK-035 through SK-039 | [intake](intake/INTAKE-source-runtime-correlation.md) |
+| 1 | SK-040 (active) | Correlate source flows, routes, parameters, components, and runtime proof into versioned attack paths and focused verification selections. | SK-035 through SK-039 | [TICKET-015](tickets/open/TICKET-015-source-runtime-correlation.md) |
 | 2 | SK-041 | Add code-informed, application-only pentest scenarios plus HAR/manual proxy evidence interoperability. | SK-038 through SK-040 | [intake](intake/INTAKE-application-pentest.md) |
 | 3 | SK-042 | Present change-aware commit, PR, staging, release, and deep AppSec workflows through Codex-first, agent-neutral contracts. | SK-036 through SK-041 | [intake](intake/INTAKE-codex-appsec-workflows.md) |
 | 4 | SK-043 | Restore webhook delivery through a redacted, policy-owned, durable bounded queue outside scan execution. | SK-028, SK-035 | [intake](intake/INTAKE-policy-webhooks.md) |

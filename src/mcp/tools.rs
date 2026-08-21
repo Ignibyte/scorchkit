@@ -5,7 +5,7 @@
 //! wrappers that delegate to the public methods. Tests call the public
 //! methods directly.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
@@ -49,6 +49,141 @@ fn redacted_intelligence_finding(finding: &crate::engine::finding::Finding) -> s
             .as_deref()
             .map(crate::engine::observation::redact_text),
     })
+}
+
+fn canonical_correlation_inventory(
+    tracked_findings: &[crate::storage::models::TrackedFinding],
+    stored_evidence: Vec<crate::storage::models::FindingEvidence>,
+) -> (Vec<crate::engine::finding::Finding>, Vec<crate::engine::attack_path::AttackPathCorrelationGap>)
+{
+    use crate::engine::attack_path::{AttackPathCorrelationGap, AttackPathCorrelationGapKind};
+
+    let stable_identity_by_id: BTreeMap<Uuid, &str> = tracked_findings
+        .iter()
+        .map(|finding| (finding.id, finding.stable_identity.as_str()))
+        .collect();
+    let mut evidence_by_finding = BTreeMap::new();
+    let mut gaps = Vec::new();
+    for row in stored_evidence {
+        let decoded = serde_json::from_value::<crate::engine::observation::EvidenceRecord>(
+            row.raw_evidence.clone(),
+        );
+        let Ok(evidence) = decoded else {
+            gaps.push(AttackPathCorrelationGap {
+                kind: AttackPathCorrelationGapKind::MalformedFindingRecord,
+                finding_identity: stable_identity_by_id
+                    .get(&row.tracked_finding_id)
+                    .map(ToString::to_string),
+            });
+            continue;
+        };
+        let normalized = evidence.normalized();
+        if normalized.identity != row.evidence_identity
+            || normalized.schema != row.evidence_schema
+            || normalized.provenance.collected_at.timestamp_micros()
+                != row.collected_at.timestamp_micros()
+            || serde_json::to_value(&normalized).ok().as_ref() != Some(&row.raw_evidence)
+        {
+            gaps.push(AttackPathCorrelationGap {
+                kind: AttackPathCorrelationGapKind::MalformedFindingRecord,
+                finding_identity: stable_identity_by_id
+                    .get(&row.tracked_finding_id)
+                    .map(ToString::to_string),
+            });
+            continue;
+        }
+        evidence_by_finding.entry(row.tracked_finding_id).or_insert_with(Vec::new).push(normalized);
+    }
+
+    let findings = tracked_findings
+        .iter()
+        .filter_map(|tracked| {
+            let decoded = serde_json::from_value::<crate::engine::finding::Finding>(
+                tracked.raw_finding.clone(),
+            );
+            let Ok(mut finding) = decoded else {
+                gaps.push(AttackPathCorrelationGap {
+                    kind: AttackPathCorrelationGapKind::MalformedFindingRecord,
+                    finding_identity: Some(tracked.stable_identity.clone()),
+                });
+                return None;
+            };
+            let canonical_raw = serde_json::to_value(&finding).ok();
+            if canonical_raw.as_ref() != Some(&tracked.raw_finding)
+                || !tracked_finding_columns_match(&finding, tracked)
+            {
+                gaps.push(AttackPathCorrelationGap {
+                    kind: AttackPathCorrelationGapKind::MalformedFindingRecord,
+                    finding_identity: Some(tracked.stable_identity.clone()),
+                });
+                return None;
+            }
+            if let Some(evidence) = evidence_by_finding.remove(&tracked.id) {
+                finding.appsec.evidence.extend(evidence);
+            }
+            let canonical = finding.canonical_appsec();
+            let correlation_keys_match =
+                serde_json::to_value(&canonical.correlation_keys).ok().as_ref()
+                    == Some(&tracked.correlation_keys);
+            if canonical.identity.value != tracked.stable_identity
+                || canonical.identity.schema != tracked.identity_schema
+                || !correlation_keys_match
+            {
+                gaps.push(AttackPathCorrelationGap {
+                    kind: AttackPathCorrelationGapKind::MalformedFindingRecord,
+                    finding_identity: Some(tracked.stable_identity.clone()),
+                });
+                return None;
+            }
+            Some(finding)
+        })
+        .collect();
+    gaps.sort();
+    gaps.dedup();
+    (findings, gaps)
+}
+
+fn tracked_finding_columns_match(
+    finding: &crate::engine::finding::Finding,
+    tracked: &crate::storage::models::TrackedFinding,
+) -> bool {
+    finding.module_id == tracked.module_id
+        && finding.severity.to_string() == tracked.severity
+        && finding.title == tracked.title
+        && finding.description == tracked.description
+        && finding.affected_target == tracked.affected_target
+        && finding.evidence == tracked.evidence
+        && finding.remediation == tracked.remediation
+        && finding.owasp_category == tracked.owasp_category
+        && finding.cwe_id.and_then(|value| i32::try_from(value).ok()) == tracked.cwe_id
+        && finding.confidence.total_cmp(&tracked.confidence).is_eq()
+}
+
+fn finding_limit_correlation_output(project: &str, total: usize) -> Result<String, String> {
+    use crate::engine::attack_path::{
+        AttackPathCorrelationGap, AttackPathCorrelationGapKind, AttackPathCorrelationStatus,
+        ATTACK_PATH_CORRELATION_SCHEMA_V1,
+    };
+
+    serde_json::to_string_pretty(&serde_json::json!({
+        "schema": ATTACK_PATH_CORRELATION_SCHEMA_V1,
+        "project": project,
+        "total_findings_available": total,
+        "total_findings_analyzed": 0,
+        "status": AttackPathCorrelationStatus::Incomplete,
+        "attack_paths_found": 0,
+        "attack_paths": [],
+        "gaps": [AttackPathCorrelationGap {
+            kind: AttackPathCorrelationGapKind::FindingLimitExceeded,
+            finding_identity: None,
+        }],
+        "legacy_unverified_attack_chains": {
+            "status": "not_evaluated_resource_limit",
+            "attack_chains_found": 0,
+            "chains": [],
+        },
+    }))
+    .map_err(|error| error.to_string())
 }
 
 /// Helper to resolve a project by name or UUID.
@@ -985,13 +1120,10 @@ impl ScorchKitServer {
         serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
     }
 
-    /// Correlate project findings into attack chains using rule-based
-    /// pattern matching.
+    /// Correlate project findings into canonical source-to-runtime attack paths.
     ///
-    /// Loads all findings for a project and applies correlation rules
-    /// based on module IDs, OWASP categories, and CWE relationships
-    /// to identify compound attack paths where multiple findings
-    /// create escalated risk.
+    /// Canonical paths use only typed finding-v2 evidence. The former title/module matcher remains
+    /// present under an explicit compatibility-only, unverified label.
     ///
     /// # Errors
     ///
@@ -1000,12 +1132,22 @@ impl ScorchKitServer {
         &self,
         params: CorrelateFindingsParams,
     ) -> Result<String, String> {
-        let project = resolve_project(self.require_pool()?, &params.project)
-            .await
-            .map_err(|e| e.to_string())?;
-        let tracked_findings = findings::list_findings(self.require_pool()?, project.id)
-            .await
-            .map_err(|e| e.to_string())?;
+        let pool = self.require_pool()?;
+        let project = resolve_project(pool, &params.project).await.map_err(|e| e.to_string())?;
+        let finding_count =
+            findings::count_findings(pool, project.id).await.map_err(|e| e.to_string())?;
+        if finding_count > crate::engine::attack_path::MAX_CORRELATION_FINDINGS {
+            return finding_limit_correlation_output(&project.name, finding_count);
+        }
+        let tracked_findings =
+            findings::list_findings(pool, project.id).await.map_err(|e| e.to_string())?;
+        let evidence_limit = crate::engine::attack_path::MAX_CORRELATION_PROJECT_EVIDENCE;
+        let mut stored_evidence =
+            findings::list_project_evidence(pool, project.id, evidence_limit + 1)
+                .await
+                .map_err(|e| e.to_string())?;
+        let evidence_limit_hit = stored_evidence.len() > evidence_limit;
+        stored_evidence.truncate(evidence_limit);
 
         let correlation_findings: Vec<super::prompts::CorrelationFinding> = tracked_findings
             .iter()
@@ -1017,13 +1159,40 @@ impl ScorchKitServer {
             })
             .collect();
 
-        let chains = super::prompts::correlate_attack_chains(&correlation_findings);
+        let legacy_chains = super::prompts::correlate_attack_chains(&correlation_findings);
+        let (canonical_findings, mut malformed_gaps) =
+            canonical_correlation_inventory(&tracked_findings, stored_evidence);
+        let canonical_finding_count = canonical_findings.len();
+        if evidence_limit_hit {
+            malformed_gaps.push(crate::engine::attack_path::AttackPathCorrelationGap {
+                kind: crate::engine::attack_path::AttackPathCorrelationGapKind::ProjectEvidenceLimitExceeded,
+                finding_identity: None,
+            });
+        }
+        let mut correlation =
+            crate::engine::attack_path::correlate_attack_paths(&canonical_findings);
+        if !malformed_gaps.is_empty() {
+            correlation.status =
+                crate::engine::attack_path::AttackPathCorrelationStatus::Incomplete;
+            correlation.gaps.append(&mut malformed_gaps);
+            correlation.gaps.sort();
+            correlation.gaps.dedup();
+        }
 
         let output = serde_json::json!({
+            "schema": correlation.schema,
             "project": project.name,
-            "total_findings_analyzed": tracked_findings.len(),
-            "attack_chains_found": chains.len(),
-            "chains": chains,
+            "total_findings_available": tracked_findings.len(),
+            "total_findings_analyzed": canonical_finding_count,
+            "status": correlation.status,
+            "attack_paths_found": correlation.paths.len(),
+            "attack_paths": correlation.paths,
+            "gaps": correlation.gaps,
+            "legacy_unverified_attack_chains": {
+                "status": "unverified_heuristic",
+                "attack_chains_found": legacy_chains.len(),
+                "chains": legacy_chains,
+            },
         });
 
         serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
@@ -1669,6 +1838,163 @@ mod tests {
             server.config.engagement.clone().expect("job engagement"),
         )
         .with_modules(Some(vec!["headers".to_string()]))
+    }
+
+    fn durable_correlation_fixture() -> (
+        crate::engine::finding::Finding,
+        crate::storage::models::TrackedFinding,
+        crate::storage::models::FindingEvidence,
+    ) {
+        let now = Utc::now();
+        let finding = crate::engine::finding::Finding::new(
+            "fixture-scanner",
+            crate::engine::severity::Severity::High,
+            "Fixture title",
+            "Fixture description",
+            "src/fixture.rs:7",
+        )
+        .with_evidence("fixture evidence")
+        .with_remediation("fixture remediation")
+        .with_owasp("A03:2021")
+        .with_cwe(89)
+        .with_confidence(0.75)
+        .with_correlation_key(crate::engine::observation::CorrelationKey::new("route", "/fixture"));
+        let appsec = finding.canonical_appsec();
+        let id = Uuid::new_v4();
+        let scan_id = Uuid::new_v4();
+        let tracked = crate::storage::models::TrackedFinding {
+            id,
+            scan_id,
+            project_id: Uuid::new_v4(),
+            fingerprint: "legacy-fingerprint".to_string(),
+            identity_schema: appsec.identity.schema.clone(),
+            stable_identity: appsec.identity.value.clone(),
+            correlation_keys: serde_json::to_value(&appsec.correlation_keys)
+                .expect("serialize correlation keys"),
+            module_id: finding.module_id.clone(),
+            severity: finding.severity.to_string(),
+            title: finding.title.clone(),
+            description: finding.description.clone(),
+            affected_target: finding.affected_target.clone(),
+            evidence: finding.evidence.clone(),
+            remediation: finding.remediation.clone(),
+            owasp_category: finding.owasp_category.clone(),
+            cwe_id: finding.cwe_id.and_then(|value| i32::try_from(value).ok()),
+            raw_finding: serde_json::to_value(&finding).expect("serialize finding"),
+            confidence: finding.confidence,
+            first_seen: now,
+            last_seen: now,
+            seen_count: 1,
+            status: "new".to_string(),
+            status_note: None,
+            found_at: now,
+        };
+        let record = appsec.evidence[0].clone();
+        let evidence = crate::storage::models::FindingEvidence {
+            id: Uuid::new_v4(),
+            tracked_finding_id: id,
+            scan_id,
+            evidence_identity: record.identity.clone(),
+            evidence_schema: record.schema.clone(),
+            raw_evidence: serde_json::to_value(&record).expect("serialize evidence"),
+            collected_at: record.provenance.collected_at,
+            created_at: now,
+        };
+        (finding, tracked, evidence)
+    }
+
+    #[test]
+    fn durable_correlation_checks_every_evidence_and_finding_parity_field() {
+        let (finding, tracked, evidence) = durable_correlation_fixture();
+        let (findings, gaps) =
+            canonical_correlation_inventory(std::slice::from_ref(&tracked), vec![evidence.clone()]);
+        assert_eq!(findings.len(), 1);
+        assert!(gaps.is_empty());
+
+        let mut evidence_variants = Vec::new();
+        let mut variant = evidence.clone();
+        variant.evidence_identity = "wrong-evidence-identity".to_string();
+        evidence_variants.push(variant);
+        let mut variant = evidence.clone();
+        variant.evidence_schema = "wrong-evidence-schema".to_string();
+        evidence_variants.push(variant);
+        let mut variant = evidence.clone();
+        variant.collected_at += chrono::Duration::microseconds(1);
+        evidence_variants.push(variant);
+        let mut variant = evidence;
+        variant
+            .raw_evidence
+            .as_object_mut()
+            .expect("evidence object")
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        evidence_variants.push(variant);
+        for variant in evidence_variants {
+            let (_, gaps) =
+                canonical_correlation_inventory(std::slice::from_ref(&tracked), vec![variant]);
+            assert_eq!(gaps.len(), 1);
+            assert_eq!(
+                gaps[0].kind,
+                crate::engine::attack_path::AttackPathCorrelationGapKind::MalformedFindingRecord
+            );
+        }
+
+        let mut column_variants = Vec::new();
+        let mut variant = tracked.clone();
+        variant.module_id.push_str("-wrong");
+        column_variants.push(variant);
+        let mut variant = tracked.clone();
+        variant.severity = "low".to_string();
+        column_variants.push(variant);
+        let mut variant = tracked.clone();
+        variant.title.push_str(" wrong");
+        column_variants.push(variant);
+        let mut variant = tracked.clone();
+        variant.description.push_str(" wrong");
+        column_variants.push(variant);
+        let mut variant = tracked.clone();
+        variant.affected_target.push_str("-wrong");
+        column_variants.push(variant);
+        let mut variant = tracked.clone();
+        variant.evidence = Some("wrong evidence".to_string());
+        column_variants.push(variant);
+        let mut variant = tracked.clone();
+        variant.remediation = Some("wrong remediation".to_string());
+        column_variants.push(variant);
+        let mut variant = tracked.clone();
+        variant.owasp_category = Some("A01:2021".to_string());
+        column_variants.push(variant);
+        let mut variant = tracked.clone();
+        variant.cwe_id = Some(78);
+        column_variants.push(variant);
+        let mut variant = tracked.clone();
+        variant.confidence = 0.5;
+        column_variants.push(variant);
+        for variant in &column_variants {
+            assert!(!tracked_finding_columns_match(&finding, variant));
+        }
+        let (findings, gaps) = canonical_correlation_inventory(&column_variants[2..3], Vec::new());
+        assert!(findings.is_empty());
+        assert_eq!(gaps.len(), 1);
+
+        let mut variant = tracked.clone();
+        variant
+            .raw_finding
+            .as_object_mut()
+            .expect("finding object")
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        let (findings, gaps) = canonical_correlation_inventory(&[variant], Vec::new());
+        assert!(findings.is_empty());
+        assert_eq!(gaps.len(), 1);
+
+        let mut identity_schema = tracked.clone();
+        identity_schema.identity_schema = "wrong-identity-schema".to_string();
+        let mut correlation_keys = tracked;
+        correlation_keys.correlation_keys = serde_json::json!([]);
+        for variant in [identity_schema, correlation_keys] {
+            let (findings, gaps) = canonical_correlation_inventory(&[variant], Vec::new());
+            assert!(findings.is_empty());
+            assert_eq!(gaps.len(), 1);
+        }
     }
 
     #[test]

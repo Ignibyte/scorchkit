@@ -54,6 +54,12 @@ unchanged text payload only when talking to an older server. Tool annotations ar
 hints; the engine engagement remains authoritative. Client name/version are untrusted attribution,
 not a grant.
 
+The reporting workflow treats `correlate_findings.attack_paths` as the evidence-backed contract.
+It may explain suspected, reachable, reproduced, mitigated, or regressed paths, but it must preserve
+the returned gaps and transition conditions. `legacy_unverified_attack_chains` can supply a
+compatibility hint only. Focused selections describe an exact possible follow-up and do not
+authorize the plugin or Codex to execute it.
+
 ## Validation
 
 `bash bin/codex-plugin-contract.sh --selftest` verifies the package manifest, stdio descriptor,

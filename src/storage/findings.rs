@@ -321,6 +321,51 @@ pub async fn list_evidence(pool: &PgPool, finding_id: Uuid) -> Result<Vec<Findin
     .map_err(|e| ScorchError::Database(format!("list finding evidence: {e}")))
 }
 
+/// List append-preserved scanner evidence for every finding in one project.
+///
+/// This batch form lets correlation reconstruct durable proof history without one query per
+/// finding.
+///
+/// # Errors
+///
+/// Returns an error if the database read fails.
+pub async fn list_project_evidence(
+    pool: &PgPool,
+    project_id: Uuid,
+    limit: usize,
+) -> Result<Vec<FindingEvidence>> {
+    let limit = i64::try_from(limit)
+        .map_err(|_| ScorchError::Database("project evidence limit exceeds i64".to_string()))?;
+    sqlx::query_as::<_, FindingEvidence>(
+        "SELECT evidence.* FROM finding_evidence AS evidence \
+         INNER JOIN tracked_findings AS finding ON finding.id = evidence.tracked_finding_id \
+         WHERE finding.project_id = $1 \
+         ORDER BY evidence.tracked_finding_id, evidence.collected_at, evidence.evidence_identity \
+         LIMIT $2",
+    )
+    .bind(project_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| ScorchError::Database(format!("list project finding evidence: {e}")))
+}
+
+/// Count tracked findings without loading their JSON documents.
+///
+/// # Errors
+///
+/// Returns an error if the database read fails or the count cannot fit in `usize`.
+pub async fn count_findings(pool: &PgPool, project_id: Uuid) -> Result<usize> {
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tracked_findings WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| ScorchError::Database(format!("count project findings: {e}")))?;
+    usize::try_from(count)
+        .map_err(|_| ScorchError::Database("negative or oversized finding count".to_string()))
+}
+
 /// List append-preserved labeled agent analysis for a tracked finding.
 ///
 /// # Errors

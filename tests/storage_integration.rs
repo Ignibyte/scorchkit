@@ -7,7 +7,16 @@
 #![cfg(feature = "storage")]
 
 use scorchkit::config::DatabaseConfig;
+use scorchkit::engine::attack_path::{
+    correlate_attack_paths, AttackPath, VerificationAttempt, VerificationConditions,
+    VerificationCoverage, VerificationOutcome,
+};
+use scorchkit::engine::evidence::HttpEvidence;
 use scorchkit::engine::finding::Finding;
+use scorchkit::engine::observation::{
+    CodeFlow, CodeFlowStep, CorrelationKey, ObservationLocation, ScannerProvenance, SourceRegion,
+    ThreadFlow,
+};
 use scorchkit::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
 use scorchkit::engine::scope::ScopeRule;
 use scorchkit::engine::severity::Severity;
@@ -310,6 +319,150 @@ async fn test_scan_execution_evidence_round_trips() {
     assert_eq!(restored.execution_evidence, evidence);
 
     storage::projects::delete_project(&pool, project.id).await.expect("delete project");
+}
+
+fn reproduced_storage_path(observed_at: chrono::DateTime<chrono::Utc>) -> AttackPath {
+    let source = Finding::new(
+        "semgrep",
+        Severity::High,
+        "SQL input reaches query",
+        "typed source proof",
+        "src/users.rs:18",
+    )
+    .with_location(ObservationLocation::Source {
+        path: "src/users.rs".to_string(),
+        region: Some(SourceRegion::new(18)),
+    })
+    .with_cwe(89)
+    .with_correlation_key(CorrelationKey::new("route", "/users"))
+    .with_provenance(
+        ScannerProvenance::new("semgrep", observed_at).with_target_revision("revision-1"),
+    )
+    .with_code_flows(vec![CodeFlow {
+        message: None,
+        thread_flows: vec![ThreadFlow {
+            message: None,
+            steps: vec![
+                CodeFlowStep::new(ObservationLocation::Source {
+                    path: "src/users.rs".to_string(),
+                    region: Some(SourceRegion::new(8)),
+                }),
+                CodeFlowStep::new(ObservationLocation::Source {
+                    path: "src/users.rs".to_string(),
+                    region: Some(SourceRegion::new(18)),
+                }),
+            ],
+        }],
+    }]);
+    let runtime = Finding::new(
+        "nuclei",
+        Severity::Critical,
+        "Runtime SQL behavior",
+        "typed runtime proof",
+        "https://example.test/users?id=7",
+    )
+    .with_location(ObservationLocation::Runtime {
+        uri: "https://example.test/users?id=7".to_string(),
+        route: Some("/users".to_string()),
+        parameter: None,
+    })
+    .with_cwe(89)
+    .with_provenance(
+        ScannerProvenance::new("nuclei", observed_at).with_target_revision("revision-1"),
+    )
+    .with_http_evidence(HttpEvidence::new("GET", "https://example.test/users?id=7", 500));
+    let mut paths = correlate_attack_paths(&[source, runtime]).paths;
+    assert_eq!(paths.len(), 1);
+    paths.remove(0)
+}
+
+#[tokio::test]
+async fn attack_paths_round_trip_and_append_transition_history() {
+    let Some(pool) = get_pool_or_skip().await else {
+        return;
+    };
+    let project = storage::projects::create_project(&pool, &unique_name("test-attack-path"), "")
+        .await
+        .expect("create attack-path project");
+    let observed_at = chrono::Utc::now();
+    let mut path = reproduced_storage_path(observed_at);
+    let stale = path.clone();
+    assert_eq!(
+        storage::attack_paths::save_attack_paths(&pool, project.id, &[path.clone()])
+            .await
+            .expect("insert attack path"),
+        1
+    );
+
+    sqlx::query("UPDATE attack_paths SET path_schema = 'wrong-schema' WHERE project_id = $1")
+        .bind(project.id)
+        .execute(&pool)
+        .await
+        .expect("tamper stored path schema");
+    assert!(
+        storage::attack_paths::save_attack_paths(&pool, project.id, &[path.clone()]).await.is_err(),
+        "a stored path schema mismatch must fail closed"
+    );
+    sqlx::query("UPDATE attack_paths SET path_schema = $1 WHERE project_id = $2")
+        .bind(&path.schema)
+        .bind(project.id)
+        .execute(&pool)
+        .await
+        .expect("restore stored path schema");
+
+    sqlx::query("UPDATE attack_paths SET identity_schema = 'wrong-schema' WHERE project_id = $1")
+        .bind(project.id)
+        .execute(&pool)
+        .await
+        .expect("tamper stored identity schema");
+    assert!(
+        storage::attack_paths::save_attack_paths(&pool, project.id, &[path.clone()]).await.is_err(),
+        "a stored identity schema mismatch must fail closed"
+    );
+    sqlx::query("UPDATE attack_paths SET identity_schema = $1 WHERE project_id = $2")
+        .bind(&path.identity.schema)
+        .bind(project.id)
+        .execute(&pool)
+        .await
+        .expect("restore stored identity schema");
+
+    let attempt = VerificationAttempt::new(
+        path.identity.value.clone(),
+        path.focused_verification.identity.clone(),
+        VerificationCoverage::CompleteComparable,
+        VerificationOutcome::NotReproduced,
+        VerificationConditions {
+            deployment_identity: Some("revision-1".to_string()),
+            config_identities: Vec::new(),
+        },
+        vec!["negative-proof-1".to_string()],
+        observed_at + chrono::Duration::seconds(1),
+    );
+    assert!(path.apply_verification(attempt).expect("apply complete negative"));
+    assert_eq!(
+        storage::attack_paths::save_attack_paths(&pool, project.id, &[path.clone()])
+            .await
+            .expect("append verification transition"),
+        0
+    );
+
+    let restored = storage::attack_paths::list_attack_paths(&pool, project.id)
+        .await
+        .expect("list attack paths");
+    assert_eq!(restored, vec![path]);
+    assert!(
+        storage::attack_paths::save_attack_paths(&pool, project.id, &[stale]).await.is_err(),
+        "a stale snapshot must not erase stored transition history"
+    );
+
+    storage::projects::delete_project(&pool, project.id).await.expect("delete attack-path project");
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM attack_paths WHERE project_id = $1")
+            .bind(project.id)
+            .fetch_one(&pool)
+            .await
+            .expect("verify attack-path cascade");
+    assert_eq!(remaining, 0);
 }
 
 /// Verify that saving the same finding twice increments `seen_count` via dedup.

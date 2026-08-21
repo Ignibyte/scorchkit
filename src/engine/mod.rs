@@ -1,4 +1,5 @@
 pub mod api_spec;
+pub mod attack_path;
 pub mod audit_log;
 #[cfg(feature = "cloud")]
 pub mod cloud_context;

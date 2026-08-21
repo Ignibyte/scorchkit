@@ -169,6 +169,48 @@ pub struct StoredAgentAnalysis {
     pub stored_at: DateTime<Utc>,
 }
 
+/// Project-scoped canonical attack-path snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct StoredAttackPath {
+    /// Storage row identifier.
+    pub id: Uuid,
+    /// Owning project.
+    pub project_id: Uuid,
+    /// Stable attack-path identity.
+    pub path_identity: String,
+    /// Versioned path record schema.
+    pub path_schema: String,
+    /// Versioned path identity schema.
+    pub identity_schema: String,
+    /// Current evidence-supported state.
+    pub current_state: String,
+    /// Lossless canonical path snapshot.
+    pub raw_path: serde_json::Value,
+    /// First storage time.
+    pub created_at: DateTime<Utc>,
+    /// Most recent snapshot update.
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Append-preserved attack-path transition.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct StoredAttackPathTransition {
+    /// Storage row identifier.
+    pub id: Uuid,
+    /// Parent attack-path row.
+    pub attack_path_id: Uuid,
+    /// Deterministic transition identity.
+    pub transition_identity: String,
+    /// Versioned transition schema.
+    pub transition_schema: String,
+    /// Lossless transition record.
+    pub raw_transition: serde_json::Value,
+    /// Scanner or verification observation time.
+    pub observed_at: DateTime<Utc>,
+    /// Storage insertion time.
+    pub stored_at: DateTime<Utc>,
+}
+
 /// Vulnerability lifecycle status.
 ///
 /// Tracks the progression of a finding from initial detection

@@ -23,12 +23,15 @@ pub use crate::{
     ApplicationDastPersonaAssessment, ApplicationDastPhase, ApplicationDastPhaseOutcome,
     ApplicationDastPhaseStatus, ApplicationDastProfile, ApplicationDastRequest,
     ApplicationDastRouteCoverage, ApplicationDastSchemaIdentity, ApplicationDastSchemaKind,
-    ApplicationDastSchemaRequest, DependencyEvidenceKind, PackageIdentity, ProviderDownload,
-    ProviderRefreshRequest, ProviderSnapshot, ProviderSnapshotState, SbomArtifact,
-    SupplyChainAssessment, SupplyChainCorrelation, SupplyChainCoverageGap,
-    SupplyChainCoverageStatus, SupplyChainGapKind, SupplyChainObservation, SupplyChainPhase,
-    SupplyChainProfile, SupplyChainProvider, SupplyChainTarget, SupplyChainTargetKind,
-    APPLICATION_DAST_ASSESSMENT_SCHEMA_V1, SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
+    ApplicationDastSchemaRequest, AttackPath, AttackPathCorrelation, AttackPathState,
+    CorrelationFacet, CorrelationFacetKind, DependencyEvidenceKind, FocusedVerificationSelection,
+    PackageIdentity, ProviderDownload, ProviderRefreshRequest, ProviderSnapshot,
+    ProviderSnapshotState, SbomArtifact, SupplyChainAssessment, SupplyChainCorrelation,
+    SupplyChainCoverageGap, SupplyChainCoverageStatus, SupplyChainGapKind, SupplyChainObservation,
+    SupplyChainPhase, SupplyChainProfile, SupplyChainProvider, SupplyChainTarget,
+    SupplyChainTargetKind, VerificationAttempt, VerificationConditions, VerificationCoverage,
+    VerificationOutcome, APPLICATION_DAST_ASSESSMENT_SCHEMA_V1, ATTACK_PATH_SCHEMA_V1,
+    SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
 };
 
 // Module traits

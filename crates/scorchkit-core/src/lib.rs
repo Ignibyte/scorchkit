@@ -3,6 +3,7 @@
 pub mod adapter;
 pub mod adapter_execution;
 pub mod application_dast;
+pub mod attack_path;
 pub mod compliance;
 pub mod compliance_framework;
 pub mod correlation;
@@ -23,9 +24,9 @@ pub mod target;
 /// Compatibility namespace used by extracted source modules and doctests.
 pub mod engine {
     pub use crate::{
-        adapter, adapter_execution, application_dast, compliance, compliance_framework,
-        correlation, cve, error, events, evidence, finding, observation, risk_score, scan_result,
-        service_fingerprint, severity, shared_data, supply_chain, target,
+        adapter, adapter_execution, application_dast, attack_path, compliance,
+        compliance_framework, correlation, cve, error, events, evidence, finding, observation,
+        risk_score, scan_result, service_fingerprint, severity, shared_data, supply_chain, target,
     };
     pub use scorchkit_policy::{policy, scope};
 }
@@ -50,6 +51,20 @@ pub use application_dast::{
     ApplicationDastPhase, ApplicationDastPhaseOutcome, ApplicationDastPhaseStatus,
     ApplicationDastProfile, ApplicationDastRouteCoverage, ApplicationDastSchemaIdentity,
     ApplicationDastSchemaKind, APPLICATION_DAST_ASSESSMENT_SCHEMA_V1,
+};
+pub use attack_path::{
+    correlate_attack_paths, AttackPath, AttackPathCorrelation, AttackPathCorrelationGap,
+    AttackPathCorrelationGapKind, AttackPathCorrelationStatus, AttackPathGap, AttackPathGapKind,
+    AttackPathIdentity, AttackPathMember, AttackPathMemberRole, AttackPathState,
+    AttackPathTransition, AttackPathTransitionReason, AttackPathValidationError, CorrelationFacet,
+    CorrelationFacetKind, FocusedVerificationSelection, RequestVerificationSelector,
+    ScannerVerificationSelector, VerificationAttempt, VerificationAttemptError,
+    VerificationConditions, VerificationCoverage, VerificationOutcome,
+    ATTACK_PATH_CORRELATION_SCHEMA_V1, ATTACK_PATH_IDENTITY_SCHEMA_V1, ATTACK_PATH_SCHEMA_V1,
+    ATTACK_PATH_TRANSITION_SCHEMA_V1, FOCUSED_VERIFICATION_SCHEMA_V1, MAX_CORRELATED_PATHS,
+    MAX_CORRELATION_DETAILS_PER_FINDING, MAX_CORRELATION_FACET_BYTES, MAX_CORRELATION_FINDINGS,
+    MAX_CORRELATION_PAIR_EVALUATIONS, MAX_CORRELATION_PROJECT_EVIDENCE,
+    VERIFICATION_ATTEMPT_SCHEMA_V1,
 };
 pub use error::{Result, ScorchError};
 pub use evidence::HttpEvidence;

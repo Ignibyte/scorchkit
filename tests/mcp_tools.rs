@@ -13,7 +13,12 @@ use rmcp::handler::server::ServerHandler;
 use rmcp::model::{CallToolRequestParams, Implementation, ResourceContents};
 use rmcp::ServiceExt;
 use scorchkit::config::AppConfig;
+use scorchkit::engine::evidence::HttpEvidence;
 use scorchkit::engine::finding::Finding;
+use scorchkit::engine::observation::{
+    CodeFlow, CodeFlowStep, CorrelationKey, ObservationLocation, ScannerProvenance, SourceRegion,
+    ThreadFlow,
+};
 use scorchkit::engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy};
 use scorchkit::engine::scope::ScopeRule;
 use scorchkit::engine::severity::Severity;
@@ -1402,9 +1407,16 @@ async fn scan_progress_and_correlation_return_structured_project_results(
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
     )?;
     assert_eq!(correlation["project"], name);
+    assert_eq!(correlation["total_findings_available"], 1);
     assert_eq!(correlation["total_findings_analyzed"], 1);
-    assert!(correlation["attack_chains_found"].as_u64().is_some_and(|count| count >= 1));
-    assert!(correlation["chains"].as_array().is_some_and(|chains| !chains.is_empty()));
+    assert_eq!(correlation["schema"], "scorchkit.attack-path-correlation/v1");
+    assert_eq!(correlation["status"], "complete");
+    assert_eq!(correlation["attack_paths_found"], 0);
+    assert_eq!(correlation["gaps"], serde_json::json!([]));
+    assert_eq!(correlation["legacy_unverified_attack_chains"]["status"], "unverified_heuristic");
+    assert!(correlation["legacy_unverified_attack_chains"]["chains"]
+        .as_array()
+        .is_some_and(|chains| !chains.is_empty()));
 
     storage::projects::delete_project(&pool, project.id).await?;
     Ok(())
@@ -1416,6 +1428,321 @@ fn test_tool_correlate_findings() {
     let json = r#"{"project": "my-project"}"#;
     let params: CorrelateFindingsParams = serde_json::from_str(json).expect("deserialize");
     assert_eq!(params.project, "my-project");
+}
+
+fn mcp_correlation_findings(revision: &str, include_http: bool) -> Vec<Finding> {
+    let observed_at = chrono::Utc::now();
+    let source =
+        Finding::new("semgrep", Severity::High, "source rule", "source proof", "src/users.rs:8")
+            .with_location(ObservationLocation::Source {
+                path: "src/users.rs".to_string(),
+                region: Some(SourceRegion::new(8)),
+            })
+            .with_cwe(89)
+            .with_correlation_key(CorrelationKey::new("route", "/users"))
+            .with_provenance(
+                ScannerProvenance::new("semgrep", observed_at).with_target_revision(revision),
+            )
+            .with_code_flows(vec![CodeFlow {
+                message: None,
+                thread_flows: vec![ThreadFlow {
+                    message: None,
+                    steps: vec![
+                        CodeFlowStep::new(ObservationLocation::Source {
+                            path: "src/users.rs".to_string(),
+                            region: Some(SourceRegion::new(4)),
+                        }),
+                        CodeFlowStep::new(ObservationLocation::Source {
+                            path: "src/users.rs".to_string(),
+                            region: Some(SourceRegion::new(8)),
+                        }),
+                    ],
+                }],
+            }]);
+    let mut runtime = Finding::new(
+        "nuclei",
+        Severity::High,
+        "runtime probe",
+        "runtime proof",
+        "https://example.test/users",
+    )
+    .with_location(ObservationLocation::Runtime {
+        uri: "https://example.test/users".to_string(),
+        route: Some("/users".to_string()),
+        parameter: None,
+    })
+    .with_cwe(89)
+    .with_correlation_key(CorrelationKey::new("route", "/users"))
+    .with_provenance(ScannerProvenance::new("nuclei", observed_at).with_target_revision(revision));
+    if include_http {
+        runtime = runtime.with_http_evidence(
+            HttpEvidence::new("GET", "https://example.test/users", 500).with_route("/users"),
+        );
+    }
+    vec![source, runtime]
+}
+
+#[tokio::test]
+async fn correlate_findings_preserves_typed_paths_and_reports_malformed_durable_records(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pool) = get_pool_or_skip().await else {
+        return Ok(());
+    };
+    let server = test_server(pool.clone());
+    let name = unique_name("mcp-typed-correlation");
+    let project = storage::projects::create_project(&pool, &name, "").await?;
+    let now = chrono::Utc::now();
+    let scan = storage::scans::save_scan(
+        &pool,
+        project.id,
+        "https://example.test/users",
+        "standard",
+        now,
+        Some(now),
+        &["semgrep".to_string(), "nuclei".to_string()],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await?;
+    let initial_findings = mcp_correlation_findings("revision-1", true);
+    storage::findings::save_findings(&pool, project.id, scan.id, &initial_findings).await?;
+
+    let response: serde_json::Value = serde_json::from_str(
+        &server
+            .do_correlate_findings(CorrelateFindingsParams { project: project.id.to_string() })
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+    let expected = scorchkit::engine::attack_path::correlate_attack_paths(&initial_findings);
+    assert_eq!(response["status"], "complete");
+    assert_eq!(response["attack_paths_found"], 1);
+    assert_eq!(response["attack_paths"][0], serde_json::to_value(&expected.paths[0])?);
+    assert_eq!(response["legacy_unverified_attack_chains"]["status"], "unverified_heuristic");
+
+    let scan_two = storage::scans::save_scan(
+        &pool,
+        project.id,
+        "https://example.test/users",
+        "standard",
+        now,
+        Some(now),
+        &["semgrep".to_string(), "nuclei".to_string()],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await?;
+    let current_findings = mcp_correlation_findings("revision-2", false);
+    assert_eq!(
+        storage::findings::save_findings(&pool, project.id, scan_two.id, &current_findings).await?,
+        0
+    );
+    let current: serde_json::Value = serde_json::from_str(
+        &server
+            .do_correlate_findings(CorrelateFindingsParams { project: project.id.to_string() })
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+    assert_eq!(current["attack_paths"][0]["state"], "reachable");
+    assert!(current["attack_paths"][0]["gaps"].as_array().is_some_and(|gaps| gaps
+        .iter()
+        .any(|gap| gap["kind"] == "runtime_proof_revision_unbound")));
+
+    sqlx::query(
+        "UPDATE tracked_findings SET raw_finding = '{\"malformed\":true}'::jsonb \
+         WHERE project_id = $1 AND module_id = 'semgrep'",
+    )
+    .bind(project.id)
+    .execute(&pool)
+    .await?;
+    let malformed: serde_json::Value = serde_json::from_str(
+        &server
+            .do_correlate_findings(CorrelateFindingsParams { project: project.id.to_string() })
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+    assert_eq!(malformed["status"], "incomplete");
+    assert_eq!(malformed["total_findings_available"], 2);
+    assert_eq!(malformed["total_findings_analyzed"], 1);
+    assert_eq!(malformed["attack_paths_found"], 0);
+    assert!(malformed["gaps"].as_array().is_some_and(|gaps| gaps.iter().any(|gap| {
+        gap["kind"] == "malformed_finding_record"
+            && gap["finding_identity"].as_str().is_some_and(|identity| !identity.is_empty())
+    })));
+
+    storage::projects::delete_project(&pool, project.id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn correlate_findings_enforces_exact_finding_read_ceiling(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pool) = get_pool_or_skip().await else {
+        return Ok(());
+    };
+    let server = test_server(pool.clone());
+    let now = chrono::Utc::now();
+
+    let finding_project =
+        storage::projects::create_project(&pool, &unique_name("mcp-finding-ceiling"), "").await?;
+    let finding_scan = storage::scans::save_scan(
+        &pool,
+        finding_project.id,
+        "https://example.test",
+        "standard",
+        now,
+        Some(now),
+        &[],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await?;
+    storage::findings::save_findings(
+        &pool,
+        finding_project.id,
+        finding_scan.id,
+        &[Finding::new("fixture", Severity::Low, "fixture", "fixture", "src/lib.rs:1")],
+    )
+    .await?;
+    let seed = storage::findings::list_findings(&pool, finding_project.id).await?.remove(0);
+    sqlx::query(
+        "INSERT INTO tracked_findings \
+         (scan_id, project_id, fingerprint, identity_schema, stable_identity, correlation_keys, \
+          module_id, severity, title, description, affected_target, evidence, remediation, \
+          owasp_category, cwe_id, raw_finding, confidence, status_note) \
+         SELECT scan_id, project_id, fingerprint || series::text, identity_schema, \
+          stable_identity || '-' || series::text, correlation_keys, module_id, severity, title, \
+          description, affected_target, evidence, remediation, owasp_category, cwe_id, \
+          raw_finding, confidence, status_note \
+         FROM tracked_findings CROSS JOIN generate_series(1, $2) AS series WHERE id = $1",
+    )
+    .bind(seed.id)
+    .bind(i32::try_from(scorchkit::engine::attack_path::MAX_CORRELATION_FINDINGS - 1)?)
+    .execute(&pool)
+    .await?;
+    let exact: serde_json::Value = serde_json::from_str(
+        &server
+            .do_correlate_findings(CorrelateFindingsParams {
+                project: finding_project.id.to_string(),
+            })
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+    assert_eq!(
+        exact["total_findings_available"],
+        scorchkit::engine::attack_path::MAX_CORRELATION_FINDINGS
+    );
+    assert_eq!(exact["legacy_unverified_attack_chains"]["status"], "unverified_heuristic");
+
+    sqlx::query(
+        "INSERT INTO tracked_findings \
+         (scan_id, project_id, fingerprint, identity_schema, stable_identity, correlation_keys, \
+          module_id, severity, title, description, affected_target, evidence, remediation, \
+          owasp_category, cwe_id, raw_finding, confidence, status_note) \
+         SELECT scan_id, project_id, fingerprint || '-overflow', identity_schema, \
+          stable_identity || '-overflow', correlation_keys, module_id, severity, title, \
+          description, affected_target, evidence, remediation, owasp_category, cwe_id, \
+          raw_finding, confidence, status_note FROM tracked_findings WHERE id = $1",
+    )
+    .bind(seed.id)
+    .execute(&pool)
+    .await?;
+    let overflow: serde_json::Value = serde_json::from_str(
+        &server
+            .do_correlate_findings(CorrelateFindingsParams {
+                project: finding_project.id.to_string(),
+            })
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+    assert_eq!(overflow["total_findings_analyzed"], 0);
+    assert_eq!(
+        overflow["legacy_unverified_attack_chains"]["status"],
+        "not_evaluated_resource_limit"
+    );
+    storage::projects::delete_project(&pool, finding_project.id).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn correlate_findings_enforces_exact_evidence_read_ceiling(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(pool) = get_pool_or_skip().await else {
+        return Ok(());
+    };
+    let server = test_server(pool.clone());
+    let now = chrono::Utc::now();
+    let evidence_project =
+        storage::projects::create_project(&pool, &unique_name("mcp-evidence-ceiling"), "").await?;
+    let evidence_scan = storage::scans::save_scan(
+        &pool,
+        evidence_project.id,
+        "https://example.test",
+        "standard",
+        now,
+        Some(now),
+        &[],
+        &[],
+        &serde_json::json!({}),
+    )
+    .await?;
+    storage::findings::save_findings(
+        &pool,
+        evidence_project.id,
+        evidence_scan.id,
+        &[Finding::new("fixture", Severity::Low, "fixture", "fixture", "src/lib.rs:1")
+            .with_evidence("fixture evidence")],
+    )
+    .await?;
+    let tracked = storage::findings::list_findings(&pool, evidence_project.id).await?.remove(0);
+    let evidence = storage::findings::list_evidence(&pool, tracked.id).await?.remove(0);
+    sqlx::query(
+        "INSERT INTO finding_evidence \
+         (tracked_finding_id, scan_id, evidence_identity, evidence_schema, raw_evidence, collected_at) \
+         SELECT tracked_finding_id, scan_id, evidence_identity || '-' || series::text, \
+          evidence_schema, raw_evidence, collected_at \
+         FROM finding_evidence CROSS JOIN generate_series(1, $2) AS series WHERE id = $1",
+    )
+    .bind(evidence.id)
+    .bind(i32::try_from(
+        scorchkit::engine::attack_path::MAX_CORRELATION_PROJECT_EVIDENCE - 1,
+    )?)
+    .execute(&pool)
+    .await?;
+    let exact: serde_json::Value = serde_json::from_str(
+        &server
+            .do_correlate_findings(CorrelateFindingsParams {
+                project: evidence_project.id.to_string(),
+            })
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+    assert!(exact["gaps"].as_array().is_some_and(|gaps| gaps
+        .iter()
+        .all(|gap| { gap["kind"] != "project_evidence_limit_exceeded" })));
+
+    sqlx::query(
+        "INSERT INTO finding_evidence \
+         (tracked_finding_id, scan_id, evidence_identity, evidence_schema, raw_evidence, collected_at) \
+         SELECT tracked_finding_id, scan_id, evidence_identity || '-overflow', \
+          evidence_schema, raw_evidence, collected_at FROM finding_evidence WHERE id = $1",
+    )
+    .bind(evidence.id)
+    .execute(&pool)
+    .await?;
+    let overflow: serde_json::Value = serde_json::from_str(
+        &server
+            .do_correlate_findings(CorrelateFindingsParams {
+                project: evidence_project.id.to_string(),
+            })
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?,
+    )?;
+    assert!(overflow["gaps"].as_array().is_some_and(|gaps| gaps
+        .iter()
+        .any(|gap| { gap["kind"] == "project_evidence_limit_exceeded" })));
+    storage::projects::delete_project(&pool, evidence_project.id).await?;
+    Ok(())
 }
 
 /// Verify MCP prompt list returns 5 templates.

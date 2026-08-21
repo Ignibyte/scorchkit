@@ -147,6 +147,12 @@ separately labeled agent analysis. Legacy report JSON without that companion is 
 The optional `supply_chain` object preserves the exact target identity, SBOM digest and producer,
 provider snapshots, source and artifact observations, correlations, and typed coverage gaps.
 
+Canonical application attack paths have their own JSON, terminal, and Mermaid projections in
+`report::attack_path`. JSON preserves the complete schema, identity, state, facets, member and
+evidence references, proof gaps, focused selection, and transition conditions. Terminal output
+neutralizes control characters and includes the canonical record. Mermaid uses generated node IDs
+and escaped labels so scanner-controlled text cannot become diagram syntax.
+
 ## SARIF report (`sarif.rs`)
 
 SARIF uses typed source/runtime/package/artifact locations and writes the stable finding identity to

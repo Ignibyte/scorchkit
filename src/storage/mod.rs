@@ -17,6 +17,7 @@
 //! # }
 //! ```
 
+pub mod attack_paths;
 pub mod context;
 pub mod findings;
 pub mod intelligence;

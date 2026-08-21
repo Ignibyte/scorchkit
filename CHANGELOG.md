@@ -5,6 +5,15 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Versioned source-to-runtime attack paths (TICKET-015 / SK-040)** — Added provider-neutral,
+  bounded correlation over typed finding-v2 routes, parameters, components, weaknesses, source
+  flows, redacted HTTP proof, and deployment provenance. Canonical paths have deterministic
+  identities, suspected/reachable/reproduced/mitigated/regressed states, proof gaps, inert focused
+  verification selectors, and append-only comparable verification transitions. PostgreSQL
+  identity-locks current paths and preserves transition history; MCP and JSON/text/Mermaid reports
+  expose the same contract. Historical runtime proof is bound to its own deployment revision, while
+  the former title/module attack-chain rules remain explicitly labeled unverified compatibility
+  output.
 - **Trusted signed Nuclei application probes (TICKET-014 / SK-039)** — Replaced ambient community
   template execution with an explicit local manifest that pins one public certificate and every
   approved HTTP template byte sequence. ScorchKit now classifies template effects before policy

@@ -270,10 +270,10 @@ fn build_executive_prompt(project: &str) -> GetPromptResult {
     .with_description(format!("Executive summary for project {project}"))
 }
 
-/// Correlate findings into attack chains using rule-based pattern matching.
+/// Correlate findings into legacy, unverified attack chains using title/module heuristics.
 ///
-/// Examines findings for known vulnerability combinations that create
-/// compound attack paths. Returns a JSON array of attack chains.
+/// This compatibility helper never creates or promotes a canonical attack path. New callers use
+/// the typed finding-v2 correlator in `scorchkit-core`.
 #[must_use]
 pub fn correlate_attack_chains(findings: &[CorrelationFinding]) -> Vec<AttackChain> {
     let rules = correlation_rules();
@@ -652,7 +652,7 @@ pub struct CorrelationFinding {
     pub severity: String,
 }
 
-/// An attack chain linking related findings into a narrative.
+/// A compatibility-only, unverified heuristic chain.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AttackChain {
     /// Descriptive name for the attack chain.

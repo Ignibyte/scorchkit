@@ -91,6 +91,12 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-adapter-terminal-state-authority-001` | Derive module and scan terminal state from typed adapter assessments and assert status plus lifecycle events in every runner mode. | `AAR-014-trusted-nuclei` |
 | `PR-scorchkit-preprocess-budget-composition-001` | Reserve fixed workspace cost and accumulate all trusted input bytes and entries before creating artifacts or a subprocess. | `AAR-014-trusted-nuclei` |
 | `PR-scorchkit-compound-guard-boundaries-001` | Assert each independent predicate and exact boundary; use typed flag unions when bitwise alternatives are behaviorally equivalent. | `AAR-014-trusted-nuclei` |
+| `PR-scorchkit-proof-evidence-own-provenance-001` | Evaluate proof conditions from each evidence record's own provenance and combine records only after explicit comparability checks. | `AAR-015-source-runtime-correlation` |
+| `PR-scorchkit-transition-audit-reconstruction-001` | Persist every state-changing outcome, coverage decision, condition, evidence reference, and time, and rebuild transition identity on read. | `AAR-015-source-runtime-correlation` |
+| `PR-scorchkit-correlation-work-budget-001` | Bound input count, nested detail size, pair evaluations, and output count independently in many-to-many correlation. | `AAR-015-source-runtime-correlation` |
+| `PR-scorchkit-durable-canonical-parity-001` | Compare canonical raw JSON with every duplicated identity, schema, time, and projection column at durable API boundaries. | `AAR-015-source-runtime-correlation` |
+| `PR-scorchkit-correlation-facet-strength-001` | Classify correlation facets by evidentiary strength; generic method or weakness matches cannot prove reachability alone. | `AAR-015-source-runtime-correlation` |
+| `PR-scorchkit-projection-validate-canonical-001` | Validate nested records, ordering, identities, state, and coverage before every public projection. | `AAR-015-source-runtime-correlation` |
 
 ## Register
 
@@ -166,3 +172,9 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-preprocess-aggregate-budget-gap-001` | resource-budget bug | `AAR-014-trusted-nuclei` |
 | `BF-scorchkit-address-authorization-artifact-order-001` | authorization-order bug | `AAR-014-trusted-nuclei` |
 | `BF-scorchkit-compound-guard-mutation-gap-001` | test-gap bug | `AAR-014-trusted-nuclei` |
+| `BF-scorchkit-evidence-provenance-splice-001` | evidence-integrity bug | `AAR-015-source-runtime-correlation` |
+| `BF-scorchkit-transition-audit-erasure-001` | audit-integrity bug | `AAR-015-source-runtime-correlation` |
+| `BF-scorchkit-correlation-cross-product-budget-001` | resource-budget bug | `AAR-015-source-runtime-correlation` |
+| `BF-scorchkit-durable-raw-column-divergence-001` | persistence-integrity bug | `AAR-015-source-runtime-correlation` |
+| `BF-scorchkit-method-only-correlation-001` | correlation-integrity bug | `AAR-015-source-runtime-correlation` |
+| `BF-scorchkit-report-before-validation-001` | projection-integrity bug | `AAR-015-source-runtime-correlation` |

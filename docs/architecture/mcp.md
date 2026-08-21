@@ -66,6 +66,12 @@ The current server exposes 34 tools.
 Credential and exploit modules are available only through `pentest` with explicit engagement grants.
 AI planning or analysis uses the configured provider and never replaces scanner evidence.
 
+`correlate_findings` reconstructs canonical findings plus append-preserved scanner evidence in one
+project-scoped read and returns `scorchkit.attack-path-correlation/v1`. Malformed durable records
+and resource ceilings are typed incomplete gaps. Historical HTTP proof remains bound to the
+revision recorded by that evidence. The response exposes canonical paths separately from
+`legacy_unverified_attack_chains`; compatibility title/module matches never promote path state.
+
 `application_dast` accepts the provider-neutral authenticated application-DAST request: target,
 phase profile, persona IDs, and digest-pinned local OpenAPI or GraphQL schemas. The handler delegates
 to `Engine::application_dast`, so MCP annotations and host intent cannot bypass scope, effects,
@@ -241,6 +247,6 @@ src/mcp/
   tools.rs         34 tool wrappers and do_* business methods
   types.rs         compatibility re-exports
   resources.rs     URI parser, listings, templates, and reads
-  prompts.rs       five workflow prompts and correlation rules
+  prompts.rs       five workflow prompts and compatibility-only unverified correlation rules
   instructions.rs  compatibility re-exports
 ```

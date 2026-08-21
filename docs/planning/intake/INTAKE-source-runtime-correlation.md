@@ -1,9 +1,9 @@
 ---
 title: INTAKE-source-runtime-correlation
-status: candidate
+status: promoted
 created: 2026-08-17
-ticket:
-pipeline_spec:
+ticket: docs/planning/tickets/open/TICKET-015-source-runtime-correlation.md
+pipeline_spec: docs/planning/pipeline/active/source-runtime-correlation.spec.md
 ---
 
 # Source-to-runtime attack-path correlation and focused verification

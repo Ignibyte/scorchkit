@@ -1,4 +1,5 @@
 pub mod attack_chain;
+pub mod attack_path;
 pub mod dashboard;
 pub mod diff;
 pub mod html;
