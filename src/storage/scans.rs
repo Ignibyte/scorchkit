@@ -93,6 +93,7 @@ pub fn execution_evidence(result: &crate::engine::scan_result::ScanResult) -> se
         "execution_status": result.execution_status,
         "module_outcomes": result.module_outcomes,
         "supply_chain": result.supply_chain,
+        "application_dast": result.application_dast,
     })
 }
 
@@ -133,8 +134,10 @@ mod tests {
     use crate::engine::scan_result::ScanResult;
     use crate::engine::target::Target;
     use crate::{
-        SupplyChainAssessment, SupplyChainCoverageGap, SupplyChainGapKind, SupplyChainPhase,
-        SupplyChainTarget, SupplyChainTargetKind,
+        ApplicationDastAssessment, ApplicationDastCoverageGap, ApplicationDastGapKind,
+        ApplicationDastPhase, ApplicationDastProfile, SupplyChainAssessment,
+        SupplyChainCoverageGap, SupplyChainGapKind, SupplyChainPhase, SupplyChainTarget,
+        SupplyChainTargetKind,
     };
 
     #[test]
@@ -166,5 +169,32 @@ mod tests {
         assert_eq!(evidence["execution_status"], "incomplete");
         assert_eq!(evidence["supply_chain"]["coverage_status"], "incomplete");
         assert_eq!(evidence["supply_chain"]["gaps"][0]["kind"], "missing_provider_snapshot");
+    }
+
+    #[test]
+    fn execution_evidence_preserves_redacted_application_dast_state() {
+        let mut assessment =
+            ApplicationDastAssessment::new("https://example.com", ApplicationDastProfile::Passive);
+        assessment.zap_version = "2.17.0".to_string();
+        assessment.record_gap(ApplicationDastCoverageGap::new(
+            "user",
+            ApplicationDastPhase::Authentication,
+            ApplicationDastGapKind::AuthenticationLost,
+            "token=storage-dast-secret",
+        ));
+        let result = ScanResult::new(
+            "storage-dast-evidence".to_string(),
+            Target::parse("https://example.com").expect("target"),
+            Utc::now(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .with_application_dast(assessment);
+
+        let evidence = execution_evidence(&result);
+        assert_eq!(evidence["execution_status"], "degraded");
+        assert_eq!(evidence["application_dast"]["gaps"][0]["kind"], "authentication_lost");
+        assert!(!evidence.to_string().contains("storage-dast-secret"));
     }
 }

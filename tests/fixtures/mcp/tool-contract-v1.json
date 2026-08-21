@@ -1,5 +1,6 @@
 [
   {"name":"analyze_findings","toolClass":"external_effect","destructive":false,"idempotent":false,"openWorld":true},
+  {"name":"application_dast","toolClass":"external_effect","destructive":true,"idempotent":false,"openWorld":true},
   {"name":"auto_scan","toolClass":"external_effect","destructive":true,"idempotent":false,"openWorld":true},
   {"name":"check_tools","toolClass":"read","destructive":false,"idempotent":true,"openWorld":false},
   {"name":"correlate_findings","toolClass":"read","destructive":false,"idempotent":true,"openWorld":false},

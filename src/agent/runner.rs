@@ -436,6 +436,7 @@ mod tests {
             module_outcomes: vec![],
             execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
             supply_chain: None,
+            application_dast: None,
         }
     }
 

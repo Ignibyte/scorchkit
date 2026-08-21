@@ -7,7 +7,7 @@ use scorchkit_core::{AdapterOutputContract, TemporaryArtifactPolicy, ADAPTER_CON
 
 #[test]
 fn dast_and_sast_registry_counts_are_stable() {
-    assert_eq!(scorchkit::runner::orchestrator::all_modules().len(), 90);
+    assert_eq!(scorchkit::runner::orchestrator::all_modules().len(), 89);
     assert_eq!(scorchkit::runner::code_orchestrator::all_code_modules().len(), 22);
 }
 
@@ -34,7 +34,7 @@ fn every_registered_module_has_one_versioned_adapter_contract() {
 fn default_catalogs_exclude_compatibility_modules_without_removing_them() {
     let application_web = scorchkit::runner::orchestrator::application_modules();
     let compatibility_web = scorchkit::runner::orchestrator::compatibility_modules();
-    assert_eq!(application_web.len(), 68);
+    assert_eq!(application_web.len(), 67);
     assert_eq!(compatibility_web.len(), 22);
     assert!(application_web
         .iter()

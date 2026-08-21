@@ -80,7 +80,7 @@ fn test_modules_list() {
         .stdout(predicate::str::contains("api-schema"))
         .stdout(predicate::str::contains("ratelimit"))
         // External tool wrappers
-        .stdout(predicate::str::contains("zap"))
+        .stdout(predicate::str::contains("zap").not())
         .stdout(predicate::str::contains("ffuf"))
         .stdout(predicate::str::contains("wafw00f"))
         .stdout(predicate::str::contains("testssl"))

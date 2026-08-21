@@ -244,6 +244,12 @@ pub enum Commands {
         command: SupplyChainCommands,
     },
 
+    /// Run an authenticated, schema-driven OWASP ZAP application assessment.
+    Dast {
+        /// Bounded JSON file matching the `ApplicationDastRequest` contract.
+        request: PathBuf,
+    },
+
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for

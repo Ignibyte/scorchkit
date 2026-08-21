@@ -59,6 +59,7 @@ compile_error!(
 pub mod adapter_catalog;
 pub mod agent;
 pub mod ai;
+pub mod application_dast;
 pub mod cli;
 #[cfg(feature = "cloud")]
 pub mod cloud;
@@ -81,12 +82,13 @@ pub mod storage;
 pub mod supply_chain;
 pub mod tools;
 
-#[cfg(all(test, feature = "infra"))]
+#[cfg(test)]
 pub(crate) static TEST_ENVIRONMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 // Crate-root re-exports for the most common types.
 // Library consumers can use `scorchkit::Finding` instead of
 // `scorchkit::engine::finding::Finding`.
+pub use application_dast::{ApplicationDastRequest, ApplicationDastSchemaRequest};
 pub use engine::error::{Result, ScorchError};
 pub use engine::finding::Finding;
 pub use engine::policy::{Capability, EffectClass, Engagement, EngagementPolicy, PolicyTarget};
@@ -97,9 +99,14 @@ pub use engine::target::Target;
 pub use facade::Engine;
 pub use scorchkit_code::SupplyChainProfile;
 pub use scorchkit_core::{
-    AdvisoryIdentity, DependencyEvidenceKind, PackageIdentity, ProviderSnapshot,
-    ProviderSnapshotState, SbomArtifact, SupplyChainAssessment, SupplyChainCorrelation,
-    SupplyChainCoverageGap, SupplyChainCoverageStatus, SupplyChainGapKind, SupplyChainObservation,
-    SupplyChainPhase, SupplyChainTarget, SupplyChainTargetKind, SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
+    AdvisoryIdentity, ApplicationDastAssessment, ApplicationDastAuthenticationState,
+    ApplicationDastCoverageGap, ApplicationDastCoverageStatus, ApplicationDastGapKind,
+    ApplicationDastPersonaAssessment, ApplicationDastPhase, ApplicationDastPhaseOutcome,
+    ApplicationDastPhaseStatus, ApplicationDastProfile, ApplicationDastRouteCoverage,
+    ApplicationDastSchemaIdentity, ApplicationDastSchemaKind, DependencyEvidenceKind,
+    PackageIdentity, ProviderSnapshot, ProviderSnapshotState, SbomArtifact, SupplyChainAssessment,
+    SupplyChainCorrelation, SupplyChainCoverageGap, SupplyChainCoverageStatus, SupplyChainGapKind,
+    SupplyChainObservation, SupplyChainPhase, SupplyChainTarget, SupplyChainTargetKind,
+    APPLICATION_DAST_ASSESSMENT_SCHEMA_V1, SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
 };
 pub use supply_chain::{ProviderDownload, ProviderRefreshRequest, SupplyChainProvider};

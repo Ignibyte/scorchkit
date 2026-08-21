@@ -154,6 +154,9 @@ fn print_execution_status(result: &ScanResult) {
         .iter()
         .filter(|outcome| outcome.status == crate::engine::scan_result::ModuleOutcomeStatus::Failed)
         .count();
+    let dast_failures = result.application_dast.as_ref().map_or(0, |assessment| {
+        assessment.gaps.iter().filter(|gap| gap.kind.is_degraded()).count()
+    });
     match result.execution_status {
         ScanExecutionStatus::Complete => println!("  {} Complete", "Status:".bold()),
         ScanExecutionStatus::Incomplete => {
@@ -173,11 +176,11 @@ fn print_execution_status(result: &ScanResult) {
             );
         }
         ScanExecutionStatus::Degraded => println!(
-            "  {} {} ({} analyzer failure{})",
+            "  {} {} ({} execution failure{})",
             "Status:".bold(),
             "DEGRADED".yellow().bold(),
-            failures,
-            if failures == 1 { "" } else { "s" }
+            failures + dast_failures,
+            if failures + dast_failures == 1 { "" } else { "s" }
         ),
     }
     if let Some(assessment) = &result.supply_chain {
@@ -196,6 +199,36 @@ fn print_execution_status(result: &ScanResult) {
                 gap.component
                     .as_deref()
                     .map_or_else(String::new, |component| format!(" [{component}]")),
+                escape_terminal_text(&gap.detail)
+            );
+        }
+    }
+    if let Some(assessment) = &result.application_dast {
+        println!(
+            "  {} {} ({} persona{}, {} gap{})",
+            "Application DAST:".bold(),
+            assessment.coverage_status.as_str(),
+            assessment.personas.len(),
+            if assessment.personas.len() == 1 { "" } else { "s" },
+            assessment.gaps.len(),
+            if assessment.gaps.len() == 1 { "" } else { "s" }
+        );
+        for persona in &assessment.personas {
+            let observed = persona.routes.iter().filter(|route| route.observed).count();
+            println!(
+                "    - {}: {:?}, {}/{} routes observed",
+                escape_terminal_text(&persona.persona),
+                persona.authentication,
+                observed,
+                persona.routes.len()
+            );
+        }
+        for gap in &assessment.gaps {
+            println!(
+                "    - {}/{}/{}: {}",
+                escape_terminal_text(&gap.persona),
+                gap.phase.as_str(),
+                gap.kind.as_str(),
                 escape_terminal_text(&gap.detail)
             );
         }
@@ -308,7 +341,7 @@ mod tests {
                 .expect("run terminal capture helper");
         assert!(output.status.success(), "capture helper failed: {output:?}");
         let stdout = String::from_utf8(output.stdout).expect("UTF-8 test output");
-        assert!(stdout.contains("(1 analyzer failure)"), "unexpected output: {stdout:?}");
-        assert!(!stdout.contains("(1 analyzer failures)"), "unexpected output: {stdout:?}");
+        assert!(stdout.contains("(1 execution failure)"), "unexpected output: {stdout:?}");
+        assert!(!stdout.contains("(1 execution failures)"), "unexpected output: {stdout:?}");
     }
 }

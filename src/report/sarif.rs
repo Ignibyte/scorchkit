@@ -132,6 +132,7 @@ fn build_sarif(result: &ScanResult) -> serde_json::Value {
                     "scorchkit/executionStatus": execution_status,
                     "scorchkit/moduleOutcomes": result.module_outcomes,
                     "scorchkit/supplyChain": result.supply_chain,
+                    "scorchkit/applicationDast": result.application_dast,
                 },
             }]
         }]
@@ -264,8 +265,10 @@ mod tests {
     use crate::engine::severity::Severity;
     use crate::engine::target::Target;
     use crate::{
-        SupplyChainAssessment, SupplyChainCoverageGap, SupplyChainGapKind, SupplyChainPhase,
-        SupplyChainTarget, SupplyChainTargetKind,
+        ApplicationDastAssessment, ApplicationDastCoverageGap, ApplicationDastGapKind,
+        ApplicationDastPhase, ApplicationDastProfile, SupplyChainAssessment,
+        SupplyChainCoverageGap, SupplyChainGapKind, SupplyChainPhase, SupplyChainTarget,
+        SupplyChainTargetKind,
     };
 
     fn result_with(finding: Finding) -> ScanResult {
@@ -385,6 +388,39 @@ mod tests {
             invocation["properties"]["scorchkit/supplyChain"]["gaps"][0]["kind"],
             "missing_provider_snapshot"
         );
+    }
+
+    #[test]
+    fn sarif_projects_degraded_application_dast_coverage_without_secrets() {
+        let mut assessment =
+            ApplicationDastAssessment::new("https://example.com", ApplicationDastProfile::Passive);
+        assessment.zap_version = "2.17.0".to_string();
+        assessment.record_gap(ApplicationDastCoverageGap::new(
+            "user",
+            ApplicationDastPhase::Authentication,
+            ApplicationDastGapKind::AuthenticationFailed,
+            "password=sarif-dast-secret",
+        ));
+        let result = result_with(Finding::new(
+            "zap",
+            Severity::Info,
+            "DAST coverage",
+            "No alert",
+            "https://example.com",
+        ))
+        .with_application_dast(assessment);
+
+        let sarif = build_sarif(&result);
+        let invocation = &sarif["runs"][0]["invocations"][0];
+        assert_eq!(invocation["executionSuccessful"], false);
+        assert_eq!(invocation["properties"]["scorchkit/executionStatus"], "degraded");
+        assert_eq!(
+            invocation["properties"]["scorchkit/applicationDast"]["gaps"][0]["kind"],
+            "authentication_failed"
+        );
+        assert!(!serde_json::to_string(&sarif)
+            .expect("serialize SARIF")
+            .contains("sarif-dast-secret"));
     }
 
     #[test]

@@ -26,7 +26,7 @@ Run `scorchkit doctor` (or `scorchkit doctor --deep` for version checks) to see 
 |------|--------|-------------|---------|
 | Nuclei | `nuclei` | 3.0.0 | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
 | Nikto | `nikto` | 2.1.6 | `sudo apt install nikto` |
-| OWASP ZAP | `zap.sh` | 2.14.0 | see [zaproxy.org/download](https://www.zaproxy.org/download/) |
+| OWASP ZAP | `zap.sh` | exactly 2.17.0 | see [the ScorchKit runtime contract](tools/zap.md) |
 | WPScan | `wpscan` | 3.8.0 | `gem install wpscan` |
 | Droopescan | `droopescan` | — | `pip install droopescan` |
 | Wapiti | `wapiti` | — | `pipx install wapiti3` |

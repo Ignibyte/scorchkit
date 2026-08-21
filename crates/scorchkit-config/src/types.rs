@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::PathBuf;
 
@@ -18,6 +18,9 @@ pub struct AppConfig {
     pub engagement: Option<crate::engine::policy::Engagement>,
     pub scan: ScanConfig,
     pub auth: AuthConfig,
+    /// Authenticated, schema-driven application DAST configuration.
+    #[serde(default)]
+    pub dast: DastConfig,
     pub tools: ToolsConfig,
     /// Reproducible static-analysis configuration.
     #[serde(default)]
@@ -210,6 +213,104 @@ pub struct AuthConfig {
     pub custom_header_value: Option<String>,
 }
 
+/// Authentication verification used for every named application DAST persona.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DastVerificationConfig {
+    /// Same-origin URL used to prove the authenticated state.
+    pub url: String,
+    /// HTTP status expected from the authenticated verification request.
+    pub expected_status: u16,
+    /// Response regex that proves the user is logged in.
+    pub logged_in_regex: String,
+    /// Response regex that proves the user is logged out.
+    pub logged_out_regex: String,
+    /// Maximum tolerated logged-out observations before coverage fails.
+    pub max_logged_out: u64,
+}
+
+impl Default for DastVerificationConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            expected_status: 200,
+            logged_in_regex: String::new(),
+            logged_out_regex: String::new(),
+            max_logged_out: 0,
+        }
+    }
+}
+
+/// One named DAST authentication persona. Secret fields are environment references only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DastPersonaConfig {
+    /// Pre-issued header or bearer token supplied through a clean process environment.
+    Header { header_name: String, value_env: String, verification: DastVerificationConfig },
+    /// Browser-based login with ZAP auto-detection and explicit verification.
+    Browser {
+        login_url: String,
+        username_env: String,
+        password_env: String,
+        verification: DastVerificationConfig,
+    },
+}
+
+/// Bounded OWASP ZAP Automation Framework configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DastConfig {
+    /// Stable persona definitions selected by public requests.
+    pub personas: BTreeMap<String, DastPersonaConfig>,
+    /// Maximum named plus anonymous personas in one request.
+    pub persona_limit_count: usize,
+    /// Maximum accepted bytes for one local schema.
+    pub schema_limit_bytes: usize,
+    /// Maximum accepted schema count in one request.
+    pub schema_limit_count: usize,
+    /// Maximum captured ZAP stdout or stderr bytes.
+    pub output_limit_bytes: usize,
+    /// Maximum aggregate regular-file bytes in one persona workspace.
+    pub artifact_limit_bytes: u64,
+    /// Maximum filesystem entries in one persona workspace.
+    pub artifact_limit_files: u64,
+    /// Complete persona-process timeout in seconds.
+    pub timeout_seconds: u64,
+    /// Traditional spider duration in minutes.
+    pub spider_minutes: u64,
+    /// Client Spider duration in minutes.
+    pub client_spider_minutes: u64,
+    /// Active scan duration in minutes.
+    pub active_scan_minutes: u64,
+    /// Maximum Client Spider depth.
+    pub client_spider_depth: u64,
+    /// Maximum children per Client Spider node.
+    pub client_spider_children: u64,
+    /// Reviewed headless browser ID used by browser auth and Client Spider.
+    pub browser_id: String,
+}
+
+impl Default for DastConfig {
+    fn default() -> Self {
+        Self {
+            personas: BTreeMap::new(),
+            persona_limit_count: 16,
+            schema_limit_bytes: 8 * 1024 * 1024,
+            schema_limit_count: 16,
+            output_limit_bytes: 8 * 1024 * 1024,
+            artifact_limit_bytes: 512 * 1024 * 1024,
+            artifact_limit_files: 20_000,
+            timeout_seconds: 30 * 60,
+            spider_minutes: 5,
+            client_spider_minutes: 10,
+            active_scan_minutes: 20,
+            client_spider_depth: 10,
+            client_spider_children: 100,
+            browser_id: "chrome-headless".to_string(),
+        }
+    }
+}
+
 impl fmt::Debug for AuthConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -235,6 +336,8 @@ pub struct ToolsConfig {
     pub nikto: Option<String>,
     pub nuclei: Option<String>,
     pub zap: Option<String>,
+    pub chromedriver: Option<String>,
+    pub geckodriver: Option<String>,
     pub wpscan: Option<String>,
     pub droopescan: Option<String>,
     // Injection
@@ -325,7 +428,9 @@ impl ToolsConfig {
             "nmap" => &self.nmap,
             "nikto" => &self.nikto,
             "nuclei" => &self.nuclei,
-            "zap-cli" | "zap.sh" => &self.zap,
+            "zap.sh" => &self.zap,
+            "chromedriver" => &self.chromedriver,
+            "geckodriver" => &self.geckodriver,
             "wpscan" => &self.wpscan,
             "droopescan" => &self.droopescan,
             "sqlmap" => &self.sqlmap,
@@ -854,20 +959,37 @@ max_budget_usd = 0.5
     }
 
     #[test]
-    fn supply_chain_tool_paths_use_exact_defaults_and_overrides() {
+    fn reviewed_tool_paths_use_exact_defaults_and_overrides() {
         let defaults = ToolsConfig::default();
-        for tool in ["syft", "osv-scanner", "grype", "trivy"] {
+        for tool in [
+            "nuclei",
+            "zap.sh",
+            "chromedriver",
+            "geckodriver",
+            "syft",
+            "osv-scanner",
+            "grype",
+            "trivy",
+        ] {
             assert_eq!(defaults.get_path(tool), tool);
         }
         assert_eq!(defaults.get_path("unregistered-tool"), "unregistered-tool");
 
         let configured = ToolsConfig {
+            nuclei: Some("/tools/nuclei-pinned".to_string()),
+            zap: Some("/tools/zap-pinned".to_string()),
+            chromedriver: Some("/tools/chromedriver-pinned".to_string()),
+            geckodriver: Some("/tools/geckodriver-pinned".to_string()),
             syft: Some("/tools/syft-pinned".to_string()),
             osv_scanner: Some("/tools/osv-pinned".to_string()),
             grype: Some("/tools/grype-pinned".to_string()),
             trivy: Some("/tools/trivy-pinned".to_string()),
             ..ToolsConfig::default()
         };
+        assert_eq!(configured.get_path("nuclei"), "/tools/nuclei-pinned");
+        assert_eq!(configured.get_path("zap.sh"), "/tools/zap-pinned");
+        assert_eq!(configured.get_path("chromedriver"), "/tools/chromedriver-pinned");
+        assert_eq!(configured.get_path("geckodriver"), "/tools/geckodriver-pinned");
         assert_eq!(configured.get_path("syft"), "/tools/syft-pinned");
         assert_eq!(configured.get_path("osv-scanner"), "/tools/osv-pinned");
         assert_eq!(configured.get_path("grype"), "/tools/grype-pinned");

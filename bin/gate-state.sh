@@ -29,6 +29,7 @@ scorchkit_gate_state_hash() {
         cd "$root" 2>/dev/null && {
             git ls-files -z -- . 2>/dev/null
             git ls-files -z --others --exclude-standard -- . 2>/dev/null
+            git diff --cached --name-only --diff-filter=D -z -- . 2>/dev/null
         } | LC_ALL=C sort -z -u > "$file_list"
     }; then
         rm -f "$file_list" "$manifest"

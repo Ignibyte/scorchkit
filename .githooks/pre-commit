@@ -37,6 +37,24 @@ selftest() {
     SCORCHKIT_PROJECT_ROOT="$fixture" SCORCHKIT_GATE_RECEIPT="$receipt" \
         SCORCHKIT_GATE_STATE_HELPER="$GATE_STATE_HELPER" \
         bash "$0" --verify-only || return 1
+    rm "$fixture/probe-copy.txt" || return 1
+    SCORCHKIT_PROJECT_ROOT="$fixture" SCORCHKIT_GATE_RECEIPT="$receipt" \
+        SCORCHKIT_GATE_MODE=diff \
+        bash -c '. "$1"; scorchkit_write_gate_receipt' _ "$ROOT_DIR/bin/gate-state.sh" \
+        || return 1
+    git -C "$fixture" add -u -- probe-copy.txt || return 1
+    if ! SCORCHKIT_PROJECT_ROOT="$fixture" SCORCHKIT_GATE_RECEIPT="$receipt" \
+        SCORCHKIT_GATE_STATE_HELPER="$GATE_STATE_HELPER" \
+        bash "$0" --verify-only >/dev/null; then
+        echo "pre-commit selftest failed: staging a deletion changed the receipt" >&2
+        return 1
+    fi
+    git -C "$fixture" restore --staged -- probe-copy.txt || return 1
+    git -C "$fixture" restore -- probe-copy.txt || return 1
+    SCORCHKIT_PROJECT_ROOT="$fixture" SCORCHKIT_GATE_RECEIPT="$receipt" \
+        SCORCHKIT_GATE_MODE=diff \
+        bash -c '. "$1"; scorchkit_write_gate_receipt' _ "$ROOT_DIR/bin/gate-state.sh" \
+        || return 1
     receipt_backup="$fixture/.git/receipt-good"
     receipt_tampered="$fixture/.git/receipt-tampered"
     cp "$receipt" "$receipt_backup"

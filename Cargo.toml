@@ -58,6 +58,9 @@ futures-util = "0.3"
 # Rate limiting
 governor = "0.8"
 
+# Local-only validation and operation extraction for supplied GraphQL SDL.
+graphql-parser = "0.4.1"
+
 # Terminal UI
 indicatif = "0.17"
 
@@ -228,6 +231,7 @@ features = [
 optional = true
 
 [target.'cfg(unix)'.dependencies]
+libc = "0.2"
 rustix = { version = "1.1.4", features = ["process"] }
 
 [dev-dependencies]

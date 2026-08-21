@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -40,7 +40,7 @@ pub enum EnvironmentPolicy {
 }
 
 /// Complete, owned description of one external tool execution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ToolInvocation {
     /// Requested executable name or path.
     pub program: String,
@@ -60,6 +60,41 @@ pub struct ToolInvocation {
     pub environment: BTreeMap<String, String>,
     /// Optional working directory for the child process.
     pub working_directory: Option<PathBuf>,
+    /// Optional recursive budget for files owned by this invocation.
+    pub artifact_budget: Option<ArtifactBudget>,
+}
+
+/// Recursive file-count and byte budget for one already-created owned directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactBudget {
+    pub root: PathBuf,
+    pub max_bytes: u64,
+    pub max_files: u64,
+}
+
+impl ArtifactBudget {
+    #[must_use]
+    pub fn new(root: impl Into<PathBuf>, max_bytes: u64, max_files: u64) -> Self {
+        Self { root: root.into(), max_bytes, max_files }
+    }
+}
+
+impl Debug for ToolInvocation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ToolInvocation")
+            .field("program", &self.program)
+            .field("args", &self.args)
+            .field("timeout", &self.timeout)
+            .field("exit_policy", &self.exit_policy)
+            .field("output_limit_bytes", &self.output_limit_bytes)
+            .field("stdin_bytes", &self.stdin.as_ref().map(Vec::len))
+            .field("environment_policy", &self.environment_policy)
+            .field("environment_names", &self.environment.keys().collect::<Vec<_>>())
+            .field("working_directory", &self.working_directory)
+            .field("artifact_budget", &self.artifact_budget)
+            .finish()
+    }
 }
 
 impl ToolInvocation {
@@ -134,6 +169,7 @@ impl ToolInvocation {
             environment_policy: EnvironmentPolicy::Inherit,
             environment: BTreeMap::new(),
             working_directory: None,
+            artifact_budget: None,
         }
     }
 
@@ -169,6 +205,13 @@ impl ToolInvocation {
     #[must_use]
     pub fn with_working_directory(mut self, path: impl Into<PathBuf>) -> Self {
         self.working_directory = Some(path.into());
+        self
+    }
+
+    /// Monitor an already-created owned directory and stop the process on budget exhaustion.
+    #[must_use]
+    pub fn with_artifact_budget(mut self, budget: ArtifactBudget) -> Self {
+        self.artifact_budget = Some(budget);
         self
     }
 }
@@ -375,6 +418,10 @@ pub fn missing_required_tool(
 
 async fn execute_system(invocation: ToolInvocation) -> Result<ToolOutput> {
     let resolved_program = resolve_tool_path(&invocation.program)?;
+    if let Some(budget) = &invocation.artifact_budget {
+        validate_artifact_root(budget)?;
+        enforce_artifact_budget(&invocation.program, budget)?;
+    }
     let started = Instant::now();
     let mut command = tokio::process::Command::new(&resolved_program);
     if invocation.environment_policy == EnvironmentPolicy::Clear {
@@ -429,7 +476,6 @@ async fn execute_system(invocation: ToolInvocation) -> Result<ToolOutput> {
             });
         }
     };
-
     stop_owned_process(&mut child, &mut process_group).await.map_err(|error| {
         ScorchError::ToolFailed {
             tool: invocation.program.clone(),
@@ -437,27 +483,12 @@ async fn execute_system(invocation: ToolInvocation) -> Result<ToolOutput> {
             stderr: format!("failed to clean up process tree: {error}"),
         }
     })?;
+    if let Some(budget) = &invocation.artifact_budget {
+        enforce_artifact_budget(&invocation.program, budget)?;
+    }
 
-    let status = status.map_err(|error| ScorchError::ToolFailed {
-        tool: invocation.program.clone(),
-        status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
-        stderr: error.to_string(),
-    })?;
-    let stdout = stdout.map_err(|error| ScorchError::ToolFailed {
-        tool: invocation.program.clone(),
-        status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
-        stderr: error.to_string(),
-    })?;
-    let stderr = stderr.map_err(|error| ScorchError::ToolFailed {
-        tool: invocation.program.clone(),
-        status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
-        stderr: error.to_string(),
-    })?;
-    stdin.map_err(|error| ScorchError::ToolFailed {
-        tool: invocation.program.clone(),
-        status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
-        stderr: format!("failed to write tool stdin: {error}"),
-    })?;
+    let (status, stdout, stderr) =
+        collect_child_output(&invocation.program, (status, stdout, stderr, stdin))?;
 
     let exit_code = status.code().unwrap_or(TOOL_INFRASTRUCTURE_FAILURE_STATUS);
     let stderr = String::from_utf8_lossy(&stderr.bytes).into_owned();
@@ -476,6 +507,27 @@ async fn execute_system(invocation: ToolInvocation) -> Result<ToolOutput> {
         duration: started.elapsed(),
         resolved_program,
     })
+}
+
+fn collect_child_output(
+    tool: &str,
+    outcome: ChildIoOutcome,
+) -> Result<(std::process::ExitStatus, BoundedRead, BoundedRead)> {
+    let (status, stdout, stderr, stdin) = outcome;
+    let tool_failure = |error: std::io::Error| ScorchError::ToolFailed {
+        tool: tool.to_string(),
+        status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
+        stderr: error.to_string(),
+    };
+    let status = status.map_err(&tool_failure)?;
+    let stdout = stdout.map_err(&tool_failure)?;
+    let stderr = stderr.map_err(tool_failure)?;
+    stdin.map_err(|error| ScorchError::ToolFailed {
+        tool: tool.to_string(),
+        status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
+        stderr: format!("failed to write tool stdin: {error}"),
+    })?;
+    Ok((status, stdout, stderr))
 }
 
 impl ExitPolicy {
@@ -514,6 +566,8 @@ async fn coordinate_child_io(
     let read_stdout = read_bounded(stdout, invocation.output_limit_bytes);
     let read_stderr = read_bounded(stderr, invocation.output_limit_bytes);
     tokio::pin!(wait_child, read_stdout, read_stderr, write_stdin);
+    let mut artifact_tick = tokio::time::interval(Duration::from_millis(250));
+    artifact_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let mut status = None;
     let mut stdout = None;
@@ -531,6 +585,11 @@ async fn coordinate_child_io(
                 stderr = Some(result);
             }
             result = &mut write_stdin, if stdin.is_none() => stdin = Some(result),
+            _ = artifact_tick.tick(), if invocation.artifact_budget.is_some() => {
+                if let Some(budget) = &invocation.artifact_budget {
+                    enforce_artifact_budget(&invocation.program, budget)?;
+                }
+            }
         }
 
         if status.is_some() && stdout.is_some() && stderr.is_some() && stdin.is_some() {
@@ -546,6 +605,89 @@ async fn coordinate_child_io(
             };
         }
     }
+}
+
+fn validate_artifact_root(budget: &ArtifactBudget) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(&budget.root).map_err(|error| {
+        ScorchError::Config(format!(
+            "tool artifact root '{}' is unavailable: {error}",
+            budget.root.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(ScorchError::Config(format!(
+            "tool artifact root '{}' must be a real directory",
+            budget.root.display()
+        )));
+    }
+    if budget.max_bytes == 0 || budget.max_files == 0 {
+        return Err(ScorchError::Config(
+            "tool artifact byte and file limits must be nonzero".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn enforce_artifact_budget(tool: &str, budget: &ArtifactBudget) -> Result<()> {
+    enforce_artifact_budget_with(
+        tool,
+        budget,
+        |directory| std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>(),
+        |path| std::fs::symlink_metadata(path),
+    )
+}
+
+fn enforce_artifact_budget_with<ReadDirectory, ReadMetadata>(
+    tool: &str,
+    budget: &ArtifactBudget,
+    mut read_directory: ReadDirectory,
+    mut read_metadata: ReadMetadata,
+) -> Result<()>
+where
+    ReadDirectory: FnMut(&Path) -> std::io::Result<Vec<std::fs::DirEntry>>,
+    ReadMetadata: FnMut(&Path) -> std::io::Result<std::fs::Metadata>,
+{
+    let mut pending = vec![budget.root.clone()];
+    let mut bytes = 0_u64;
+    let mut files = 0_u64;
+    while let Some(directory) = pending.pop() {
+        let entries = match read_directory(&directory) {
+            Ok(entries) => entries,
+            Err(error) if vanished_artifact_directory(&error, &directory, &budget.root) => {
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        for entry in entries {
+            let metadata = match read_metadata(&entry.path()) {
+                Ok(metadata) => metadata,
+                Err(error) if vanished_artifact_entry(&error) => continue,
+                Err(error) => return Err(error.into()),
+            };
+            files = files.saturating_add(1);
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                pending.push(entry.path());
+            } else if metadata.is_file() {
+                bytes = bytes.saturating_add(metadata.len());
+            }
+            if bytes > budget.max_bytes || files > budget.max_files {
+                return Err(ScorchError::ToolArtifactLimit {
+                    tool: tool.to_string(),
+                    limit_bytes: budget.max_bytes,
+                    limit_files: budget.max_files,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn vanished_artifact_directory(error: &std::io::Error, directory: &Path, root: &Path) -> bool {
+    vanished_artifact_entry(error) && directory != root
+}
+
+fn vanished_artifact_entry(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound
 }
 
 fn reject_excess_output(
@@ -777,6 +919,20 @@ mod tests {
     }
 
     #[test]
+    fn invocation_debug_omits_environment_values_and_stdin_bytes() {
+        let invocation = ToolInvocation::strict("tool", &[], Duration::from_secs(3))
+            .with_clean_environment()
+            .with_environment("SCORCHKIT_SECRET", "arbitrary-fixture-secret")
+            .with_stdin(b"private-stdin".to_vec());
+        let rendered = format!("{invocation:?}");
+
+        assert!(rendered.contains("SCORCHKIT_SECRET"));
+        assert!(rendered.contains("stdin_bytes: Some(13)"));
+        assert!(!rendered.contains("arbitrary-fixture-secret"));
+        assert!(!rendered.contains("private-stdin"));
+    }
+
+    #[test]
     fn exact_exit_policy_is_sorted_deduplicated_and_fail_closed_when_empty() {
         let invocation =
             ToolInvocation::accepting("tool", &["--flag"], Duration::from_secs(3), &[1, 0, 1]);
@@ -874,6 +1030,197 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(2));
         let descendant = read_fixture_pid(&pid_file);
         assert_process_exits(descendant).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn artifact_limit_terminates_the_process_tree_without_waiting_for_timeout() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let pid_file = directory.path().join("artifact-limit-descendant.pid");
+        let output_file = directory.path().join("growing-artifact");
+        let command = "sleep 60 </dev/null >/dev/null 2>&1 & printf '%s' \"$!\" > \"$1\"; while :; do printf x >> \"$2\"; sleep 0.01; done";
+        let invocation = ToolInvocation::strict(
+            "sh",
+            &[
+                "-c",
+                command,
+                "scorchkit-artifact-limit",
+                &pid_file.to_string_lossy(),
+                &output_file.to_string_lossy(),
+            ],
+            Duration::from_secs(5),
+        )
+        .with_artifact_budget(ArtifactBudget::new(directory.path(), 16, 8));
+        let started = Instant::now();
+        let result = SystemToolExecutor.execute(invocation).await;
+
+        assert!(matches!(result, Err(ScorchError::ToolArtifactLimit { limit_bytes: 16, .. })));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let descendant = read_fixture_pid(&pid_file);
+        assert_process_exits(descendant).await;
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn artifact_budget_counts_non_regular_entries() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let _first = std::os::unix::net::UnixListener::bind(directory.path().join("first.sock"))
+            .expect("first socket");
+        let _second = std::os::unix::net::UnixListener::bind(directory.path().join("second.sock"))
+            .expect("second socket");
+        let budget = ArtifactBudget::new(directory.path(), u64::MAX, 1);
+
+        assert!(matches!(
+            enforce_artifact_budget("fixture", &budget),
+            Err(ScorchError::ToolArtifactLimit { limit_files: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn artifact_root_validation_rejects_each_invalid_dimension() {
+        let missing = tempfile::tempdir().expect("temporary directory");
+        let missing_path = missing.path().join("missing");
+        let missing_budget = ArtifactBudget::new(&missing_path, 1, 1);
+        assert!(validate_artifact_root(&missing_budget).is_err());
+
+        let file_directory = tempfile::tempdir().expect("temporary directory");
+        let file = file_directory.path().join("artifact-root-file");
+        std::fs::write(&file, b"fixture").expect("write artifact root file");
+        assert!(validate_artifact_root(&ArtifactBudget::new(&file, 1, 1)).is_err());
+
+        let root = tempfile::tempdir().expect("temporary directory");
+        assert!(validate_artifact_root(&ArtifactBudget::new(root.path(), 0, 1)).is_err());
+        assert!(validate_artifact_root(&ArtifactBudget::new(root.path(), 1, 0)).is_err());
+        assert!(validate_artifact_root(&ArtifactBudget::new(root.path(), 1, 1)).is_ok());
+    }
+
+    #[test]
+    fn artifact_budget_uses_strict_byte_and_file_boundaries() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        std::fs::write(directory.path().join("fixture"), b"1234").expect("write fixture");
+
+        assert!(enforce_artifact_budget(
+            "fixture-tool",
+            &ArtifactBudget::new(directory.path(), 4, 1)
+        )
+        .is_ok());
+        assert!(enforce_artifact_budget(
+            "fixture-tool",
+            &ArtifactBudget::new(directory.path(), 5, 2)
+        )
+        .is_ok());
+
+        assert!(matches!(
+            enforce_artifact_budget(
+                "fixture-tool",
+                &ArtifactBudget::new(directory.path(), 3, 1)
+            ),
+            Err(ScorchError::ToolArtifactLimit {
+                ref tool,
+                limit_bytes: 3,
+                limit_files: 1
+            }) if tool == "fixture-tool"
+        ));
+        assert!(matches!(
+            enforce_artifact_budget("fixture-tool", &ArtifactBudget::new(directory.path(), 4, 0)),
+            Err(ScorchError::ToolArtifactLimit { limit_bytes: 4, limit_files: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn missing_artifact_root_is_not_treated_as_a_vanished_child() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let missing = directory.path().join("missing");
+        assert!(enforce_artifact_budget(
+            "fixture-tool",
+            &ArtifactBudget::new(&missing, u64::MAX, u64::MAX)
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn artifact_disappearance_predicates_distinguish_roots_children_and_other_errors() {
+        let root = Path::new("artifact-root");
+        let child = root.join("child");
+        let not_found = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+
+        assert!(vanished_artifact_directory(&not_found, &child, root));
+        assert!(!vanished_artifact_directory(&not_found, root, root));
+        assert!(!vanished_artifact_directory(&denied, &child, root));
+        assert!(vanished_artifact_entry(&not_found));
+        assert!(!vanished_artifact_entry(&denied));
+    }
+
+    #[test]
+    fn artifact_budget_tolerates_injected_vanishing_children_and_entries() {
+        let directory_case = tempfile::tempdir().expect("temporary directory");
+        let child = directory_case.path().join("vanishing-child");
+        std::fs::create_dir(&child).expect("create child");
+        let child_probe = child;
+        let child_result = enforce_artifact_budget_with(
+            "fixture-tool",
+            &ArtifactBudget::new(directory_case.path(), u64::MAX, u64::MAX),
+            |directory| {
+                if directory == child_probe.as_path() {
+                    Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+                } else {
+                    std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()
+                }
+            },
+            |path| std::fs::symlink_metadata(path),
+        );
+        assert!(child_result.is_ok());
+
+        let entry_case = tempfile::tempdir().expect("temporary directory");
+        let entry = entry_case.path().join("vanishing-entry");
+        std::fs::write(&entry, b"fixture").expect("write entry");
+        let entry_probe = entry;
+        let entry_result = enforce_artifact_budget_with(
+            "fixture-tool",
+            &ArtifactBudget::new(entry_case.path(), u64::MAX, u64::MAX),
+            |directory| std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>(),
+            |path| {
+                if path == entry_probe.as_path() {
+                    Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+                } else {
+                    std::fs::symlink_metadata(path)
+                }
+            },
+        );
+        assert!(entry_result.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn artifact_budget_propagates_directory_and_metadata_permission_errors() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let child_case = tempfile::tempdir().expect("temporary directory");
+        let child = child_case.path().join("locked-child");
+        std::fs::create_dir(&child).expect("create locked child");
+        std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o000))
+            .expect("lock child");
+        let child_result = enforce_artifact_budget(
+            "fixture-tool",
+            &ArtifactBudget::new(child_case.path(), u64::MAX, u64::MAX),
+        );
+        std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o700))
+            .expect("unlock child");
+        assert!(child_result.is_err());
+
+        let metadata_case = tempfile::tempdir().expect("temporary directory");
+        std::fs::write(metadata_case.path().join("entry"), b"fixture").expect("write entry");
+        std::fs::set_permissions(metadata_case.path(), std::fs::Permissions::from_mode(0o400))
+            .expect("remove search permission");
+        let metadata_result = enforce_artifact_budget(
+            "fixture-tool",
+            &ArtifactBudget::new(metadata_case.path(), u64::MAX, u64::MAX),
+        );
+        std::fs::set_permissions(metadata_case.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("restore search permission");
+        assert!(metadata_result.is_err());
     }
 
     #[cfg(unix)]

@@ -82,6 +82,11 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-cache-stage-ownership-001` | Give staged cache state an armed cleanup owner and transfer ownership only after verified atomic promotion. | `AAR-012-application-supply-chain` |
 | `PR-scorchkit-aggregate-effect-budget-001` | Bound both each external object and the complete operation's object count and cumulative bytes. | `AAR-012-application-supply-chain` |
 | `PR-scorchkit-source-artifact-coverage-separation-001` | Preserve declared source dependencies and shipped artifact contents as distinct coverage classes and correlate only supplied valid identities. | `AAR-012-application-supply-chain` |
+| `PR-scorchkit-generated-dast-plan-001` | Compile external scanner plans only from already-authorized targets, local verified inputs, personas, phases, and bounded limits; arbitrary plans are context, not authority. | `AAR-013-authenticated-dast` |
+| `PR-scorchkit-secretless-tool-version-probe-001` | Prove an executable and required version through a structurally secret-free environment before injecting credentials or scan-specific settings. | `AAR-013-authenticated-dast` |
+| `PR-scorchkit-authenticated-dast-two-stage-proof-001` | Prove authenticated state before discovery and from final scanner evidence; missing or lost proof is a typed coverage gap. | `AAR-013-authenticated-dast` |
+| `PR-scorchkit-operation-coverage-method-route-001` | Claim schema-operation coverage only from bounded traffic that matches both HTTP method and normalized route template. | `AAR-013-authenticated-dast` |
+| `PR-scorchkit-artifact-entry-all-types-001` | Count every non-root filesystem entry against recursive artifact limits, follow only real directories, and sum only regular-file bytes. | `AAR-013-authenticated-dast` |
 
 ## Register
 
@@ -147,3 +152,8 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-aggregate-provider-limit-gap-001` | effect-budget bug | `AAR-012-application-supply-chain` |
 | `BF-scorchkit-tool-report-file-unbounded-001` | process-output bug | `AAR-012-application-supply-chain` |
 | `BF-scorchkit-empty-artifact-profile-success-001` | coverage-integrity bug | `AAR-012-application-supply-chain` |
+| `BF-scorchkit-zap-port-zero-001` | process-isolation bug | `AAR-013-authenticated-dast` |
+| `BF-scorchkit-version-probe-secret-leak-001` | credential-boundary bug | `AAR-013-authenticated-dast` |
+| `BF-scorchkit-url-only-operation-coverage-001` | coverage-integrity bug | `AAR-013-authenticated-dast` |
+| `BF-scorchkit-graphql-import-variant-001` | schema-boundary bug | `AAR-013-authenticated-dast` |
+| `BF-scorchkit-artifact-entry-undercount-001` | resource-budget bug | `AAR-013-authenticated-dast` |

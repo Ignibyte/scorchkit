@@ -5,6 +5,6 @@ pub(crate) use scorchkit_tools::{
     stop_owned_process, OwnedProcessGroup, SystemToolExecutor,
 };
 pub use scorchkit_tools::{
-    EnvironmentPolicy, ExitPolicy, ToolExecutor, ToolInvocation, ToolOutput,
+    ArtifactBudget, EnvironmentPolicy, ExitPolicy, ToolExecutor, ToolInvocation, ToolOutput,
     DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
 };

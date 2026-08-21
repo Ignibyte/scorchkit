@@ -32,7 +32,12 @@ use chrono::Utc;
 use scorchkit_code::SupplyChainProfile;
 use scorchkit_core::{ProviderSnapshot, SupplyChainTargetKind};
 
+use crate::application_dast::{
+    canonical_schema_path, path_is_under, validate_schema, ApplicationDastOrchestrator,
+    ApplicationDastRequest, ResolvedPersona, ResolvedPersonaKind,
+};
 use crate::config::AppConfig;
+use crate::config::{DastPersonaConfig, DastVerificationConfig};
 use crate::engine::code_context::CodeContext;
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::policy::{Capability, EffectClass, Engagement, PolicyTarget};
@@ -117,6 +122,106 @@ impl Engine {
         orchestrator.register_default_modules();
         orchestrator.apply_profile(profile);
         orchestrator.run(true).await
+    }
+
+    /// Run one isolated, schema-driven OWASP ZAP assessment across explicit personas.
+    ///
+    /// The complete target, process, credential, and local-schema grant matrix is evaluated before
+    /// any secret is resolved, schema is read, workspace is created, or process is launched.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid request, denied effect, invalid schema, missing credential,
+    /// or configuration that could extend the authorized target. ZAP execution and artifact
+    /// failures are retained as degraded typed coverage in the returned result.
+    pub async fn application_dast(&self, request: &ApplicationDastRequest) -> Result<ScanResult> {
+        let target = Target::parse(&request.target)?;
+        validate_application_dast_target(&target.url)?;
+        validate_dast_config(&self.config.dast)?;
+        let requested_personas =
+            request.personas.len().saturating_add(usize::from(request.include_anonymous));
+        if requested_personas > self.config.dast.persona_limit_count {
+            return Err(ScorchError::Config(format!(
+                "application DAST accepts at most {} personas",
+                self.config.dast.persona_limit_count
+            )));
+        }
+        if request.schemas.len() > self.config.dast.schema_limit_count {
+            return Err(ScorchError::Config(format!(
+                "application DAST accepts at most {} schemas",
+                self.config.dast.schema_limit_count
+            )));
+        }
+        let selected = self.selected_dast_personas(request, &target.url)?;
+        let canonical_schemas: Vec<_> =
+            request.schemas.iter().map(canonical_schema_path).collect::<Result<_>>()?;
+
+        let web_target = PolicyTarget::Web(target.url.clone());
+        let mut authorization = vec![
+            self.require_authorized(
+                web_target.clone(),
+                Capability::DastScan,
+                EffectClass::Intrusive,
+            )?,
+            self.require_authorized(
+                web_target.clone(),
+                Capability::ExternalTool,
+                EffectClass::Intrusive,
+            )?,
+        ];
+        for path in &canonical_schemas {
+            authorization.push(self.require_authorized(
+                PolicyTarget::Code(path.clone()),
+                Capability::LocalState,
+                EffectClass::Passive,
+            )?);
+        }
+        for _ in selected.iter().filter(|(_, persona)| persona.is_some()) {
+            authorization.push(self.require_authorized(
+                web_target.clone(),
+                Capability::ExternalTool,
+                EffectClass::CredentialTest,
+            )?);
+            authorization.push(self.require_authorized(
+                web_target.clone(),
+                Capability::CredentialUse,
+                EffectClass::CredentialTest,
+            )?);
+        }
+
+        let schemas = request
+            .schemas
+            .iter()
+            .zip(&canonical_schemas)
+            .map(|(schema, path)| {
+                validate_schema(schema, path, &target.url, self.config.dast.schema_limit_bytes)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let personas = selected
+            .into_iter()
+            .map(|(id, persona)| resolve_dast_persona(id, persona))
+            .collect::<Result<Vec<_>>>()?;
+        let http_client = self.authorized_http_client(
+            Capability::DastScan,
+            EffectClass::Intrusive,
+            self.config.scan.follow_redirects,
+        )?;
+        let no_redirect_http_client =
+            self.authorized_http_client(Capability::DastScan, EffectClass::Intrusive, false)?;
+        let network_policy = self.policy_network(
+            Capability::DastScan,
+            EffectClass::Intrusive,
+            "application DAST native network",
+        )?;
+        let context = ScanContext::with_http_clients(
+            target,
+            Arc::clone(&self.config),
+            http_client,
+            no_redirect_http_client,
+            authorization,
+            network_policy,
+        );
+        ApplicationDastOrchestrator::new(context, request.clone(), schemas, personas).run().await
     }
 
     /// Run a SAST code scan against a filesystem path.
@@ -905,6 +1010,38 @@ impl Engine {
         Ok((canonical_path, authorization))
     }
 
+    fn selected_dast_personas(
+        &self,
+        request: &ApplicationDastRequest,
+        target: &url::Url,
+    ) -> Result<Vec<(String, Option<DastPersonaConfig>)>> {
+        let mut selected = Vec::new();
+        let mut names = std::collections::BTreeSet::new();
+        for name in &request.personas {
+            validate_persona_id(name)?;
+            if name == "anonymous" || !names.insert(name.clone()) {
+                return Err(ScorchError::Config(format!(
+                    "application DAST persona '{name}' is reserved or duplicated"
+                )));
+            }
+            let persona = self.config.dast.personas.get(name).cloned().ok_or_else(|| {
+                ScorchError::Config(format!("application DAST persona '{name}' is not configured"))
+            })?;
+            validate_persona_config(&persona, target)?;
+            selected.push((name.clone(), Some(persona)));
+        }
+        if request.include_anonymous {
+            selected.push(("anonymous".to_string(), None));
+        }
+        if selected.is_empty() {
+            return Err(ScorchError::Config(
+                "application DAST requires anonymous or at least one named persona".to_string(),
+            ));
+        }
+        selected.sort_by_key(|(name, persona)| (persona.is_some(), name.clone()));
+        Ok(selected)
+    }
+
     fn supply_chain_snapshot_store(&self) -> Result<SupplyChainSnapshotStore> {
         let configured = &self.config.supply_chain.cache_root;
         let cache_root = configured.canonicalize().map_err(|error| {
@@ -941,6 +1078,208 @@ impl Engine {
             .await;
         Ok(supply_chain_scan_result(result_target, started_at, run))
     }
+}
+
+fn validate_application_dast_target(target: &url::Url) -> Result<()> {
+    if !matches!(target.scheme(), "http" | "https")
+        || target.host_str().is_none()
+        || !target.username().is_empty()
+        || target.password().is_some()
+        || target.query().is_some()
+        || target.fragment().is_some()
+    {
+        return Err(ScorchError::InvalidTarget {
+            target: target.to_string(),
+            reason: "application DAST requires a credential-free HTTP(S) base URL without query or fragment"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_dast_config(config: &crate::config::DastConfig) -> Result<()> {
+    let limits = [
+        ("persona_limit_count", config.persona_limit_count as u64),
+        ("schema_limit_bytes", config.schema_limit_bytes as u64),
+        ("schema_limit_count", config.schema_limit_count as u64),
+        ("output_limit_bytes", config.output_limit_bytes as u64),
+        ("artifact_limit_files", config.artifact_limit_files),
+        ("timeout_seconds", config.timeout_seconds),
+        ("spider_minutes", config.spider_minutes),
+        ("client_spider_minutes", config.client_spider_minutes),
+        ("active_scan_minutes", config.active_scan_minutes),
+        ("client_spider_depth", config.client_spider_depth),
+        ("client_spider_children", config.client_spider_children),
+    ];
+    if config.artifact_limit_bytes == 0 {
+        return Err(ScorchError::Config(
+            "application DAST artifact_limit_bytes must be nonzero".to_string(),
+        ));
+    }
+    if let Some((name, _)) = limits.into_iter().find(|(_, value)| *value == 0) {
+        return Err(ScorchError::Config(format!("application DAST {name} must be nonzero")));
+    }
+    if !matches!(config.browser_id.as_str(), "chrome-headless" | "firefox-headless") {
+        return Err(ScorchError::Config(
+            "application DAST browser_id must be 'chrome-headless' or 'firefox-headless'"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_persona_id(value: &str) -> Result<()> {
+    if !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        Ok(())
+    } else {
+        Err(ScorchError::Config(
+            "application DAST persona IDs must use 1-64 ASCII letters, digits, '-' or '_'"
+                .to_string(),
+        ))
+    }
+}
+
+fn validate_persona_config(persona: &DastPersonaConfig, target: &url::Url) -> Result<()> {
+    match persona {
+        DastPersonaConfig::Header { header_name, value_env, verification } => {
+            let header = reqwest::header::HeaderName::from_bytes(header_name.as_bytes()).map_err(
+                |error| {
+                    ScorchError::Config(format!(
+                        "application DAST header persona has an invalid header name: {error}"
+                    ))
+                },
+            )?;
+            if matches!(
+                header.as_str(),
+                "host"
+                    | "content-length"
+                    | "transfer-encoding"
+                    | "connection"
+                    | "proxy-authorization"
+                    | "proxy-authenticate"
+                    | "upgrade"
+                    | "te"
+                    | "trailer"
+            ) {
+                return Err(ScorchError::Config(format!(
+                    "application DAST header persona cannot override authority or framing header '{header}'"
+                )));
+            }
+            validate_environment_name(value_env)?;
+            validate_verification(verification, target)
+        }
+        DastPersonaConfig::Browser { login_url, username_env, password_env, verification } => {
+            validate_environment_name(username_env)?;
+            validate_environment_name(password_env)?;
+            validate_same_origin_persona_url(login_url, target, "login")?;
+            validate_verification(verification, target)
+        }
+    }
+}
+
+fn validate_verification(verification: &DastVerificationConfig, target: &url::Url) -> Result<()> {
+    validate_same_origin_persona_url(&verification.url, target, "verification")?;
+    if verification.logged_in_regex.is_empty() || verification.logged_out_regex.is_empty() {
+        return Err(ScorchError::Config(
+            "application DAST verification requires logged-in and logged-out regexes".to_string(),
+        ));
+    }
+    regex::Regex::new(&verification.logged_in_regex).map_err(|error| {
+        ScorchError::Config(format!("invalid application DAST logged-in regex: {error}"))
+    })?;
+    regex::Regex::new(&verification.logged_out_regex).map_err(|error| {
+        ScorchError::Config(format!("invalid application DAST logged-out regex: {error}"))
+    })?;
+    if !(100..=599).contains(&verification.expected_status) {
+        return Err(ScorchError::Config(
+            "application DAST verification status must be between 100 and 599".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_same_origin_persona_url(value: &str, target: &url::Url, purpose: &str) -> Result<()> {
+    let url = url::Url::parse(value).map_err(|error| ScorchError::InvalidTarget {
+        target: value.to_string(),
+        reason: format!("invalid application DAST {purpose} URL: {error}"),
+    })?;
+    if url.scheme() != target.scheme()
+        || url.host_str() != target.host_str()
+        || url.port_or_known_default() != target.port_or_known_default()
+        || !path_is_under(target.path(), url.path())
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(ScorchError::InvalidTarget {
+            target: value.to_string(),
+            reason: format!(
+                "application DAST {purpose} URL must be credential-free, same-origin, and under the authorized target path"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_environment_name(value: &str) -> Result<()> {
+    let mut bytes = value.bytes();
+    let valid_first = bytes.next().is_some_and(|byte| byte == b'_' || byte.is_ascii_alphabetic());
+    if valid_first && bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric()) {
+        Ok(())
+    } else {
+        Err(ScorchError::Config(format!(
+            "application DAST credential reference '{value}' is not an environment-variable name"
+        )))
+    }
+}
+
+fn resolve_dast_persona(id: String, persona: Option<DastPersonaConfig>) -> Result<ResolvedPersona> {
+    let kind = match persona {
+        None => ResolvedPersonaKind::Anonymous,
+        Some(DastPersonaConfig::Header { header_name, value_env, verification }) => {
+            let header_value = required_environment_secret(&value_env)?;
+            validate_dast_header_value(&header_value, &value_env)?;
+            ResolvedPersonaKind::Header { header_name, header_value, verification }
+        }
+        Some(DastPersonaConfig::Browser {
+            login_url,
+            username_env,
+            password_env,
+            verification,
+        }) => ResolvedPersonaKind::Browser {
+            login_url,
+            username: required_environment_secret(&username_env)?,
+            password: required_environment_secret(&password_env)?,
+            verification,
+        },
+    };
+    Ok(ResolvedPersona { id, kind })
+}
+
+fn validate_dast_header_value(value: &str, reference: &str) -> Result<()> {
+    reqwest::header::HeaderValue::from_str(value).map(|_| ()).map_err(|_| {
+        ScorchError::Config(format!(
+            "application DAST credential environment variable '{reference}' is not a safe HTTP header value"
+        ))
+    })
+}
+
+fn required_environment_secret(name: &str) -> Result<String> {
+    let value = std::env::var(name).map_err(|_| {
+        ScorchError::Config(format!(
+            "application DAST credential environment variable '{name}' is missing or not Unicode"
+        ))
+    })?;
+    if value.is_empty() {
+        return Err(ScorchError::Config(format!(
+            "application DAST credential environment variable '{name}' is empty"
+        )));
+    }
+    Ok(value)
 }
 
 fn supply_chain_scan_result(
@@ -1196,6 +1535,340 @@ mod tests {
         let pentest = profile_policy_requirements("pentest").expect("pentest profile");
         assert!(pentest.credential_testing && pentest.exploitation);
         assert!(profile_policy_requirements("unknown").is_err());
+    }
+
+    #[test]
+    fn application_dast_config_rejects_unbounded_values_and_unknown_browsers() {
+        let mut config = crate::config::DastConfig::default();
+        assert!(validate_dast_config(&config).is_ok());
+        config.client_spider_depth = 0;
+        assert!(validate_dast_config(&config).is_err());
+        config.client_spider_depth = 10;
+        config.browser_id = "remote-browser".to_string();
+        assert!(validate_dast_config(&config).is_err());
+    }
+
+    #[test]
+    fn application_dast_target_validation_rejects_each_unsafe_url_component() {
+        for value in ["http://example.com", "https://example.com/app"] {
+            let target = url::Url::parse(value).expect("valid target");
+            assert!(validate_application_dast_target(&target).is_ok(), "rejected {value}");
+        }
+        for value in [
+            "ftp://example.com",
+            "https://user@example.com",
+            "https://user:password@example.com",
+            "https://example.com?query=true",
+            "https://example.com#fragment",
+        ] {
+            let target = url::Url::parse(value).expect("parseable invalid target");
+            assert!(validate_application_dast_target(&target).is_err(), "accepted {value}");
+        }
+    }
+
+    #[test]
+    fn application_dast_persona_and_environment_names_use_exact_grammars() {
+        for value in ["a", "A_1-z", &"a".repeat(64)] {
+            assert!(validate_persona_id(value).is_ok(), "rejected persona {value:?}");
+        }
+        for value in ["", &"a".repeat(65), "user.name", "naïve"] {
+            assert!(validate_persona_id(value).is_err(), "accepted persona {value:?}");
+        }
+
+        for value in ["A", "_TOKEN", "TOKEN_123"] {
+            assert!(validate_environment_name(value).is_ok(), "rejected environment {value:?}");
+        }
+        for value in ["", "1TOKEN", "TOKEN-NAME", "TÖKEN"] {
+            assert!(validate_environment_name(value).is_err(), "accepted environment {value:?}");
+        }
+    }
+
+    #[test]
+    fn application_dast_verification_requires_both_state_regexes() {
+        let target = url::Url::parse("https://example.com/app").expect("target");
+        let valid = DastVerificationConfig {
+            url: "https://example.com/app/account".to_string(),
+            expected_status: 200,
+            logged_in_regex: "Account".to_string(),
+            logged_out_regex: "Sign in".to_string(),
+            max_logged_out: 0,
+        };
+        assert!(validate_verification(&valid, &target).is_ok());
+        let mut missing_logged_in = valid.clone();
+        missing_logged_in.logged_in_regex.clear();
+        assert!(validate_verification(&missing_logged_in, &target).is_err());
+        let mut missing_logged_out = valid;
+        missing_logged_out.logged_out_regex.clear();
+        assert!(validate_verification(&missing_logged_out, &target).is_err());
+    }
+
+    #[test]
+    fn application_dast_persona_urls_reject_each_origin_and_credential_escape() {
+        let target = url::Url::parse("https://example.com:8443/app/").expect("target");
+        assert!(validate_same_origin_persona_url(
+            "https://example.com:8443/app/account",
+            &target,
+            "verification"
+        )
+        .is_ok());
+        for value in [
+            "http://example.com:8443/app/account",
+            "https://other.example.com:8443/app/account",
+            "https://example.com:9443/app/account",
+            "https://example.com:8443/outside",
+            "https://user@example.com:8443/app/account",
+            "https://user:password@example.com:8443/app/account",
+            "https://example.com:8443/app/account?query=true",
+            "https://example.com:8443/app/account#fragment",
+        ] {
+            assert!(
+                validate_same_origin_persona_url(value, &target, "verification").is_err(),
+                "accepted {value}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn application_dast_request_limits_are_strict_upper_bounds() {
+        let schema = crate::application_dast::ApplicationDastSchemaRequest {
+            kind: scorchkit_core::ApplicationDastSchemaKind::OpenApi,
+            path: PathBuf::from("/fixture/missing-schema.yaml"),
+            sha256: "0".repeat(64),
+            endpoint: None,
+        };
+        let mut config = AppConfig::default();
+        config.dast.persona_limit_count = 1;
+        config.dast.schema_limit_count = 1;
+        let engine = Engine::new(Arc::new(config));
+
+        let over_personas = ApplicationDastRequest {
+            target: "https://example.com".to_string(),
+            profile: scorchkit_core::ApplicationDastProfile::Passive,
+            include_anonymous: true,
+            personas: vec!["first".to_string(), "second".to_string()],
+            schemas: Vec::new(),
+        };
+        let error = engine
+            .application_dast(&over_personas)
+            .await
+            .expect_err("three personas must exceed a one-persona limit");
+        assert!(error.to_string().contains("at most 1 personas"));
+
+        let exact_personas = ApplicationDastRequest::new(
+            "https://example.com",
+            scorchkit_core::ApplicationDastProfile::Passive,
+        );
+        let error = engine
+            .application_dast(&exact_personas)
+            .await
+            .expect_err("an engagement is still required");
+        assert!(!error.to_string().contains("at most 1 personas"));
+
+        let over_schemas = ApplicationDastRequest {
+            target: "https://example.com".to_string(),
+            profile: scorchkit_core::ApplicationDastProfile::Passive,
+            include_anonymous: true,
+            personas: Vec::new(),
+            schemas: vec![schema.clone(), schema.clone()],
+        };
+        let error = engine
+            .application_dast(&over_schemas)
+            .await
+            .expect_err("two schemas must exceed a one-schema limit");
+        assert!(error.to_string().contains("at most 1 schemas"));
+
+        let exact_schemas = ApplicationDastRequest {
+            target: "https://example.com".to_string(),
+            profile: scorchkit_core::ApplicationDastProfile::Passive,
+            include_anonymous: true,
+            personas: Vec::new(),
+            schemas: vec![schema],
+        };
+        let error = engine
+            .application_dast(&exact_schemas)
+            .await
+            .expect_err("the missing schema must fail after the count check");
+        assert!(!error.to_string().contains("at most 1 schemas"));
+    }
+
+    #[test]
+    fn selected_application_dast_personas_reject_reserved_and_duplicate_ids_and_sort_anonymous() {
+        let target = url::Url::parse("https://example.com/app").expect("target");
+        let verification = DastVerificationConfig {
+            url: "https://example.com/app/account".to_string(),
+            expected_status: 200,
+            logged_in_regex: "Account".to_string(),
+            logged_out_regex: "Sign in".to_string(),
+            max_logged_out: 0,
+        };
+        let persona = DastPersonaConfig::Header {
+            header_name: "Authorization".to_string(),
+            value_env: "SCORCHKIT_DAST_HEADER".to_string(),
+            verification,
+        };
+        let mut config = AppConfig::default();
+        config.dast.personas.insert("a".to_string(), persona);
+        let engine = Engine::new(Arc::new(config));
+
+        let reserved = ApplicationDastRequest {
+            target: target.to_string(),
+            profile: scorchkit_core::ApplicationDastProfile::Passive,
+            include_anonymous: false,
+            personas: vec!["anonymous".to_string()],
+            schemas: Vec::new(),
+        };
+        let error =
+            engine.selected_dast_personas(&reserved, &target).expect_err("anonymous is reserved");
+        assert!(error.to_string().contains("reserved or duplicated"));
+
+        let duplicate = ApplicationDastRequest {
+            target: target.to_string(),
+            profile: scorchkit_core::ApplicationDastProfile::Passive,
+            include_anonymous: false,
+            personas: vec!["a".to_string(), "a".to_string()],
+            schemas: Vec::new(),
+        };
+        let error = engine
+            .selected_dast_personas(&duplicate, &target)
+            .expect_err("duplicate persona must fail");
+        assert!(error.to_string().contains("reserved or duplicated"));
+
+        let mixed = ApplicationDastRequest {
+            target: target.to_string(),
+            profile: scorchkit_core::ApplicationDastProfile::Passive,
+            include_anonymous: true,
+            personas: vec!["a".to_string()],
+            schemas: Vec::new(),
+        };
+        let selected = engine.selected_dast_personas(&mixed, &target).expect("selected personas");
+        assert_eq!(
+            selected.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+            ["anonymous", "a"]
+        );
+    }
+
+    #[test]
+    fn application_dast_header_personas_cannot_override_request_authority_or_framing() {
+        let target = url::Url::parse("https://example.com/app").expect("target");
+        let verification = DastVerificationConfig {
+            url: "https://example.com/app/account".to_string(),
+            expected_status: 200,
+            logged_in_regex: "Account".to_string(),
+            logged_out_regex: "Sign in".to_string(),
+            max_logged_out: 0,
+        };
+        for header_name in ["Host", "Content-Length", "Transfer-Encoding", "Connection"] {
+            let persona = DastPersonaConfig::Header {
+                header_name: header_name.to_string(),
+                value_env: "SCORCHKIT_DAST_HEADER".to_string(),
+                verification: verification.clone(),
+            };
+            assert!(validate_persona_config(&persona, &target).is_err(), "accepted {header_name}");
+        }
+        let authorization = DastPersonaConfig::Header {
+            header_name: "Authorization".to_string(),
+            value_env: "SCORCHKIT_DAST_HEADER".to_string(),
+            verification,
+        };
+        assert!(validate_persona_config(&authorization, &target).is_ok());
+        assert!(validate_dast_header_value("Bearer safe-token", "SAFE_TOKEN").is_ok());
+        let error = validate_dast_header_value("safe\r\nX-Injected: true", "UNSAFE_TOKEN")
+            .expect_err("header splitting must be rejected");
+        assert!(error.to_string().contains("UNSAFE_TOKEN"));
+        assert!(!error.to_string().contains("X-Injected"));
+    }
+
+    #[tokio::test]
+    async fn application_dast_denies_all_grants_before_secret_resolution() {
+        let mut config = AppConfig::default();
+        config.dast.personas.insert(
+            "user".to_string(),
+            DastPersonaConfig::Header {
+                header_name: "Authorization".to_string(),
+                value_env: "SCORCHKIT_DAST_TEST_SECRET_MUST_NOT_EXIST".to_string(),
+                verification: DastVerificationConfig {
+                    url: "https://example.com/account".to_string(),
+                    expected_status: 200,
+                    logged_in_regex: "Account".to_string(),
+                    logged_out_regex: "Sign in".to_string(),
+                    max_logged_out: 0,
+                },
+            },
+        );
+        let request = ApplicationDastRequest {
+            target: "https://example.com".to_string(),
+            profile: scorchkit_core::ApplicationDastProfile::Passive,
+            include_anonymous: false,
+            personas: vec!["user".to_string()],
+            schemas: Vec::new(),
+        };
+        let policy = EngagementPolicy::default()
+            .allow_scope(ScopeRule::parse("example.com").expect("scope"))
+            .allow_capability(Capability::DastScan)
+            .allow_capability(Capability::ExternalTool)
+            .allow_effect(EffectClass::Intrusive);
+        let engine = Engine::for_engagement(
+            Arc::new(config.clone()),
+            Arc::new(Engagement::new("missing credential grant", policy)),
+        );
+        let denied =
+            engine.application_dast(&request).await.expect_err("credential use must be denied");
+        assert!(matches!(denied, ScorchError::Policy(_)));
+        assert!(!denied.to_string().contains("SCORCHKIT_DAST_TEST_SECRET_MUST_NOT_EXIST"));
+
+        let allowed_policy = EngagementPolicy::default()
+            .allow_scope(ScopeRule::parse("example.com").expect("scope"))
+            .allow_capability(Capability::DastScan)
+            .allow_capability(Capability::ExternalTool)
+            .allow_capability(Capability::CredentialUse)
+            .allow_effect(EffectClass::Intrusive)
+            .allow_effect(EffectClass::CredentialTest);
+        let engine = Engine::for_engagement(
+            Arc::new(config),
+            Arc::new(Engagement::new("credential grant", allowed_policy)),
+        );
+        let missing = engine
+            .application_dast(&request)
+            .await
+            .expect_err("authorized request must then resolve its secret reference");
+        assert!(
+            matches!(missing, ScorchError::Config(ref message) if message.contains("environment variable"))
+        );
+    }
+
+    #[tokio::test]
+    async fn application_dast_authorizes_schema_before_parsing_it() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let schema = directory.path().join("schema.yaml");
+        std::fs::write(&schema, b"not an OpenAPI schema").expect("schema fixture");
+        let request = ApplicationDastRequest {
+            target: "https://example.com".to_string(),
+            profile: scorchkit_core::ApplicationDastProfile::Passive,
+            include_anonymous: true,
+            personas: Vec::new(),
+            schemas: vec![crate::application_dast::ApplicationDastSchemaRequest {
+                kind: scorchkit_core::ApplicationDastSchemaKind::OpenApi,
+                path: schema,
+                sha256: "not-a-digest".to_string(),
+                endpoint: None,
+            }],
+        };
+        let policy = EngagementPolicy::default()
+            .allow_scope(ScopeRule::parse("example.com").expect("scope"))
+            .allow_capability(Capability::DastScan)
+            .allow_capability(Capability::ExternalTool)
+            .allow_effect(EffectClass::Intrusive);
+        let engine = Engine::for_engagement(
+            Arc::new(AppConfig::default()),
+            Arc::new(Engagement::new("schema denied", policy)),
+        );
+
+        let error = engine
+            .application_dast(&request)
+            .await
+            .expect_err("schema local-state grant must be required before parsing");
+        assert!(matches!(error, ScorchError::Policy(_)));
+        assert!(!error.to_string().contains("SHA-256"));
     }
 
     #[cfg(feature = "infra")]

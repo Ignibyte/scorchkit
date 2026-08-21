@@ -186,8 +186,9 @@ const fn contract(
 }
 
 #[doc(hidden)]
-const TOOL_CONTRACTS: [McpToolContract; 33] = [
+const TOOL_CONTRACTS: [McpToolContract; 34] = [
     contract("analyze_findings", McpToolClass::ExternalEffect, false, false, true),
+    contract("application_dast", McpToolClass::ExternalEffect, true, false, true),
     contract("auto_scan", McpToolClass::ExternalEffect, true, false, true),
     contract("check_tools", McpToolClass::Read, false, true, false),
     contract("correlate_findings", McpToolClass::Read, false, true, false),

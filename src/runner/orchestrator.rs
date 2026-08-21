@@ -286,7 +286,7 @@ impl Orchestrator {
             ("wordpress", "WordPress-specific assessment", 11),
             ("spa", "Single-page application (React/Vue/Angular)", 12),
             ("network", "Network infrastructure & DNS", 12),
-            ("full", "All application modules (same as --profile thorough)", 67),
+            ("full", "All application modules (same as --profile thorough)", 66),
             ("compatibility", "Explicit non-application compatibility catalog", 22),
         ]
     }
@@ -1259,7 +1259,14 @@ mod tests {
 
     #[test]
     fn named_templates_match_their_declared_catalog_sizes() {
-        for (template, _description, expected_count) in Orchestrator::list_templates() {
+        let templates = Orchestrator::list_templates();
+        assert_eq!(templates.len(), 8);
+        assert_eq!(
+            templates.iter().map(|(name, _, _)| *name).collect::<Vec<_>>(),
+            ["web-app", "api", "graphql", "wordpress", "spa", "network", "full", "compatibility",]
+        );
+        for (template, description, expected_count) in templates {
+            assert!(!description.is_empty(), "template {template} needs a description");
             let mut orchestrator = Orchestrator::new(fixture_context());
             orchestrator.register_default_modules();
             assert!(orchestrator.apply_template(template), "missing template {template}");

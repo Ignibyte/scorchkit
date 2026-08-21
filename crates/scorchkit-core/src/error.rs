@@ -19,6 +19,11 @@ pub enum ScorchError {
     #[error("tool '{tool}' exceeded the {stream} output limit of {limit_bytes} bytes")]
     ToolOutputLimit { tool: String, stream: &'static str, limit_bytes: usize },
 
+    #[error(
+        "tool '{tool}' exceeded its owned artifact budget of {limit_bytes} bytes or {limit_files} files"
+    )]
+    ToolArtifactLimit { tool: String, limit_bytes: u64, limit_files: u64 },
+
     #[error("provider response from '{url}' exceeded the limit of {limit_bytes} bytes")]
     ProviderDownloadLimit { url: String, limit_bytes: usize },
 

@@ -111,6 +111,7 @@ mutation_input_hash() {
     if ! {
         git -C "$root" ls-files -z --cached -- "${scope[@]}"
         git -C "$root" ls-files -z --others --exclude-standard -- "${scope[@]}"
+        git -C "$root" diff --cached --name-only --diff-filter=D -z -- "${scope[@]}"
     } | LC_ALL=C sort -z -u > "$file_list"; then
         rm -f "$file_list" "$manifest"
         echo "could not enumerate mutation-relevant inputs" >&2

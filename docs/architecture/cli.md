@@ -20,7 +20,7 @@ is created.
 
 | Area | Commands |
 |---|---|
-| DAST | `run`, `recon`, `scan`, `modules`, `doctor` |
+| DAST | `run`, `recon`, `scan`, `dast`, `modules`, `doctor` |
 | SAST | `code` |
 | Combined | `assess` |
 | Infrastructure/cloud | `infra`, `cloud` when compiled |
@@ -49,11 +49,16 @@ which the next command discovers automatically.
 | `quick` | headers, tech, SSL, misconfiguration | active-safe |
 | `standard` | built-in application modules | intrusive |
 | `thorough` | application modules except credential-test and exploit effects | intrusive and external-tool capability |
-| `pentest` | all 68 application modules | explicit exploit grants in addition to intrusive and external-tool capability |
+| `pentest` | all 67 application modules | explicit exploit grants in addition to intrusive and external-tool capability |
 
 Unknown profiles are errors. `commix` is restricted to `pentest`. Network, enterprise credential,
 and cloud-account adapters remain outside every implicit profile; explicit module IDs or the
 `compatibility` template make them eligible without granting their required effects.
+
+`dast <request.json>` is the dedicated authenticated application-assessment path. The bounded JSON
+request names an authorized target, a `passive`, `standard`, or `active` phase profile, configured
+persona IDs, and digest-pinned local OpenAPI or GraphQL schemas. It invokes the same policy-sealed
+service as MCP and `Engine::application_dast`; it does not accept arbitrary ZAP plans or secrets.
 
 ## Output
 

@@ -14,10 +14,10 @@ use uuid::Uuid;
 use super::contract::{McpCallContext, McpToolCallResult};
 use super::server::ScorchKitServer;
 use super::types::{
-    AnalyzeFindingsParams, AutoScanParams, CorrelateFindingsParams, FindingListParams,
-    FindingRefParams, FindingUpdateStatusParams, PlanScanParams, ProjectCreateParams,
-    ProjectDeleteParams, ProjectRefParams, ProjectScanParams, ProjectStatusParams,
-    ScanJobRefParams, ScanParams, ScanProgressParams, ScheduleScanParams,
+    AnalyzeFindingsParams, ApplicationDastParams, AutoScanParams, CorrelateFindingsParams,
+    FindingListParams, FindingRefParams, FindingUpdateStatusParams, PlanScanParams,
+    ProjectCreateParams, ProjectDeleteParams, ProjectRefParams, ProjectScanParams,
+    ProjectStatusParams, ScanJobRefParams, ScanParams, ScanProgressParams, ScheduleScanParams,
     SupplyChainCacheRefreshParams, SupplyChainScanParams, TargetAddParams,
     TargetIntelligenceParams, TargetRemoveParams,
 };
@@ -152,6 +152,60 @@ impl ScorchKitServer {
     pub async fn do_scan(&self, params: ScanParams) -> Result<String, String> {
         let job = self.submit_scan_job(params).await?;
         completed_job_result(self.jobs.run(job.id).await.map_err(|error| error.to_string())?)
+    }
+
+    /// Run the explicit isolated application DAST service.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed message when request validation, authorization, execution, or result
+    /// serialization fails.
+    pub async fn do_application_dast(
+        &self,
+        params: ApplicationDastParams,
+    ) -> Result<String, String> {
+        let profile = scorchkit_core::ApplicationDastProfile::from_name(&params.profile)
+            .ok_or_else(|| {
+                format!(
+                    "unknown application DAST profile '{}'; expected passive, standard, or active",
+                    params.profile
+                )
+            })?;
+        let schemas = params
+            .schemas
+            .into_iter()
+            .map(|schema| {
+                let kind = match schema.kind.as_str() {
+                    "open_api" | "openapi" => scorchkit_core::ApplicationDastSchemaKind::OpenApi,
+                    "graph_ql" | "graphql" => {
+                        scorchkit_core::ApplicationDastSchemaKind::GraphQl
+                    }
+                    other => {
+                        return Err(format!(
+                            "unknown application DAST schema kind '{other}'; expected open_api or graph_ql"
+                        ));
+                    }
+                };
+                Ok(crate::application_dast::ApplicationDastSchemaRequest {
+                    kind,
+                    path: std::path::PathBuf::from(schema.path),
+                    sha256: schema.sha256,
+                    endpoint: schema.endpoint,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let request = crate::application_dast::ApplicationDastRequest {
+            target: params.target,
+            profile,
+            include_anonymous: params.include_anonymous,
+            personas: params.personas,
+            schemas,
+        };
+        let result = Engine::new(Arc::clone(&self.config))
+            .application_dast(&request)
+            .await
+            .map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&result).map_err(|error| error.to_string())
     }
 
     /// Submit a stateless DAST job and return before scanner modules complete.
@@ -1160,6 +1214,17 @@ fn parse_provider_refresh_request(
 /// `#[tool_router]` — thin wrappers that delegate to `do_*` public methods.
 #[tool_router(vis = "pub(crate)")]
 impl ScorchKitServer {
+    #[tool(
+        description = "Run the policy-sealed OWASP ZAP 2.17.0 application DAST service. Select an explicit passive, standard, or active phase profile; optional digest-pinned local OpenAPI or GraphQL schemas; anonymous coverage; and configured persona IDs. Credentials are resolved only after authorization and never belong in this request. Returns findings plus typed per-persona authentication, phase, route, schema, and coverage evidence."
+    )]
+    async fn application_dast(
+        &self,
+        context: McpCallContext,
+        params: Parameters<ApplicationDastParams>,
+    ) -> McpToolCallResult {
+        Self::mcp_tool_result(context, self.do_application_dast(params.0).await)
+    }
+
     #[tool(description = "List the default application-security scan modules with their adapter \
         contracts, categories, descriptions, and external tool requirements. Compatibility \
         network, enterprise, and cloud modules are excluded. Returns a JSON array.")]
@@ -1698,6 +1763,27 @@ mod tests {
             })
             .await;
         assert_eq!(result, Err("unknown supply-chain provider 'unknown'".to_string()));
+    }
+
+    #[tokio::test]
+    async fn application_dast_tool_rejects_an_unknown_profile_with_the_typed_contract() {
+        let server = ScorchKitServer::new_stateless(Arc::new(AppConfig::default()));
+        let result = server
+            .do_application_dast(ApplicationDastParams {
+                target: "https://example.com".to_string(),
+                profile: "unbounded".to_string(),
+                include_anonymous: true,
+                personas: Vec::new(),
+                schemas: Vec::new(),
+            })
+            .await;
+        assert_eq!(
+            result,
+            Err(
+                "unknown application DAST profile 'unbounded'; expected passive, standard, or active"
+                    .to_string()
+            )
+        );
     }
 
     #[test]

@@ -183,7 +183,9 @@ When implementing a wrapper, check `ctx.config.tools.<tool>` for a custom path b
 | `sqlmap` | SQLMap Injection Scanner | `sqlmap` | Automated SQL injection detection via sqlmap |
 | `dalfox` | Dalfox XSS Scanner | `dalfox` | Advanced XSS scanning via Dalfox |
 | `nmap` | Nmap Port Scanner | `nmap` | Port scanning and service detection via nmap |
-| `zap` | OWASP ZAP | `zap-cli` | Active web application scanning via OWASP ZAP |
+OWASP ZAP is no longer an implicit module. The dedicated `application_dast` service compiles and
+authorizes isolated ZAP 2.17.0 Automation Framework plans; see
+[`application-dast.md`](application-dast.md).
 | `metasploit` | Metasploit Scanner | `msfconsole` | Exploit validation via Metasploit auxiliary modules |
 | `interactsh` | Interactsh OOB Detection | `interactsh-client` | Detect blind SSRF, XXE, RCE, and SQLi via out-of-band callbacks |
 

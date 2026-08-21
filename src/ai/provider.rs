@@ -125,6 +125,7 @@ impl CliAiProvider {
             environment_policy: EnvironmentPolicy::Inherit,
             environment: BTreeMap::default(),
             working_directory: None,
+            artifact_budget: None,
         }
     }
 
@@ -156,6 +157,7 @@ impl CliAiProvider {
             environment_policy: EnvironmentPolicy::Inherit,
             environment: BTreeMap::default(),
             working_directory: None,
+            artifact_budget: None,
         }
     }
 

@@ -43,6 +43,41 @@ fn default_profile() -> String {
     "standard".to_string()
 }
 
+const fn default_true() -> bool {
+    true
+}
+
+/// One digest-pinned local schema for `application_dast`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplicationDastSchemaParams {
+    /// `open_api` or `graph_ql`.
+    pub kind: String,
+    /// Existing local schema file.
+    pub path: String,
+    /// Expected lowercase SHA-256 of the exact file bytes.
+    pub sha256: String,
+    /// Credential-free same-origin GraphQL endpoint; required only for `graph_ql`.
+    pub endpoint: Option<String>,
+}
+
+/// Parameters for the isolated authenticated OWASP ZAP application DAST service.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplicationDastParams {
+    /// Authorized credential-free HTTP(S) base URL.
+    pub target: String,
+    /// `passive`, `standard`, or `active` ordered ZAP phase profile.
+    pub profile: String,
+    /// Include an isolated anonymous run before named personas.
+    #[serde(default = "default_true")]
+    pub include_anonymous: bool,
+    /// Stable persona IDs from `[dast.personas]`; values never contain credentials.
+    #[serde(default)]
+    pub personas: Vec<String>,
+    /// Local digest-pinned `OpenAPI` or GraphQL schemas.
+    #[serde(default)]
+    pub schemas: Vec<ApplicationDastSchemaParams>,
+}
+
 /// Parameters for creating a new project.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProjectCreateParams {
@@ -302,4 +337,20 @@ pub struct SupplyChainCacheRefreshParams {
     /// Optional RFC 3339 upstream build time.
     pub upstream_built_at: Option<String>,
     pub maximum_age_seconds: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ApplicationDastParams;
+
+    #[test]
+    fn application_dast_defaults_to_anonymous_without_personas_or_schemas() {
+        let params: ApplicationDastParams =
+            serde_json::from_str(r#"{"target":"https://example.com","profile":"passive"}"#)
+                .expect("deserialize application DAST parameters");
+
+        assert!(params.include_anonymous);
+        assert!(params.personas.is_empty());
+        assert!(params.schemas.is_empty());
+    }
 }

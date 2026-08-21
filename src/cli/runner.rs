@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::sync::Arc;
 
 use colored::Colorize;
@@ -276,6 +277,10 @@ pub async fn execute(cli: Cli) -> Result<()> {
             run_supply_chain_command(&config, command, cli.output, cli.quiet).await
         }
 
+        Commands::Dast { request } => {
+            run_application_dast(&config, &request, cli.output, cli.quiet).await
+        }
+
         Commands::Completions { shell } => {
             args::print_completions(shell);
             Ok(())
@@ -344,6 +349,40 @@ pub async fn execute(cli: Cli) -> Result<()> {
             .await
         }
     }
+}
+
+async fn run_application_dast(
+    config: &Arc<AppConfig>,
+    request_path: &std::path::Path,
+    output_format: Option<OutputFormat>,
+    quiet: bool,
+) -> Result<()> {
+    const REQUEST_LIMIT_BYTES: usize = 1024 * 1024;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(request_path)?;
+    if !file.metadata()?.is_file() {
+        return Err(ScorchError::Config(
+            "application DAST request must be one regular file".to_string(),
+        ));
+    }
+    let mut bytes = Vec::with_capacity(REQUEST_LIMIT_BYTES.min(64 * 1024));
+    file.by_ref()
+        .take(u64::try_from(REQUEST_LIMIT_BYTES.saturating_add(1)).unwrap_or(u64::MAX))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > REQUEST_LIMIT_BYTES {
+        return Err(ScorchError::Config(
+            "application DAST request exceeds the 1 MiB input limit".to_string(),
+        ));
+    }
+    let request: crate::application_dast::ApplicationDastRequest = serde_json::from_slice(&bytes)?;
+    let result = crate::facade::Engine::new(Arc::clone(config)).application_dast(&request).await?;
+    emit_scan_report(&result, config, output_format.as_ref(), quiet).await
 }
 
 async fn run_supply_chain_command(
@@ -1336,7 +1375,7 @@ mod tests {
     use super::persist_scan_results;
     use super::{
         effective_quiet, emit_scan_report, empty_plan_fallback_message, run_ai_analysis,
-        run_supply_chain_command, should_run_ai,
+        run_application_dast, run_supply_chain_command, should_run_ai,
     };
     #[cfg(feature = "infra")]
     use super::{run_assess, AssessmentTargets};
@@ -1563,5 +1602,40 @@ mod tests {
                 "boundary request was rejected by the wrong limit: {error}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn application_dast_request_limit_preserves_the_exact_one_mibibyte_boundary() {
+        for size in [2, 2049, 1024 * 1024] {
+            let directory = tempfile::tempdir().expect("request directory");
+            let request = directory.path().join("request.json");
+            std::fs::write(&request, vec![b' '; size]).expect("request fixture");
+            let error = run_application_dast(&Arc::new(AppConfig::default()), &request, None, true)
+                .await
+                .expect_err("blank JSON must fail parsing after the size check");
+            assert!(
+                !error.to_string().contains("exceeds the 1 MiB input limit"),
+                "boundary request was rejected by the wrong limit: {error}"
+            );
+        }
+
+        let directory = tempfile::tempdir().expect("request directory");
+        let request = directory.path().join("oversized.json");
+        std::fs::write(&request, vec![b' '; 1024 * 1024 + 2]).expect("oversized request");
+        let error = run_application_dast(&Arc::new(AppConfig::default()), &request, None, true)
+            .await
+            .expect_err("oversized request must fail");
+        assert!(error.to_string().contains("exceeds the 1 MiB input limit"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn application_dast_request_requires_a_regular_file() {
+        let directory = tempfile::tempdir().expect("request directory");
+        let error =
+            run_application_dast(&Arc::new(AppConfig::default()), directory.path(), None, true)
+                .await
+                .expect_err("a directory is not a request file");
+        assert!(error.to_string().contains("request must be one regular file"));
     }
 }

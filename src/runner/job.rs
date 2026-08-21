@@ -178,16 +178,7 @@ impl ScanJobService {
         let total_modules =
             queued.progress.completed_modules.len().saturating_add(orchestrator.module_count());
         let cancellation = CancellationToken::new();
-        {
-            let mut active = self.active.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if active.contains_key(&id) {
-                return Err(ScorchError::Job(format!(
-                    "scan job {id} is already running in this process"
-                )));
-            }
-            active.insert(id, cancellation.clone());
-        }
-        let mut run_guard = ActiveRunGuard::new(id, Arc::clone(&self.active), cancellation.clone());
+        let mut run_guard = self.acquire_active_run(id, cancellation.clone())?;
 
         self.mutate(id, |job| {
             transition_job(job, ScanJobState::Running, Utc::now())?;
@@ -223,6 +214,22 @@ impl ScanJobService {
             return self.finish_failed(id, error.to_string()).await;
         }
         self.finish_scan(id, scan_result, recovered_findings, recovered_modules).await
+    }
+
+    fn acquire_active_run(
+        &self,
+        id: Uuid,
+        cancellation: CancellationToken,
+    ) -> Result<ActiveRunGuard> {
+        let mut active = self.active.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if active.contains_key(&id) {
+            return Err(ScorchError::Job(format!(
+                "scan job {id} is already running in this process"
+            )));
+        }
+        active.insert(id, cancellation.clone());
+        drop(active);
+        Ok(ActiveRunGuard::new(id, Arc::clone(&self.active), cancellation))
     }
 
     /// Request cancellation. Repeated requests while cancellation is pending or complete are safe.
@@ -984,43 +991,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dropping_run_future_cleans_up_active_ownership() {
-        let server = httpmock::MockServer::start_async().await;
-        let _slow = server
-            .mock_async(|when, then| {
-                when.any_request();
-                then.delay(std::time::Duration::from_secs(5)).status(200).body("slow");
-            })
-            .await;
-        let mut job_request = request();
-        job_request.target = format!("http://localhost:{}", server.port());
-        let mut config =
-            AppConfig { engagement: Some(job_request.engagement.clone()), ..AppConfig::default() };
-        config.scan.timeout_seconds = 8;
-        config.scan.max_concurrent_modules = 1;
-        let service = ScanJobService::in_memory(Arc::new(config));
-        let queued = service.submit(job_request).await.expect("submit job");
+    async fn aborting_owned_run_future_cleans_up_active_ownership() {
+        let service = ScanJobService::in_memory(Arc::new(AppConfig::default()));
+        let id = Uuid::new_v4();
+        let (ready, acquired) = tokio::sync::oneshot::channel();
         let runner = {
             let service = service.clone();
-            tokio::spawn(async move { service.run(queued.id).await })
+            tokio::spawn(async move {
+                let cancellation = CancellationToken::new();
+                let guard = match service.acquire_active_run(id, cancellation.clone()) {
+                    Ok(guard) => guard,
+                    Err(error) => {
+                        let _ = ready.send(Err(error));
+                        return;
+                    }
+                };
+                let _ = ready.send(Ok(cancellation));
+                std::future::pending::<()>().await;
+                drop(guard);
+            })
         };
-
-        let cancellation = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            loop {
-                let token = service
-                    .active
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .get(&queued.id)
-                    .cloned();
-                if let Some(token) = token {
-                    return token;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("job acquired active ownership");
+        let cancellation = acquired
+            .await
+            .expect("ownership task remained alive")
+            .expect("job acquired active ownership");
 
         runner.abort();
         let join_error = runner.await.expect_err("aborted run must not complete");

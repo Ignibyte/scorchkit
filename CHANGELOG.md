@@ -5,6 +5,14 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Authenticated schema-driven application DAST (TICKET-013 / SK-038)** — Replaced the ambient
+  `zap-cli quick-scan` wrapper with policy-sealed OWASP ZAP 2.17.0 Automation Framework plans for
+  anonymous, header-token, and browser-login personas. Local digest-pinned OpenAPI and GraphQL
+  schemas drive deterministic route and operation coverage; authentication is verified before and
+  after discovery; active scanning requires explicit intrusive authority; and each persona runs in
+  a private bounded workspace with a clean credential environment. Findings and typed coverage gaps
+  preserve persona, phase, method, route, operation, plan, scanner, and redacted HTTP evidence
+  through CLI, MCP, reports, SARIF, PostgreSQL, and durable scan results.
 - **Ordered offline application supply-chain evidence (TICKET-012 / SK-037)** — Added explicit
   local source, artifact, OCI-layout/archive, and CycloneDX 1.6 targets; separate OSV source-lockfile
   coverage; one Syft-produced or imported SBOM reused byte-for-byte by Grype and Trivy; conservative

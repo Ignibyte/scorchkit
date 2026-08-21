@@ -18,12 +18,17 @@ pub use crate::engine::scope::ScopeRule;
 pub use crate::engine::severity::Severity;
 pub use crate::engine::target::Target;
 pub use crate::{
-    AdvisoryIdentity, DependencyEvidenceKind, PackageIdentity, ProviderDownload,
+    AdvisoryIdentity, ApplicationDastAssessment, ApplicationDastAuthenticationState,
+    ApplicationDastCoverageGap, ApplicationDastCoverageStatus, ApplicationDastGapKind,
+    ApplicationDastPersonaAssessment, ApplicationDastPhase, ApplicationDastPhaseOutcome,
+    ApplicationDastPhaseStatus, ApplicationDastProfile, ApplicationDastRequest,
+    ApplicationDastRouteCoverage, ApplicationDastSchemaIdentity, ApplicationDastSchemaKind,
+    ApplicationDastSchemaRequest, DependencyEvidenceKind, PackageIdentity, ProviderDownload,
     ProviderRefreshRequest, ProviderSnapshot, ProviderSnapshotState, SbomArtifact,
     SupplyChainAssessment, SupplyChainCorrelation, SupplyChainCoverageGap,
     SupplyChainCoverageStatus, SupplyChainGapKind, SupplyChainObservation, SupplyChainPhase,
     SupplyChainProfile, SupplyChainProvider, SupplyChainTarget, SupplyChainTargetKind,
-    SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
+    APPLICATION_DAST_ASSESSMENT_SCHEMA_V1, SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
 };
 
 // Module traits

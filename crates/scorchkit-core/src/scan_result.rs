@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use super::application_dast::{ApplicationDastAssessment, ApplicationDastCoverageStatus};
 use super::finding::Finding;
 use super::severity::Severity;
 use super::supply_chain::{SupplyChainAssessment, SupplyChainCoverageStatus};
@@ -211,6 +212,9 @@ pub struct ScanResult {
     /// Canonical application supply-chain evidence when this scan selected that family.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supply_chain: Option<SupplyChainAssessment>,
+    /// Canonical authenticated application DAST evidence when requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_dast: Option<ApplicationDastAssessment>,
     /// Summary statistics.
     pub summary: ScanSummary,
 }
@@ -274,6 +278,7 @@ impl ScanResult {
             module_outcomes: Vec::new(),
             execution_status: ScanExecutionStatus::Complete,
             supply_chain: None,
+            application_dast: None,
             summary,
         }
     }
@@ -308,12 +313,16 @@ impl ScanResult {
     pub fn refresh_execution_status(&mut self) {
         let supply_chain_status =
             self.supply_chain.as_ref().map(|assessment| assessment.coverage_status);
+        let dast_status =
+            self.application_dast.as_ref().map(|assessment| assessment.coverage_status);
         self.execution_status = if self.has_failed_modules()
             || supply_chain_status == Some(SupplyChainCoverageStatus::Degraded)
+            || dast_status == Some(ApplicationDastCoverageStatus::Degraded)
         {
             ScanExecutionStatus::Degraded
         } else if self.has_incomplete_modules()
             || supply_chain_status == Some(SupplyChainCoverageStatus::Incomplete)
+            || dast_status == Some(ApplicationDastCoverageStatus::Incomplete)
         {
             ScanExecutionStatus::Incomplete
         } else {
@@ -325,6 +334,14 @@ impl ScanResult {
     #[must_use]
     pub fn with_supply_chain(mut self, assessment: SupplyChainAssessment) -> Self {
         self.supply_chain = Some(assessment);
+        self.refresh_execution_status();
+        self
+    }
+
+    /// Attach canonical application DAST evidence and derive combined execution status.
+    #[must_use]
+    pub fn with_application_dast(mut self, assessment: ApplicationDastAssessment) -> Self {
+        self.application_dast = Some(assessment);
         self.refresh_execution_status();
         self
     }
@@ -372,6 +389,13 @@ impl ScanResult {
         {
             current.merge(additional);
         }
+        if self.application_dast.is_none() {
+            self.application_dast = other.application_dast;
+        } else if let (Some(current), Some(additional)) =
+            (self.application_dast.as_mut(), other.application_dast)
+        {
+            current.merge(additional);
+        }
         self.findings.extend(other.findings);
         self.modules_run.extend(other.modules_run);
         self.modules_skipped.extend(other.modules_skipped);
@@ -384,6 +408,10 @@ impl ScanResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application_dast::{
+        ApplicationDastCoverageGap, ApplicationDastGapKind, ApplicationDastPhase,
+        ApplicationDastProfile,
+    };
     use crate::engine::target::Target;
 
     /// Helper to build a test `ScanResult` with findings at varying confidence levels.
@@ -408,6 +436,7 @@ mod tests {
             module_outcomes: Vec::new(),
             execution_status: ScanExecutionStatus::Complete,
             supply_chain: None,
+            application_dast: None,
             summary: ScanSummary::from_findings(&findings),
             findings,
         }
@@ -453,6 +482,40 @@ mod tests {
         ]);
         result.filter_by_confidence(0.7);
         assert_eq!(result.findings.len(), 2);
+    }
+
+    #[test]
+    fn degraded_application_dast_degrades_the_scan_result() {
+        let mut assessment =
+            ApplicationDastAssessment::new("https://example.com", ApplicationDastProfile::Passive);
+        assessment.record_gap(ApplicationDastCoverageGap::new(
+            "user",
+            ApplicationDastPhase::Authentication,
+            ApplicationDastGapKind::AuthenticationFailed,
+            "login failed",
+        ));
+
+        let result = test_result_with_confidences(&[]).with_application_dast(assessment);
+
+        assert_eq!(result.execution_status, ScanExecutionStatus::Degraded);
+        assert!(!result.execution_successful());
+    }
+
+    #[test]
+    fn incomplete_application_dast_makes_the_scan_result_incomplete() {
+        let mut assessment =
+            ApplicationDastAssessment::new("https://example.com", ApplicationDastProfile::Passive);
+        assessment.record_gap(ApplicationDastCoverageGap::new(
+            "anonymous",
+            ApplicationDastPhase::TraditionalSpider,
+            ApplicationDastGapKind::RouteUnobserved,
+            "route was not observed",
+        ));
+
+        let result = test_result_with_confidences(&[]).with_application_dast(assessment);
+
+        assert_eq!(result.execution_status, ScanExecutionStatus::Incomplete);
+        assert!(!result.execution_successful());
     }
 
     /// Verify that merging two scan results combines findings, modules,

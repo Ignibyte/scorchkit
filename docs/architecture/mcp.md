@@ -50,11 +50,11 @@ adaptation cannot change policy, persistence, or scan behavior.
 
 ## Tools
 
-The current server exposes 33 tools.
+The current server exposes 34 tools.
 
 | Group | Tools |
 |---|---|
-| DAST | `list_modules`, `check_tools`, `scan`, `scan_job_start`, `scan_job_status`, `scan_job_cancel`, `scan_job_resume`, `plan_scan`, `auto_scan`, `target_intelligence`, `scan_progress` |
+| DAST | `list_modules`, `check_tools`, `scan`, `application_dast`, `scan_job_start`, `scan_job_status`, `scan_job_cancel`, `scan_job_resume`, `plan_scan`, `auto_scan`, `target_intelligence`, `scan_progress` |
 | SAST and supply chain | `list_code_modules`, `scan_code`, `supply_chain_scan`, `supply_chain_cache_status`, `supply_chain_cache_refresh` |
 | Projects | `project_create`, `project_list`, `project_show`, `project_delete`, `project_scan`, `project_status` |
 | Targets | `target_add`, `target_list`, `target_remove` |
@@ -65,6 +65,12 @@ The current server exposes 33 tools.
 `quick`, `standard`, `thorough`, and `pentest` requests use the same profile requirements as the CLI.
 Credential and exploit modules are available only through `pentest` with explicit engagement grants.
 AI planning or analysis uses the configured provider and never replaces scanner evidence.
+
+`application_dast` accepts the provider-neutral authenticated application-DAST request: target,
+phase profile, persona IDs, and digest-pinned local OpenAPI or GraphQL schemas. The handler delegates
+to `Engine::application_dast`, so MCP annotations and host intent cannot bypass scope, effects,
+credential-use grants, schema authorization, or the owned ZAP execution boundary. See
+[Authenticated application DAST](application-dast.md).
 
 `scan_code` merges the supply-chain profile selected by the same profile name. The explicit
 `supply_chain_scan` route accepts only a caller-declared local target shape. Cache status reports
@@ -118,9 +124,9 @@ Composite tools take the strongest behavior they can accept:
 |---|---|
 | `read` | `check_tools`, `correlate_findings`, `finding_show`, `list_code_modules`, `list_modules`, `project_findings`, `project_list`, `project_show`, `project_status`, `scan_job_status`, `scan_progress`, `supply_chain_cache_status`, `target_list` |
 | `local_state` | `db_migrate`, `finding_update_status`, `project_create`, `project_delete`, `scan_job_cancel`, `schedule_scan`, `target_add`, `target_remove` |
-| `external_effect` | `analyze_findings`, `auto_scan`, `plan_scan`, `project_scan`, `run_due_scans`, `scan`, `scan_code`, `scan_job_resume`, `scan_job_start`, `supply_chain_cache_refresh`, `supply_chain_scan`, `target_intelligence` |
+| `external_effect` | `analyze_findings`, `application_dast`, `auto_scan`, `plan_scan`, `project_scan`, `run_due_scans`, `scan`, `scan_code`, `scan_job_resume`, `scan_job_start`, `supply_chain_cache_refresh`, `supply_chain_scan`, `target_intelligence` |
 
-All 33 definitions set `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`.
+All 34 definitions set `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`.
 These are conservative client hints, not enforcement. For example, a scan is marked potentially
 destructive because its static schema accepts the `pentest` profile even when most calls use a safer
 profile. Engine policy still evaluates the concrete request before effects.
@@ -213,7 +219,7 @@ through an unauthenticated network wrapper. A future remote server must:
 ## Tests and delivery evidence
 
 `tests/mcp_tools.rs` uses a migrated disposable database and loopback servers. It covers authorized
-and denied scans, the exact 30-tool inventory and schema snapshot, annotations, structured success
+and denied scans, the exact 34-tool inventory and schema snapshot, annotations, structured success
 and failure, spoofed client attribution, stateless jobs over duplex MCP transport, project
 membership, schedule snapshots, one-slot concurrency, N-caller at-most-once execution, finding
 lifecycle, resources, and prompts. Contract unit tests decorate and reject generated routers without
@@ -232,7 +238,7 @@ crates/scorchkit-mcp/src/
 src/mcp/
   contract.rs      rmcp router and structured-result adapter over package contracts
   server.rs        server state, handler implementation, stdio startup
-  tools.rs         30 tool wrappers and do_* business methods
+  tools.rs         34 tool wrappers and do_* business methods
   types.rs         compatibility re-exports
   resources.rs     URI parser, listings, templates, and reads
   prompts.rs       five workflow prompts and correlation rules

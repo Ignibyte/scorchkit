@@ -174,6 +174,12 @@ impl ScanContext {
             .await
     }
 
+    /// Execute one fully owned DAST invocation after applying the context's exact tool grant.
+    pub(crate) async fn run_invocation(&self, invocation: ToolInvocation) -> Result<ToolOutput> {
+        self.require_tool_authorization(&invocation.program)?;
+        self.tool_executor.execute(invocation).await
+    }
+
     pub(crate) fn require_tool_authorization(&self, tool_name: &str) -> Result<()> {
         if cfg!(test) && self.authorization.is_empty() {
             return Ok(());

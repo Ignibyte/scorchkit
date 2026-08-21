@@ -286,6 +286,7 @@ impl InfraOrchestrator {
             module_outcomes: Vec::new(),
             execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
             supply_chain: None,
+            application_dast: None,
             summary,
         })
     }

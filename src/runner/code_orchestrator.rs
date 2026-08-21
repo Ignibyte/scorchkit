@@ -449,6 +449,7 @@ impl CodeOrchestrator {
             module_outcomes,
             execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
             supply_chain: None,
+            application_dast: None,
             summary,
         };
         result.refresh_execution_status();

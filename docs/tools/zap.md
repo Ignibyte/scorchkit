@@ -1,93 +1,78 @@
-# OWASP ZAP Scanner
+# OWASP ZAP application DAST
 
-**Module ID:** `zap` | **Category:** Scanner | **Binary:** `zap-cli`
-**Source:** `src/tools/zap.rs`
+ScorchKit uses the official OWASP ZAP 2.17.0 Automation Framework through the dedicated
+`application_dast` service. ZAP is not registered as an implicit scan module and ScorchKit does
+not invoke the obsolete `zap-cli` wrapper.
 
-## Overview
+## Runtime contract
 
-OWASP ZAP (Zed Attack Proxy) is a widely-used open-source web application security scanner. ScorchKit wraps the `zap-cli` command-line interface to perform automated active scanning, including spidering and active vulnerability testing. ZAP provides deep web application testing capabilities including injection testing, authentication bypass checks, and security header analysis.
+- Binary: `zap.sh`
+- Required version: exactly `2.17.0`
+- Official Linux asset: `ZAP_2.17.0_Linux.tar.gz`
+- SHA-256: `efe799aaa3627db683b43f00c9c210aea0b75c00cc8f0a0f0434d12bb3ddde5a`
+- Build-host path: `/mnt/fast/scorchkit/tools/zap/2.17.0/zap.sh`
+- Required add-ons: Automation Framework, Client Spider, Reports, Network, Selenium, and Linux
+  WebDrivers
+- Reviewed browser driver: ChromeDriver `151.0.7922.137`
+- ChromeDriver Linux archive SHA-256: `6796e1d222c0a37befa1385c69ff2d62592ebbe2d98ed36c874ae3a67d1d5cba`
+- Installed ChromeDriver SHA-256: `8f4f204a7977351c3408f46d4234435f522935921578e8758c178f99fb2f44bb`
+- ChromeDriver path: `/mnt/fast/scorchkit/tools/chromedriver/151.0.7922.137/chromedriver`
 
-## Installation
-
-```bash
-# Debian / Ubuntu
-sudo apt install zaproxy
-
-# macOS
-brew install --cask owasp-zap
-
-# Snap
-sudo snap install zaproxy --classic
-
-# Docker
-docker pull ghcr.io/zaproxy/zaproxy:stable
-
-# zap-cli (Python wrapper)
-pip install zapcli
-```
-
-## How ScorchKit Uses It
-
-**Command:** `zap-cli quick-scan --self-contained --spider -r -o json <target>`
-**Output format:** JSON
-**Timeout:** 600s (10 minutes)
-
-Key flags:
-- `quick-scan` -- automated scan mode
-- `--self-contained` -- start and stop ZAP automatically
-- `--spider` -- spider the target before scanning
-- `-r` -- run active scan after spidering
-- `-o json` -- JSON output format
-
-## What Gets Parsed
-
-The JSON output is parsed for alert objects from either `json["alerts"]` or `json["site"][0]["alerts"]`. For each alert:
-
-- `name` or `alert` -- the alert title
-- `desc` or `description` -- detailed description
-- `riskcode` or `risk` -- risk level (0-3)
-- `url` -- the affected URL
-- `solution` -- recommended fix
-- `cweid` or `cwe` -- CWE identifier
-
-## Findings Produced
-
-ZAP alerts are mapped to ScorchKit severities by risk code:
-
-| Risk Code | Severity |
-|-----------|----------|
-| 3 | High |
-| 2 | Medium |
-| 1 | Low |
-| 0 / other | Info |
-
-Each finding includes:
-- **Title:** `ZAP: {alert name}`
-- **OWASP:** A05:2021 Security Misconfiguration (default)
-- **CWE:** Extracted from alert when available
-- **Remediation:** Populated from ZAP's solution field
-
-## Configuration
+Set the executable override when it is not already on `PATH`:
 
 ```toml
 [tools]
-zap-cli = "/custom/path/to/zap-cli"
+zap = "/mnt/fast/scorchkit/tools/zap/2.17.0/zap.sh"
+chromedriver = "/mnt/fast/scorchkit/tools/chromedriver/151.0.7922.137/chromedriver"
 ```
 
-## Standalone Usage
+`scorchkit doctor --deep` verifies the exact ZAP version and required add-ons. Browser-authenticated
+plans also require `tools.chromedriver` or `tools.geckodriver`; the driver major must match the
+installed browser. Driver, browser, and add-on installation or updates are operator-owned
+maintenance actions and never happen during a scan.
 
-```bash
-# Quick scan with JSON output
-zap-cli quick-scan --self-contained --spider -r -o json https://example.com
+## Public request
 
-# Start ZAP daemon and scan separately
-zap-cli start
-zap-cli open-url https://example.com
-zap-cli spider https://example.com
-zap-cli active-scan https://example.com
-zap-cli alerts -f json
-zap-cli shutdown
+CLI accepts a bounded JSON request file:
 
-# Docker-based scan
-docker run -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t https://example.com -J report.json
+```console
+scorchkit dast ./dast-request.json
 ```
+
+The library uses `Engine::application_dast`; MCP uses `application_dast`. The request contains a
+credential-free HTTP(S) base URL, the `passive`, `standard`, or `active` phase profile, anonymous
+selection, configured persona IDs, and optional local schemas with their expected SHA-256.
+
+```json
+{
+  "target": "https://app.example.test/",
+  "profile": "standard",
+  "include_anonymous": true,
+  "personas": ["user"],
+  "schemas": [
+    {
+      "kind": "open_api",
+      "path": "/owned/app/openapi.yaml",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+  ]
+}
+```
+
+Persona configuration stores environment-variable names, never credential values. See
+[`../architecture/application-dast.md`](../architecture/application-dast.md) for the exact grant,
+plan, isolation, evidence, and coverage contracts.
+
+## Evidence
+
+Each ZAP alert instance becomes a separate finding with plugin and CWE identity, confidence,
+persona, route, plan digest, ZAP version, optional schema operation, and redacted bounded HTTP
+request/response evidence. URL export, method-bearing traffic HAR, Traditional JSON Plus, and
+named-persona authentication reports are mandatory. Missing or invalid artifacts, failed or lost
+authentication, plan errors, and unobserved schema operations remain explicit typed coverage gaps;
+an empty findings list is clean only when all selected phases completed.
+
+Named personas also emit a bounded HAR immediately after the forced verification request. ScorchKit
+uses it to prove the exact verification URL, expected status and indicator, and configured
+credential transport before discovery begins. ZAP's authentication report then supplies the
+session-loss statistics used for the final authentication state.

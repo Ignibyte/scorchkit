@@ -139,6 +139,7 @@ fn render_html(result: &ScanResult) -> String {
             gaps
         )
     });
+    let application_dast_html = application_dast_html(result);
 
     format!(
         r#"<!DOCTYPE html>
@@ -205,6 +206,7 @@ fn render_html(result: &ScanResult) -> String {
   </div>
 
   {supply_chain}
+  {application_dast}
 
   <h2>Findings ({total})</h2>
   {findings}
@@ -227,10 +229,53 @@ fn render_html(result: &ScanResult) -> String {
         total = s.total_findings,
         findings = findings_html,
         supply_chain = supply_chain_html,
+        application_dast = application_dast_html,
         version = env!("CARGO_PKG_VERSION"),
         modules = result.modules_run.len(),
         duration = format_duration(result.started_at, result.completed_at),
     )
+}
+
+fn application_dast_html(result: &ScanResult) -> String {
+    result.application_dast.as_ref().map_or_else(String::new, |assessment| {
+        let personas = assessment
+            .personas
+            .iter()
+            .map(|persona| {
+                let observed = persona.routes.iter().filter(|route| route.observed).count();
+                format!(
+                    "<li><strong>{}</strong>: {:?}; {}/{} routes observed</li>",
+                    html_escape(&persona.persona),
+                    persona.authentication,
+                    observed,
+                    persona.routes.len()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let gaps = assessment
+            .gaps
+            .iter()
+            .map(|gap| {
+                format!(
+                    "<li><code>{}/{}/{}</code>: {}</li>",
+                    html_escape(&gap.persona),
+                    gap.phase.as_str(),
+                    gap.kind.as_str(),
+                    html_escape(&gap.detail)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "<h2>Application DAST coverage</h2><p>Status: <strong>{}</strong>; profile: {}; ZAP {}</p><ul>{}</ul><ul>{}</ul>",
+            assessment.coverage_status.as_str(),
+            assessment.profile.as_str(),
+            html_escape(&assessment.zap_version),
+            personas,
+            gaps
+        )
+    })
 }
 
 fn html_escape(s: &str) -> String {
@@ -258,6 +303,10 @@ mod tests {
     use crate::engine::observation::AgentAnalysisRecord;
     use crate::engine::severity::Severity;
     use crate::engine::target::Target;
+    use crate::{
+        ApplicationDastAssessment, ApplicationDastCoverageGap, ApplicationDastGapKind,
+        ApplicationDastPhase, ApplicationDastProfile,
+    };
 
     #[test]
     fn html_report_renders_findings_and_document_shell() {
@@ -297,5 +346,33 @@ mod tests {
         assert!(document.contains("Unsafe &lt;eval&gt;"));
         assert!(document.contains("Scan ID: html-test"));
         assert!(document.ends_with("</html>"));
+    }
+
+    #[test]
+    fn html_report_escapes_application_dast_coverage() {
+        let mut assessment =
+            ApplicationDastAssessment::new("https://example.com", ApplicationDastProfile::Passive);
+        assessment.zap_version = "2.17.0<script>".to_string();
+        assessment.record_gap(ApplicationDastCoverageGap::new(
+            "user<script>",
+            ApplicationDastPhase::AlertReport,
+            ApplicationDastGapKind::ArtifactInvalid,
+            "malformed <script>alert(1)</script>",
+        ));
+        let result = ScanResult::new(
+            "html-dast".to_string(),
+            Target::parse("https://example.com").expect("target"),
+            Utc::now(),
+            Vec::new(),
+            vec!["application-dast".to_string()],
+            Vec::new(),
+        )
+        .with_application_dast(assessment);
+
+        let document = render_html(&result);
+        assert!(document.contains("Application DAST coverage"));
+        assert!(document.contains("user&lt;script&gt;"));
+        assert!(!document.contains("2.17.0<script>"));
+        assert!(!document.contains("malformed <script>"));
     }
 }

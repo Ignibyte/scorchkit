@@ -94,7 +94,7 @@ Use this table to select the right modules for your target type. Filter by OWASP
 | `prototype_pollution` | JavaScript prototype pollution via __proto__ injection | A08 Software Integrity | Node.js Apps | 0.5 | No |
 | `mass_assignment` | Mass assignment / over-posting via extra JSON fields | A04 Insecure Design | APIs | 0.6 | No |
 
-### External Tool Wrappers (32)
+### External Tool Wrappers (31)
 
 | Module ID | Tool | Purpose | OWASP | Target Type | Confidence |
 |-----------|------|---------|-------|-------------|------------|
@@ -104,7 +104,6 @@ Use this table to select the right modules for your target type. Filter by OWASP
 | `sqlmap` | SQLMap | Automated SQL injection confirmation and exploitation | A03 | Web Apps | 0.9 |
 | `feroxbuster` | Feroxbuster | Recursive directory brute-force | A01 | Web Apps | 0.6 |
 | `sslyze` | SSLyze | Deep TLS/SSL analysis (Heartbleed, ROBOT, cipher suites) | A02 | HTTPS | 0.9 |
-| `zap` | OWASP ZAP | Full web application security scanner | Multiple | Web Apps | 0.7 |
 | `ffuf` | ffuf | Fast web fuzzer (directories, parameters, vhosts) | A01 | Web Apps | 0.6 |
 | `metasploit` | Metasploit | Exploit framework for confirmed vulnerabilities | Multiple | Infrastructure | 0.9 |
 | `wafw00f` | wafw00f | WAF product identification | A05 | Web Apps | 0.7 |

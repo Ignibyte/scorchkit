@@ -255,7 +255,7 @@ async fn test_tool_list_modules() {
     let server = test_server_without_database();
     let result = server.do_list_modules();
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
-    assert_eq!(parsed.len(), 68);
+    assert_eq!(parsed.len(), 67);
     assert!(parsed
         .iter()
         .all(|module| module["adapter"]["schemaVersion"] == scorchkit_core::ADAPTER_CONTRACT_V1));
@@ -399,7 +399,7 @@ async fn stateless_job_runs_through_mcp_transport_without_database() {
     });
     let client = ().serve(client_transport).await.expect("initialize MCP client");
     let tools = client.list_all_tools().await.expect("list MCP tools");
-    assert_eq!(tools.len(), 33, "every routed MCP tool has a canonical contract");
+    assert_eq!(tools.len(), 34, "every routed MCP tool has a canonical contract");
     let expected_output_schema: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/mcp/tool-output-schema-v1.json"))
             .expect("decode output schema fixture");

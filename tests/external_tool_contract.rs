@@ -235,7 +235,7 @@ async fn every_dast_tool_wrapper_executes_its_declared_invocation() -> Result<()
         authorized_dast_context("https://example.com/?id=1")?.with_tool_executor(injected);
     let modules = scorchkit::tools::register_modules();
 
-    assert_eq!(modules.len(), 45, "DAST tool registry contract changed");
+    assert_eq!(modules.len(), 44, "DAST tool registry contract changed");
     let mut process_backed = 0usize;
     for module in modules {
         assert!(
@@ -260,7 +260,7 @@ async fn every_dast_tool_wrapper_executes_its_declared_invocation() -> Result<()
         process_backed += 1;
     }
 
-    assert_eq!(process_backed, 44, "all non-session DAST wrappers must use the shared executor");
+    assert_eq!(process_backed, 43, "all non-session DAST wrappers must use the shared executor");
     Ok(())
 }
 

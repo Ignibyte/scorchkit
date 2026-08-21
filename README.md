@@ -14,7 +14,7 @@ permission to test. A project target, prompt, or agent approval does not replace
 
 | Family | Registered modules | Notes |
 |---|---:|---|
-| DAST and recon | 90 | 68 application modules by default; 22 explicit compatibility modules |
+| DAST and recon | 89 | 67 application modules by default; 22 explicit compatibility modules |
 | SAST | 22 | 21 application modules by default; ScoutSuite is explicit cloud-account compatibility |
 | Infrastructure | Up to 5 | Explicit compatibility family: 4 core probes plus optional CVE correlation |
 | Cloud | 5 | Explicit compatibility family of bounded tool adapters; native provider SDK modules remain quarantined |
@@ -71,7 +71,7 @@ no authorization and cannot start a scan until an engagement is added.
 | `quick` | `headers`, `tech`, `ssl`, `misconfig` | `active-safe` |
 | `standard` | Built-in application DAST modules | `intrusive` |
 | `thorough` | Application modules except credential-test and exploit effects | `intrusive` plus `external-tool` capability |
-| `pentest` | All 68 application modules, including `commix` | Explicit intrusive, external-tool, and exploit grants |
+| `pentest` | All 67 application modules, including `commix` | Explicit intrusive, external-tool, and exploit grants |
 
 Broader profiles are never inferred from installed tools. Expand the engagement deliberately and
 review the resulting scope before using them.
@@ -159,7 +159,7 @@ The package stores no target, engagement, database URL, or credential. It is a h
 same agent-neutral engine and is not installed into a personal marketplace by the repository. See
 [the Codex plugin guide](docs/guide/codex-plugin.md).
 
-All 33 MCP tools advertise a versioned object output schema, complete safety annotations, and one
+All 34 MCP tools advertise a versioned object output schema, complete safety annotations, and one
 read, local-state, or external-effect class. Routed calls return native structured success/error
 content; successful calls also retain the unchanged legacy text payload. The local-process principal
 and self-asserted client name are trace context only; ScorchKit engagement policy remains the sole

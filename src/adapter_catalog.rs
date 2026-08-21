@@ -72,7 +72,6 @@ const WEB_JSON_IDS: &[&str] = &[
     "wafw00f",
     "wapiti",
     "wpscan",
-    "zap",
 ];
 const WEB_XML_IDS: &[&str] = &["nmap"];
 const WEB_FILE_ARTIFACT_IDS: &[&str] = &["eyewitness", "vespasian"];
@@ -170,7 +169,6 @@ pub const KNOWN_WEB_ADAPTER_IDS: &[&str] = &[
     "xss",
     "xsstrike",
     "xxe",
-    "zap",
 ];
 
 /// All production code module IDs expected from the built-in registries.
@@ -451,7 +449,7 @@ mod tests {
         for tool in ["commix", "msfconsole"] {
             assert_eq!(external_web_tool_effect(tool), Some(EffectClass::Exploit));
         }
-        for tool in ["nuclei", "zap-cli", "sqlmap"] {
+        for tool in ["nuclei", "zap.sh", "sqlmap"] {
             assert_eq!(external_web_tool_effect(tool), None);
         }
         assert!(external_web_tool_uses_ambient_credentials("prowler"));

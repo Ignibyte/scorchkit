@@ -37,6 +37,7 @@ engagement and therefore authorizes no scan.
 | `engagement` | authoritative target, capability, effect, deny, expiry, and enabled state |
 | `scan` | timeout, concurrency, user agent, redirect limit, rate limit, profile, proxy, headers, and legacy display scope |
 | `auth` | web bearer, cookie, basic, or custom-header credentials |
+| `dast` | bounded ZAP phase, persona, schema, process, and artifact settings |
 | `tools` | external executable overrides |
 | `sast` | reproducible static-analysis settings, including pinned local Semgrep rules |
 | `supply_chain` | offline SBOM/SCA cache root, artifact limits, and provider snapshot ages |
@@ -140,6 +141,51 @@ their databases during a scan. The configured provider ages are absolute policy 
 request may choose a shorter lifetime but cannot make a snapshot valid beyond these values. See
 [Application supply-chain evidence](application-supply-chain.md) for the cache layout, refresh
 contract, explicit target kinds, and pinned tool versions.
+
+## Application DAST
+
+The DAST service uses explicit persona IDs. Configuration stores environment-variable names only;
+credentials remain outside TOML and are resolved after the complete request grant matrix passes.
+
+```toml
+[dast]
+persona_limit_count = 16
+schema_limit_bytes = 8388608
+schema_limit_count = 16
+output_limit_bytes = 8388608
+artifact_limit_bytes = 536870912
+artifact_limit_files = 20000
+timeout_seconds = 1800
+spider_minutes = 5
+client_spider_minutes = 10
+active_scan_minutes = 20
+client_spider_depth = 10
+client_spider_children = 100
+browser_id = "chrome-headless"
+
+[dast.personas.user]
+kind = "browser"
+login_url = "https://app.example.test/login"
+username_env = "SCORCHKIT_USER_NAME"
+password_env = "SCORCHKIT_USER_PASSWORD"
+
+[dast.personas.user.verification]
+url = "https://app.example.test/account"
+expected_status = 200
+logged_in_regex = "Account"
+logged_out_regex = "Sign in"
+max_logged_out = 0
+
+[tools]
+zap = "/mnt/fast/scorchkit/tools/zap/2.17.0/zap.sh"
+chromedriver = "/mnt/fast/scorchkit/tools/chromedriver/151.0.7922.137/chromedriver"
+```
+
+Header personas use `kind = "header"`, `header_name`, `value_env`, and the same verification
+block. Firefox browser personas instead configure `tools.geckodriver`. The selected driver must
+match the installed browser major and is never downloaded during a scan. The public request
+contains persona IDs, never these environment values. See
+[Authenticated application DAST](application-dast.md).
 
 ## CVE providers
 

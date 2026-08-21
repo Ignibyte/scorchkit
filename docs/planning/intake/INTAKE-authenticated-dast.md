@@ -1,9 +1,9 @@
 ---
 title: INTAKE-authenticated-dast
-status: candidate
+status: promoted
 created: 2026-08-17
-ticket:
-pipeline_spec:
+ticket: docs/planning/tickets/open/TICKET-013-authenticated-dast.md
+pipeline_spec: docs/planning/pipeline/active/authenticated-dast.spec.md
 ---
 
 # Authenticated schema-driven application DAST

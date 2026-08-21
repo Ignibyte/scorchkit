@@ -98,7 +98,7 @@ scorchkit run https://target.com --profile thorough
 
 ### pentest
 
-Runs all 68 application modules, including Commix, when the engagement grants the required
+Runs all 67 application modules, including Commix, when the engagement grants the required
 intrusive, external-tool, and exploit effects. It does not implicitly add compatibility modules.
 
 Use an explicit module ID or the `compatibility` template for compatibility selection. Selection
@@ -1163,19 +1163,19 @@ the module is automatically skipped.
 
 ---
 
-### zap -- OWASP ZAP Scanner
+### application_dast -- OWASP ZAP application assessment
 
 | | |
 |---|---|
-| **ID** | `zap` |
-| **Category** | Scanner |
-| **External tool** | `zap-cli` |
-| **Confidence** | 0.7 |
-| **Description** | Active web application scanning via OWASP ZAP |
+| **ID** | `application_dast` |
+| **Category** | Dedicated service |
+| **External tool** | pinned `zap.sh` 2.17.0 |
+| **Confidence** | alert-specific |
+| **Description** | Isolated schema-driven application DAST with typed persona and route coverage |
 
 **Example findings:**
-- ZAP: Cross-Site Scripting (High)
-- ZAP: SQL Injection (High)
+- Cross-Site Scripting with request/response evidence and persona provenance
+- SQL Injection with plugin ID, CWE, route, plan, and schema-operation provenance
 
 ---
 

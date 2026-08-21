@@ -136,6 +136,8 @@ file-mode observations while the index retains authoritative modes.
 | SK-034 | Narrowed every implicit host catalog to application security, retained non-core adapters behind explicit compatibility selection, and added a versioned cross-family descriptor, bounded invocation fields, typed parser outcomes, and scoped artifact ownership. | Exact 69/22 web and 21/1 code catalog partitions; Nuclei/Semgrep integrity fixtures; credential/effect denial-before-execution tests; 79.11% line coverage; 1,469 strict cases; sealed evidence catches 48/48 viable mutations across 23 inspection-repaired functions. |
 | SK-035 | Added a provider-neutral v2 finding/observation contract with typed locations, scanner provenance, redacted evidence, stable identities, correlation keys, separately labeled agent analysis, enriched Semgrep/Nuclei producers, canonical report projections, and append-preserving PostgreSQL persistence. | Legacy/v2 migration, redaction, identity, SARIF, report, and fresh-schema PostgreSQL tests; 79.44% line coverage; 1,494 strict cases; the completed 157-mutant DIFF baseline plus exact 25-survivor repair closes 109/109 viable mutations with 48 unviable and zero misses. |
 | SK-036 | Added reproducible fast/deep SAST with an embedded or exact-digest Semgrep pack, offline no-build CodeQL, isolated Psalm taint analysis, corrected PHPStan evidence, typed coverage outcomes, and complete code-flow provenance. | Nine inspection findings repaired; 81.90% line coverage; 1,574 strict cases; PostgreSQL and CLI/MCP contracts green; the preserved 521-mutant DIFF plus exact 111-survivor repair closes 421/421 viable mutations with 100 unviable and zero misses. |
+| SK-037 | Added application-only supply-chain analysis for source trees and local artifacts with one verified CycloneDX SBOM, offline OSV/Grype/Trivy consumers, typed provider snapshots, and policy-owned refresh. | Twelve inspection findings repaired; 82.40% line coverage; 1,664 strict cases; PostgreSQL and CLI/MCP contracts green; sealed focused evidence catches 211/211 viable mutations with zero misses. |
+| SK-038 | Replaced the ambient ZAP quick-scan wrapper with authorized OWASP ZAP Automation Framework plans for anonymous, header-token, and browser personas plus digest-pinned OpenAPI and GraphQL inputs. | Nine inspection findings repaired; three pinned-runtime loopback integrations; 81.26% line coverage; 1,744 strict cases; PostgreSQL and CLI/MCP contracts green; sealed evidence catches 79/79 viable delivery mutations plus the 5/5 final-tree follow-up with zero misses after one preserved broad inventory. |
 
 The sealed Codex Security scan `efe30eaf-9b1b-4572-949a-0e8391d48247` reviewed 603 changed paths and
 closed 192/192 semantic rows. Its eight high-confidence findings have code fixes and regression
@@ -145,46 +147,45 @@ evidence.
 
 ## Current validation evidence
 
-Evidence produced through the TICKET-011 pre-completion worktree:
+Evidence produced through the TICKET-013 pre-completion worktree:
 
 | Signal | Last result | Final requirement |
 |---|---:|---:|
 | Compiler | all targets, workspace packages, and features passed | pass after final edits |
 | Strict Clippy | zero diagnostics across every derived feature state and workspace package | pass after final edits and every feature state |
-| All-feature tests | 1,177 root library cases exercised with 4 reasoned live-network cases ignored; package, integration, and doctest suites green | pass after final edits with PostgreSQL |
-| Canonical line coverage | 82.40% | at least 62%; next ratchet target above 82% |
-| SK-037 focused repair | Completed DIFF inventory: 570 selected, 291 caught, 3 timed out, 211 missed, and 65 unviable. Exact final survivor recheck: 21/21 residual mutations caught after the 211-mutant repair run. Reconstructed focused result: 211/211 viable caught, 100% MSI. | retain the exact sealed input transition, survivor inventory, raw outcomes, and evidence digest; do not repeat the broad run while mutation inputs are unchanged |
-| Nextest strictness | 1,664 executed cases passed and 6 live-network cases skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
+| All-feature tests | 1,238 root library cases exercised with 4 reasoned cases ignored; package, integration, and doctest suites green | pass after final edits with PostgreSQL |
+| Canonical line coverage | 81.26% | at least 62%; restore the next ratchet target above 82% |
+| SK-038 focused repair | The sole DIFF inventory selected 564 mutations, caught 255 plus 3 timeouts, exposed 229 misses, and found 77 unviable. Repair stayed within the 72 affected functions. The delivery scope caught 79/79 viable mutations; after a test-only environment-race repair, the final current-tree scope caught all 5 `get_tool_version` mutants. Both seals have 100% MSI and zero misses. | retain the broad and focused raw outcomes, exact input hashes, and sealed evidence digests; do not repeat the broad run while mutation inputs are unchanged |
+| Nextest strictness | 1,744 executed cases passed and 9 ZAP/live-network cases skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
 | PostgreSQL integration | 67 MCP, 12 storage, and 9 storage-integration tests passed | pass |
 | CLI/MCP contracts | 22 CLI, 2 code-scan, 67 MCP, and 12 scan-plan tests passed | pass |
-| Delivery receipt | TICKET-012 pre-completion focused-repair gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive focused-repair receipt bound to the sealed 211-survivor evidence |
+| Delivery receipt | TICKET-013 pre-completion focused-repair gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive focused-repair receipt bound to the sealed five-mutation final-tree evidence |
 
 The test count is historical evidence, not a promised final count. The gate output after all source and
 documentation edits is authoritative.
 
 ## Baseline blockers
 
-None. The feature-readiness baseline and SK-028 through SK-037 are closed above.
+None. The feature-readiness baseline and SK-028 through SK-038 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. SK-037 is complete; each remaining row has a specified
+The pipeline permits one active ticket. SK-038 is complete in this delivery; each remaining row has a specified
 candidate intake under `docs/planning/intake/` and becomes a numbered ticket only when promoted.
 Backlog status is not a waiver of a safety invariant.
 
 | Order | Batch | Planned outcome | Depends on | Planning artifact |
 |---:|---|---|---|---|
-| 1 | SK-038 | Replace shallow ZAP quick scans with authorized authenticated Automation Framework plans, personas, and OpenAPI/GraphQL imports. | SK-034, SK-035 | [intake](intake/INTAKE-authenticated-dast.md) |
-| 2 | SK-039 | Pin, sign, classify, and audit Nuclei template collections and repository-owned application probes. | SK-034, SK-035 | [intake](intake/INTAKE-trusted-nuclei.md) |
-| 3 | SK-040 | Correlate source flows, routes, parameters, components, and runtime proof into versioned attack paths and focused verification selections. | SK-035 through SK-039 | [intake](intake/INTAKE-source-runtime-correlation.md) |
-| 4 | SK-041 | Add code-informed, application-only pentest scenarios plus HAR/manual proxy evidence interoperability. | SK-038 through SK-040 | [intake](intake/INTAKE-application-pentest.md) |
-| 5 | SK-042 | Present change-aware commit, PR, staging, release, and deep AppSec workflows through Codex-first, agent-neutral contracts. | SK-036 through SK-041 | [intake](intake/INTAKE-codex-appsec-workflows.md) |
-| 6 | SK-043 | Restore webhook delivery through a redacted, policy-owned, durable bounded queue outside scan execution. | SK-028, SK-035 | [intake](intake/INTAKE-policy-webhooks.md) |
-| 7 | SK-044 | Add authenticated remote MCP with principal-to-engagement binding, host validation, and an explicit TLS policy. | SK-032, SK-035 | [intake](intake/INTAKE-authenticated-remote-mcp.md) |
-| 8 | SK-045 | Add Windows Job Object process ownership before enabling Windows builds. | SK-028, SK-034 | [intake](intake/INTAKE-windows-process-owner.md) |
-| 9 | SK-046 | Replace reachable unmaintained dependencies and remove the reviewed disabled-MySQL advisory exception. | upstream availability or replacement | [intake](intake/INTAKE-dependency-debt.md) |
-| 10 | SK-047 | Complete the scheduled full mutation inventory once, repair named survivors through focused scopes, and raise quality floors only from measured green evidence. | SK-027 | [intake](intake/INTAKE-quality-ratchet.md) |
-| 11 | SK-048 | Add reproducible ScorchKit releases, signed artifacts, SBOM/provenance, upgrade and rollback tests, and performance/chaos budgets. | SK-033, SK-035, SK-046 | [intake](intake/INTAKE-reproducible-releases.md) |
+| 1 | SK-039 | Pin, sign, classify, and audit Nuclei template collections and repository-owned application probes. | SK-034, SK-035 | [intake](intake/INTAKE-trusted-nuclei.md) |
+| 2 | SK-040 | Correlate source flows, routes, parameters, components, and runtime proof into versioned attack paths and focused verification selections. | SK-035 through SK-039 | [intake](intake/INTAKE-source-runtime-correlation.md) |
+| 3 | SK-041 | Add code-informed, application-only pentest scenarios plus HAR/manual proxy evidence interoperability. | SK-038 through SK-040 | [intake](intake/INTAKE-application-pentest.md) |
+| 4 | SK-042 | Present change-aware commit, PR, staging, release, and deep AppSec workflows through Codex-first, agent-neutral contracts. | SK-036 through SK-041 | [intake](intake/INTAKE-codex-appsec-workflows.md) |
+| 5 | SK-043 | Restore webhook delivery through a redacted, policy-owned, durable bounded queue outside scan execution. | SK-028, SK-035 | [intake](intake/INTAKE-policy-webhooks.md) |
+| 6 | SK-044 | Add authenticated remote MCP with principal-to-engagement binding, host validation, and an explicit TLS policy. | SK-032, SK-035 | [intake](intake/INTAKE-authenticated-remote-mcp.md) |
+| 7 | SK-045 | Add Windows Job Object process ownership before enabling Windows builds. | SK-028, SK-034 | [intake](intake/INTAKE-windows-process-owner.md) |
+| 8 | SK-046 | Replace reachable unmaintained dependencies and remove the reviewed disabled-MySQL advisory exception. | upstream availability or replacement | [intake](intake/INTAKE-dependency-debt.md) |
+| 9 | SK-047 | Complete the scheduled full mutation inventory once, repair named survivors through focused scopes, and raise quality floors only from measured green evidence. | SK-027 | [intake](intake/INTAKE-quality-ratchet.md) |
+| 10 | SK-048 | Add reproducible ScorchKit releases, signed artifacts, SBOM/provenance, upgrade and rollback tests, and performance/chaos budgets. | SK-033, SK-035, SK-046 | [intake](intake/INTAKE-reproducible-releases.md) |
 
 The former native cloud-provider restoration item is removed from the core sequence. General cloud
 posture may return only as an explicit optional extension; application IaC and deployment artifacts

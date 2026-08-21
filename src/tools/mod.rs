@@ -43,7 +43,6 @@ pub mod wapiti;
 pub mod whatweb;
 pub mod wpscan;
 pub mod xsstrike;
-pub mod zap;
 
 use crate::engine::module_trait::ScanModule;
 
@@ -58,7 +57,6 @@ pub fn register_modules() -> Vec<Box<dyn ScanModule>> {
         Box::new(sqlmap::SqlmapModule),
         Box::new(feroxbuster::FeroxbusterModule),
         Box::new(sslyze::SslyzeModule),
-        Box::new(zap::ZapModule),
         Box::new(ffuf::FfufModule),
         Box::new(metasploit::MetasploitModule),
         Box::new(wafw00f::Wafw00fModule),

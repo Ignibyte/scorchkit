@@ -91,6 +91,25 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
             assessment.coverage_status.as_str(), gaps
         )
     });
+    let application_dast_html = result.application_dast.as_ref().map_or_else(String::new, |assessment| {
+        let personas = assessment.personas.iter().map(|persona| {
+            let observed = persona.routes.iter().filter(|route| route.observed).count();
+            format!(
+                "<li><strong>{}</strong>: {:?}; {}/{} routes observed</li>",
+                html_escape(&persona.persona), persona.authentication, observed, persona.routes.len()
+            )
+        }).collect::<Vec<_>>().join("\n");
+        let gaps = assessment.gaps.iter().map(|gap| {
+            format!(
+                "<li><code>{}/{}/{}</code>: {}</li>",
+                html_escape(&gap.persona), gap.phase.as_str(), gap.kind.as_str(), html_escape(&gap.detail)
+            )
+        }).collect::<Vec<_>>().join("\n");
+        format!(
+            "<h3>Application DAST coverage</h3><p>Status: <strong>{}</strong>; profile: {}; ZAP {}</p><ul>{}</ul><ul>{}</ul>",
+            assessment.coverage_status.as_str(), assessment.profile.as_str(), html_escape(&assessment.zap_version), personas, gaps
+        )
+    });
 
     let risk_rating = overall_risk_rating(s.critical, s.high, s.medium);
 
@@ -162,6 +181,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
     <tr><th>Tool Version</th><td>ScorchKit v{version}</td></tr>
   </table>
   {supply_chain}
+  {application_dast}
   <h3>Methodology</h3>
   <p>The assessment followed the PTES (Penetration Testing Execution Standard)
   framework adapted for automated scanning: reconnaissance, vulnerability
@@ -195,6 +215,7 @@ pub fn render_pdf_html(result: &ScanResult) -> String {
         module_count = module_count,
         execution_status = execution_status,
         supply_chain = supply_chain_html,
+        application_dast = application_dast_html,
         total = s.total_findings,
         categories = count_categories(s.critical, s.high, s.medium, s.low, s.info),
         risk_rating = risk_rating,
@@ -450,6 +471,7 @@ mod tests {
             module_outcomes: Vec::new(),
             execution_status: crate::engine::scan_result::ScanExecutionStatus::Complete,
             supply_chain: None,
+            application_dast: None,
             findings,
             summary: ScanSummary {
                 total_findings: 2,

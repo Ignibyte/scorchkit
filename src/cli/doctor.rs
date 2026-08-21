@@ -50,6 +50,7 @@ enum DeepNote {
 struct DeepCheckPlan {
     version_flag: Option<&'static str>,
     check_nuclei_templates: bool,
+    check_zap_runtime: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -119,7 +120,7 @@ impl Version {
 }
 
 fn requires_exact_version(binary: &str) -> bool {
-    matches!(binary, "syft" | "osv-scanner" | "grype" | "trivy")
+    matches!(binary, "zap.sh" | "syft" | "osv-scanner" | "grype" | "trivy")
 }
 
 fn version_satisfies(binary: &str, detected: &Version, required: &Version) -> bool {
@@ -182,13 +183,36 @@ fn which_path(tool: &str) -> Option<String> {
 
 /// Run a tool with a version flag and extract the version string.
 async fn get_tool_version(binary: &str, version_flag: &str) -> Option<String> {
+    let args = if binary == "zap.sh" {
+        vec!["-host", "127.0.0.1", "-port", "0", version_flag]
+    } else {
+        vec![version_flag]
+    };
     let output = SystemToolExecutor
-        .execute(ToolInvocation::lenient(binary, &[version_flag], Duration::from_secs(10)))
+        .execute(ToolInvocation::lenient(binary, &args, Duration::from_secs(15)))
         .await
         .ok()?;
 
     // Try stdout first, then stderr (some tools print version to stderr)
-    extract_version(&output.stdout).or_else(|| extract_version(&output.stderr))
+    if binary == "zap.sh" {
+        standalone_zap_version(&format!("{}\n{}", output.stdout, output.stderr))
+    } else {
+        extract_version(&output.stdout).or_else(|| extract_version(&output.stderr))
+    }
+}
+
+fn standalone_zap_version(output: &str) -> Option<String> {
+    let mut versions = output.lines().map(str::trim).filter(|line| {
+        let mut components = line.split('.');
+        let valid = (0..3).all(|_| {
+            components.next().is_some_and(|component| {
+                !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        });
+        valid && components.next().is_none()
+    });
+    let version = versions.next()?.to_string();
+    versions.next().is_none().then_some(version)
 }
 
 /// Check nuclei template freshness by examining the templates directory.
@@ -229,10 +253,93 @@ fn deep_check_plan(spec: &ToolSpec, deep: bool, installed: bool) -> DeepCheckPla
         DeepCheckPlan {
             version_flag: spec.version_flag,
             check_nuclei_templates: spec.binary == "nuclei",
+            check_zap_runtime: spec.binary == "zap.sh",
         }
     } else {
         DeepCheckPlan::default()
     }
+}
+
+fn check_zap_runtime() -> Vec<DeepNote> {
+    let Ok(executable) = resolve_tool_path("zap.sh") else {
+        return vec![DeepNote::Warn("Cannot resolve the ZAP executable".to_string())];
+    };
+    let Some(root) = executable.parent() else {
+        return vec![DeepNote::Warn("Cannot resolve the ZAP install root".to_string())];
+    };
+    let plugin_dir = root.join("plugin");
+    let Ok(entries) = std::fs::read_dir(&plugin_dir) else {
+        return vec![DeepNote::Warn(format!(
+            "ZAP plugin directory is unavailable: {}",
+            plugin_dir.display()
+        ))];
+    };
+    let files: Vec<_> = entries
+        .filter_map(std::result::Result::ok)
+        .filter_map(|entry| {
+            entry
+                .file_type()
+                .ok()
+                .filter(std::fs::FileType::is_file)
+                .and_then(|_| entry.file_name().into_string().ok())
+        })
+        .collect();
+    let required = [
+        "authhelper-",
+        "automation-",
+        "client-",
+        "graphql-",
+        "openapi-",
+        "reports-",
+        "selenium-",
+        "spider-",
+        "webdriverlinux-",
+    ];
+    let missing: Vec<_> = required
+        .into_iter()
+        .filter(|prefix| {
+            !files.iter().any(|name| {
+                name.starts_with(prefix)
+                    && std::path::Path::new(name)
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("zap"))
+            })
+        })
+        .collect();
+    if !missing.is_empty() {
+        return vec![DeepNote::Warn(format!(
+            "ZAP runtime is missing required add-ons: {}",
+            missing.join(", ")
+        ))];
+    }
+    let auth_archive =
+        files.iter().find(|name| name.starts_with("authhelper-")).map(|name| plugin_dir.join(name));
+    let reports_archive =
+        files.iter().find(|name| name.starts_with("reports-")).map(|name| plugin_dir.join(name));
+    let templates_present = auth_archive
+        .is_some_and(|path| zip_contains(&path, "reports/auth-report-json/template.yaml"))
+        && reports_archive
+            .is_some_and(|path| zip_contains(&path, "reports/traditional-json-plus/template.yaml"));
+    if !templates_present {
+        return vec![DeepNote::Warn(
+            "ZAP runtime is missing the required auth-report-json or traditional-json-plus template"
+                .to_string(),
+        )];
+    }
+    vec![DeepNote::Info(
+        "Required application DAST add-ons and report templates are installed".to_string(),
+    )]
+}
+
+fn zip_contains(path: &std::path::Path, entry: &str) -> bool {
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let Ok(mut archive) = zip::ZipArchive::new(file) else {
+        return false;
+    };
+    let contains_entry = archive.by_name(entry).is_ok();
+    contains_entry
 }
 
 /// All external tools that `ScorchKit` can use.
@@ -268,8 +375,8 @@ fn tool_specs() -> Vec<ToolSpec> {
             name: "OWASP ZAP",
             category: "Web Scanner",
             version_flag: Some("-version"),
-            min_version: Some("2.14.0"),
-            remediation: "Install: see https://www.zaproxy.org/download/",
+            min_version: Some("2.17.0"),
+            remediation: "Install the checksum-verified official ZAP 2.17.0 Linux archive",
         },
         ToolSpec {
             binary: "wpscan",
@@ -800,6 +907,9 @@ async fn check_tool(spec: &ToolSpec, deep: bool) -> ToolCheckResult {
     if plan.check_nuclei_templates {
         deep_notes.push(check_nuclei_templates());
     }
+    if plan.check_zap_runtime {
+        deep_notes.extend(check_zap_runtime());
+    }
 
     ToolCheckResult {
         name: spec.name,
@@ -955,6 +1065,69 @@ fn render_doctor_summary(summary: &DoctorSummary, deep: bool) -> String {
 mod tests {
     use super::*;
 
+    struct PathGuard(Option<std::ffi::OsString>);
+
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            if let Some(path) = self.0.take() {
+                std::env::set_var("PATH", path);
+            } else {
+                std::env::remove_var("PATH");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn zap_runtime_fixture(auth_template: bool, reports_template: bool) -> tempfile::TempDir {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("temporary ZAP runtime");
+        let executable = root.path().join("zap.sh");
+        std::fs::write(&executable, b"#!/bin/sh\nexit 0\n").expect("write ZAP launcher");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+            .expect("make ZAP launcher executable");
+        let plugin = root.path().join("plugin");
+        std::fs::create_dir(&plugin).expect("create plugin directory");
+
+        for prefix in [
+            "authhelper-",
+            "automation-",
+            "client-",
+            "graphql-",
+            "openapi-",
+            "reports-",
+            "selenium-",
+            "spider-",
+            "webdriverlinux-",
+        ] {
+            let path = plugin.join(format!("{prefix}fixture.zap"));
+            let file = std::fs::File::create(path).expect("create add-on archive");
+            let mut archive = zip::ZipWriter::new(file);
+            let entry = match prefix {
+                "authhelper-" if auth_template => Some("reports/auth-report-json/template.yaml"),
+                "reports-" if reports_template => {
+                    Some("reports/traditional-json-plus/template.yaml")
+                }
+                _ => None,
+            };
+            if let Some(entry) = entry {
+                archive
+                    .start_file(entry, zip::write::SimpleFileOptions::default())
+                    .expect("start add-on entry");
+                archive.write_all(b"fixture").expect("write add-on entry");
+            }
+            archive.finish().expect("finish add-on archive");
+        }
+        root
+    }
+
+    fn with_path<T>(path: &std::path::Path, test: impl FnOnce() -> T) -> T {
+        let _guard = PathGuard(std::env::var_os("PATH"));
+        std::env::set_var("PATH", path);
+        test()
+    }
+
     fn tool_spec(binary: &'static str) -> ToolSpec {
         ToolSpec {
             binary,
@@ -999,8 +1172,8 @@ mod tests {
     }
 
     #[test]
-    fn application_supply_chain_tools_require_exact_pinned_versions() {
-        for binary in ["syft", "osv-scanner", "grype", "trivy"] {
+    fn reviewed_runtime_tools_require_exact_pinned_versions() {
+        for binary in ["zap.sh", "syft", "osv-scanner", "grype", "trivy"] {
             assert!(requires_exact_version(binary), "{binary} must remain exact-pinned");
         }
         assert!(!requires_exact_version("nmap"));
@@ -1019,21 +1192,121 @@ mod tests {
         assert_eq!(deep_check_plan(&ordinary, true, false), DeepCheckPlan::default());
         assert_eq!(
             deep_check_plan(&ordinary, true, true),
-            DeepCheckPlan { version_flag: Some("--version"), check_nuclei_templates: false }
+            DeepCheckPlan {
+                version_flag: Some("--version"),
+                check_nuclei_templates: false,
+                check_zap_runtime: false,
+            }
         );
 
         let nuclei = tool_spec("nuclei");
         assert_eq!(
             deep_check_plan(&nuclei, true, true),
-            DeepCheckPlan { version_flag: Some("--version"), check_nuclei_templates: true }
+            DeepCheckPlan {
+                version_flag: Some("--version"),
+                check_nuclei_templates: true,
+                check_zap_runtime: false,
+            }
+        );
+
+        let zap = tool_spec("zap.sh");
+        assert_eq!(
+            deep_check_plan(&zap, true, true),
+            DeepCheckPlan {
+                version_flag: Some("--version"),
+                check_nuclei_templates: false,
+                check_zap_runtime: true,
+            }
         );
 
         let mut no_version = tool_spec("fixture");
         no_version.version_flag = None;
         assert_eq!(
             deep_check_plan(&no_version, true, true),
-            DeepCheckPlan { version_flag: None, check_nuclei_templates: false }
+            DeepCheckPlan {
+                version_flag: None,
+                check_nuclei_templates: false,
+                check_zap_runtime: false,
+            }
         );
+    }
+
+    #[test]
+    fn zap_version_extraction_ignores_launcher_and_java_versions() {
+        let output = "Found Java version 21.0.11\nAvailable memory: 32000 MB\n2.17.0\n";
+        assert_eq!(standalone_zap_version(output).as_deref(), Some("2.17.0"));
+        assert_eq!(standalone_zap_version("2.17.0\n2.16.0\n"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn zap_runtime_check_requires_every_addon_and_both_report_templates() {
+        let _environment =
+            crate::TEST_ENVIRONMENT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        let complete = zap_runtime_fixture(true, true);
+        let notes = with_path(complete.path(), check_zap_runtime);
+        assert_eq!(
+            notes,
+            [DeepNote::Info(
+                "Required application DAST add-ons and report templates are installed".to_string()
+            )]
+        );
+
+        let wrong_extension = zap_runtime_fixture(true, true);
+        let plugin = wrong_extension.path().join("plugin");
+        std::fs::rename(
+            plugin.join("authhelper-fixture.zap"),
+            plugin.join("authhelper-fixture.txt"),
+        )
+        .expect("replace authhelper extension");
+        let notes = with_path(wrong_extension.path(), check_zap_runtime);
+        assert!(matches!(
+            notes.as_slice(),
+            [DeepNote::Warn(message)] if message.contains("missing required add-ons: authhelper-")
+        ));
+
+        let one_template = zap_runtime_fixture(true, false);
+        let notes = with_path(one_template.path(), check_zap_runtime);
+        assert_eq!(
+            notes,
+            [DeepNote::Warn(
+                "ZAP runtime is missing the required auth-report-json or traditional-json-plus template"
+                    .to_string()
+            )]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn zap_runtime_check_reports_an_unresolved_launcher() {
+        let _environment =
+            crate::TEST_ENVIRONMENT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let empty = tempfile::tempdir().expect("empty path");
+        let notes = with_path(empty.path(), check_zap_runtime);
+        assert_eq!(notes, [DeepNote::Warn("Cannot resolve the ZAP executable".to_string())]);
+    }
+
+    #[test]
+    fn zip_entry_probe_distinguishes_present_missing_and_invalid_archives() {
+        use std::io::Write as _;
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let archive_path = directory.path().join("fixture.zap");
+        let file = std::fs::File::create(&archive_path).expect("create archive");
+        let mut archive = zip::ZipWriter::new(file);
+        archive
+            .start_file("present/template.yaml", zip::write::SimpleFileOptions::default())
+            .expect("start entry");
+        archive.write_all(b"fixture").expect("write entry");
+        archive.finish().expect("finish archive");
+
+        assert!(zip_contains(&archive_path, "present/template.yaml"));
+        assert!(!zip_contains(&archive_path, "missing/template.yaml"));
+        assert!(!zip_contains(&directory.path().join("missing.zap"), "anything"));
+        let invalid = directory.path().join("invalid.zap");
+        std::fs::write(&invalid, b"not a zip").expect("write invalid archive");
+        assert!(!zip_contains(&invalid, "anything"));
     }
 
     #[test]
@@ -1152,13 +1425,25 @@ mod tests {
         assert_eq!(which_path("scorchkit-tool-that-does-not-exist-6f298d8d"), None);
     }
 
-    #[tokio::test]
-    async fn version_probe_observes_tool_output_and_execution_failure() {
-        assert_eq!(get_tool_version("printf", "7.8.9").await.as_deref(), Some("7.8.9"));
-        assert_eq!(
-            get_tool_version("scorchkit-tool-that-does-not-exist-6f298d8d", "--version").await,
-            None
-        );
+    #[test]
+    fn version_probe_observes_tool_output_and_execution_failure() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("version-probe runtime");
+        let _environment =
+            crate::TEST_ENVIRONMENT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        runtime.block_on(async {
+            assert_eq!(get_tool_version("printf", "7.8.9").await.as_deref(), Some("7.8.9"));
+            assert_eq!(
+                get_tool_version("printf", "fixture version 7.8.9").await.as_deref(),
+                Some("7.8.9")
+            );
+            assert_eq!(
+                get_tool_version("scorchkit-tool-that-does-not-exist-6f298d8d", "--version").await,
+                None
+            );
+        });
     }
 
     #[test]
