@@ -5,6 +5,14 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Post-release platform roadmap (TICKET-020)** — Extended the ordered candidate backlog through
+  SK-057 with a versioned provider-neutral control API, capability-declared extension runtime,
+  typed run preprocessors and hooks, provider-neutral model analysis, append-only finding triage,
+  conversation-native views, an optional Rustal local console, an authenticated team suite, and a
+  signed extension catalog. Documented one policy-owned application service, immutable scanner
+  evidence, labeled model and user analysis, engine-owned persistence, isolated third-party
+  effects, local-first operation, and optional frontends that never write ScorchKit storage
+  directly.
 - **Codex and Daybreak website positioning (TICKET-019)** — Made the public site lead with
   ScorchKit's Codex-preferred, agent-neutral workflow and explain how separately approved Daybreak
   Blue reasoning combines with Codex Security semantic review and ScorchKit's policy-gated SAST,

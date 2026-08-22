@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** SK-042 and the TICKET-018/TICKET-019 public-site work are complete; SK-043 is next
+**Status:** SK-042 and the TICKET-018/TICKET-019 public-site work are complete; SK-043 is next; SK-049 through SK-057 are documented post-release candidates
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-21
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
@@ -182,9 +182,9 @@ None. The feature-readiness baseline and SK-028 through SK-042 are closed above.
 
 The pipeline permits one active ticket. TICKET-018 completed the public documentation sync and
 TICKET-019 made its Codex/Daybreak model boundary prominent; SK-043 is the next product candidate.
-Each later row has a specified candidate intake under
-`docs/planning/intake/` and becomes a numbered ticket only when promoted. Backlog status is not a
-waiver of a safety invariant.
+Each later row has a specified candidate intake under `docs/planning/intake/` and becomes a numbered
+ticket only when promoted. SK-049 through SK-057 begin only after the current SK-043 through SK-048
+queue is complete. Backlog status is not a waiver of a safety invariant.
 
 | Order | Batch | Planned outcome | Depends on | Planning artifact |
 |---:|---|---|---|---|
@@ -197,30 +197,81 @@ waiver of a safety invariant.
 | 7 | SK-046 | Replace reachable unmaintained dependencies and remove the reviewed disabled-MySQL advisory exception. | upstream availability or replacement | [intake](intake/INTAKE-dependency-debt.md) |
 | 8 | SK-047 | Complete the scheduled full mutation inventory once, repair named survivors through focused scopes, and raise quality floors only from measured green evidence. | SK-027 | [intake](intake/INTAKE-quality-ratchet.md) |
 | 9 | SK-048 | Add reproducible ScorchKit releases, signed artifacts, SBOM/provenance, upgrade and rollback tests, and performance/chaos budgets. | SK-033, SK-035, SK-046 | [intake](intake/INTAKE-reproducible-releases.md) |
+| 10 | SK-049 | Add a versioned provider-neutral control API and self-description contract for configuration, engagements, jobs, findings, evidence, modules, reports, and event streams. | SK-029, SK-032, SK-033, SK-044, SK-048 | [intake](intake/INTAKE-control-api.md) |
+| 11 | SK-050 | Add a capability-declared extension manifest, SDK, and isolated runtime for first-party and third-party application-security modules. | SK-034, SK-048, SK-049 | [intake](intake/INTAKE-extension-runtime.md) |
+| 12 | SK-051 | Promote the existing event bus and lifecycle hooks into a typed run pipeline for preprocessing, planning proposals, normalization, enrichment, correlation, reporting, and notification. | SK-028, SK-043, SK-049, SK-050 | [intake](intake/INTAKE-typed-run-pipeline.md) |
+| 13 | SK-052 | Add provider-neutral model roles, host and service adapters, provenance, readiness reporting, and evaluations without granting a model execution authority or scanner-evidence status. | SK-030, SK-031, SK-042, SK-049, SK-050 | [intake](intake/INTAKE-model-analysis.md) |
+| 14 | SK-053 | Add an append-only finding validation and triage lifecycle with correlation, scoped suppression, accepted risk, fix state, and regression verification. | SK-035, SK-040, SK-041, SK-052 | [intake](intake/INTAKE-finding-triage.md) |
+| 15 | SK-054 | Add optional conversation-native result views for scan summaries, evidence, triage, and attack paths while keeping every MCP and API workflow complete without UI. | SK-031, SK-032, SK-042, SK-049, SK-053 | [intake](intake/INTAKE-conversation-workbench.md) |
+| 16 | SK-055 | Add an optional Rustal-based local operator console that consumes the control API for jobs, evidence, triage, engagement editing, and live progress. | SK-049, SK-053, SK-054 | [intake](intake/INTAKE-rustal-console.md) |
+| 17 | SK-056 | Add an authenticated multi-user deployment profile with tenant and project isolation, RBAC, shared queues, object storage, audit, backup, and recovery. | SK-043, SK-044, SK-048, SK-049, SK-055 | [intake](intake/INTAKE-team-suite.md) |
+| 18 | SK-057 | Add a signed extension catalog with compatibility, provenance, permission review, upgrade, rollback, revocation, and conformance checks. | SK-048, SK-050, SK-051, SK-052 | [intake](intake/INTAKE-extension-catalog.md) |
 
 The former native cloud-provider restoration item is removed from the core sequence. General cloud
 posture may return only as an explicit optional extension; application IaC and deployment artifacts
 remain part of SK-036 and SK-037. Existing quarantined provider modules remain private and
 test-only.
 
+## Post-release platform contracts
+
+SK-049 through SK-057 extend the application-security engine without replacing its current local,
+headless operation. They follow these contracts:
+
+1. **One application service.** Engagements, policy decisions, configuration resolution, jobs,
+   findings, evidence, triage, modules, and events have one provider-neutral command/query boundary.
+   CLI, MCP, conversation components, Rustal, CI, and later remote clients adapt that boundary. A
+   client never writes ScorchKit storage directly.
+2. **Configuration narrows toward policy.** Built-in defaults, organization profiles, project
+   profiles, and run overrides produce one effective configuration and decision log. A later layer
+   may narrow a grant but cannot expand the engagement's target, capability, or effect class.
+3. **Extensions declare effects.** First-party modules may remain compiled Rust. Third-party
+   modules run outside the ScorchKit process through a versioned protocol and declare their input
+   and output schemas, network, filesystem, credential, and subprocess effects, plus time, memory,
+   and output-size budgets.
+   Manifests and host approval remain context; the engine authorizes every effect. Extensions
+   return typed outputs to the engine and never receive a direct ScorchKit storage handle.
+4. **Hooks propose typed changes.** The current event bus and pre-scan, post-module, and post-scan
+   hooks are the starting seam. Future preprocessors and hooks return versioned proposals. ScorchKit
+   validates and reauthorizes a proposal before it can change planning or execution. Scanner
+   evidence stays immutable; enrichment and filtering decisions are separate records.
+5. **Models interpret rather than authorize.** Host-managed Codex or another agent, optional
+   service adapters, and local models share typed analysis roles and provenance. ScorchKit reports
+   an unavailable requested role instead of silently substituting a model. Model output remains
+   labeled analysis and cannot become scanner evidence or grant an effect.
+6. **Triage preserves disagreement.** Detector output, correlation, model assessment, user
+   disposition, accepted risk, suppression, fix, and regression verification are append-only
+   transitions. Suppressions are scoped, reasoned, expiring, and auditable. The original finding
+   and evidence remain readable.
+7. **Frontends are optional clients.** Conversation views and a Rustal console can inspect,
+   compare, confirm, and navigate structured results. Every tool and command remains useful without
+   a component. Local operation remains complete before the authenticated multi-user profile is
+   added.
+8. **Rustal does not enter the core dependency graph.** A future `scorchkit-console` may use
+   Rustal's compiled pages, modules, RBAC, audit, PostgreSQL support, and server-sent updates, but it
+   consumes the ScorchKit API and does not own ScorchKit authorization, evidence, or storage.
+
+The platform candidates remain application-security work. General network, enterprise, cloud
+posture, persistence, privilege, and lateral-movement features do not return to the default product
+through an extension, API, model, or frontend.
+
 ## Target architecture
 
 ```text
-Codex plugin / Claude adapter / other hosts
-                    |
-        typed agent-neutral contracts
-                    |
-     application-security profiles/catalog
-                    |
-      policy-gated job control plane
-                    |
-       shared executor and adapters
-       /          |          |          \
-    source    dependencies  artifacts   runtime/manual
-       \          |          |          /
-        versioned observations and evidence
-                    |
-       attack paths, storage, and reports
+Codex / Claude compatibility / other hosts   CLI / CI   conversation views   Rustal   teams
+                    \                           |                |              |       /
+                     \------ MCP and versioned control API / event stream -----/
+                                              |
+                     provider-neutral application commands and queries
+                                              |
+                  configuration, engagements, policy, jobs, and audit
+                                              |
+               capability-declared extension and lifecycle-hook runtime
+                                              |
+             source / dependencies / artifacts / runtime / manual inputs
+                                              |
+                 immutable observations, findings, evidence, attack paths
+                                              |
+                    labeled model analysis, triage, storage, reports
 
 Explicit optional extensions: network / enterprise / cloud posture
 ```
@@ -269,6 +320,8 @@ source bans, actionable-marker policy, Cargo Sort/Taplo/typos, and Semgrep.
 
 Coverage, mutation, named web skips 17–19, Nextest strictness, migrated PostgreSQL integration, and
 CLI/MCP contracts. The web IDs remain visible not-applicable skips because ScorchKit has no web UI.
+Documenting SK-054 and SK-055 does not change that status. A future UI ticket must replace each skip
+with an executable browser, rendering, or asset-drift contract before claiming the surface ships.
 
 Missing tools and missing database configuration fail closed. Cargo commands run sequentially.
 Mutation workers may run in bounded parallel on local scratch. Floors may rise through reviewed
@@ -299,6 +352,15 @@ complete, product work follows this order:
    per-effect authorization are proven.
 7. Expose the complete lifecycle through Codex-first, agent-neutral profiles.
 8. Deliver remote and platform expansion without allowing it to reorder the AppSec core.
+9. Stabilize the provider-neutral application service and control API before building a frontend.
+10. Add extension manifests and typed lifecycle proposals before loading third-party modules.
+11. Add model roles and durable triage before presenting model-assisted false-positive decisions.
+12. Add conversation-native views before a full console, while keeping headless operation complete.
+13. Build the Rustal console as an optional API client with no direct ScorchKit database writes.
+14. Add multi-user deployment only after remote identity, release, API, triage, and console
+    boundaries are proven locally.
+15. Publish a signed extension catalog only after runtime isolation, conformance, rollback, and
+    revocation contracts exist.
 
 Quasi-pentest plans must name preconditions, blast radius, cleanup, evidence, and a separate grant for
 each credential, exploit, persistence, privilege, lateral-movement, or destructive effect. An agent
