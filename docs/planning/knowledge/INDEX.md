@@ -119,6 +119,9 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-remote-request-lifecycle-001` | Recheck the bound engagement at host composition and every authenticated request, scrub credentials before downstream routing, and bound body reads; the trusted proxy owns pre-header connection budgets. | `AAR-022-authenticated-remote-mcp` |
 | `PR-scorchkit-rejected-session-cleanup-001` | Reconcile session IDs around stateful initialization and close every newly allocated session when the response does not establish it. | `AAR-022-authenticated-remote-mcp` |
 | `PR-scorchkit-bounded-validator-mutation-table-001` | Test serde defaults, safe projections, unique exact collection ceilings, each compound clause, and thin lifecycle wrapper behavior independently. | `AAR-022-authenticated-remote-mcp` |
+| `PR-scorchkit-target-inactive-mutation-files-001` | Put host-exclusive process and filesystem bodies in exact target-only modules; exclude only those files from an unlike-host mutation run while native CI compiles and executes them. | `AAR-023-windows-process-owner` |
+| `PR-scorchkit-owned-process-accessor-contract-001` | Directly assert every owned-child pipe accessor and the direct-child identity used by wait and cleanup. | `AAR-023-windows-process-owner` |
+| `PR-scorchkit-descendant-owner-drop-order-001` | Destroy the whole-tree owner before the direct-child fallback and pin declaration-order cleanup with a semantic descendant-exit test. | `AAR-023-windows-process-owner` |
 
 ## Register
 
@@ -216,3 +219,6 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-remote-authorization-header-retention-001` | credential-boundary bug | `AAR-022-authenticated-remote-mcp` |
 | `BF-scorchkit-remote-validator-mutation-gap-001` | test-gap bug | `AAR-022-authenticated-remote-mcp` |
 | `BF-scorchkit-cli-zero-test-inventory-stale-001` | verification-plan gap | `AAR-022-authenticated-remote-mcp` |
+| `BF-scorchkit-linux-mutation-windows-target-001` | mutation-measurement failure | `AAR-023-windows-process-owner` |
+| `BF-scorchkit-owned-process-accessor-mutation-001` | test-gap bug | `AAR-023-windows-process-owner` |
+| `BF-scorchkit-redundant-owned-process-drop-001` | lifecycle-design duplication | `AAR-023-windows-process-owner` |

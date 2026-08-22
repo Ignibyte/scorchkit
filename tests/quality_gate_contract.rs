@@ -80,6 +80,8 @@ fn local_and_ci_gates_share_the_canonical_helpers() {
         !mutants.contains("exclude_re"),
         "database-backed mutation must not exclude storage functions"
     );
+    assert!(mutants.contains("src/windows_support.rs"));
+    assert!(mutants.contains("crates/scorchkit-tools/src/windows_owned_process.rs"));
 
     let incomplete_exit = mutation_runner
         .find("if [ \"$RUN_COMPLETED\" -eq 0 ]; then\n    echo \"cargo-mutants failed")
@@ -105,4 +107,20 @@ fn local_and_ci_gates_share_the_canonical_helpers() {
     assert!(nextest.contains("retries = 0"));
     assert!(nextest.contains("terminate-after = 4"));
     assert!(mutants.contains("timeout_multiplier = 3.0"));
+}
+
+#[test]
+fn ci_executes_the_workspace_and_process_owner_suite_on_windows() {
+    let ci = read(".github/workflows/ci.yml");
+    let windows = ci
+        .split("  windows:\n")
+        .nth(1)
+        .and_then(|tail| tail.split("\n  docs:\n").next())
+        .expect("dedicated Windows CI job");
+
+    assert!(windows.contains("runs-on: windows-latest"));
+    assert!(
+        windows.contains("cargo clippy --workspace --all-targets --all-features -- -D warnings")
+    );
+    assert!(windows.contains("cargo test --workspace --all-features"));
 }

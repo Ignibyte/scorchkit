@@ -77,9 +77,9 @@ behavior, and parser result for all 45 DAST and 21 registered SAST wrappers. Twe
 one-shot. CodeQL creates and analyzes a scoped database through two ordered invocations for each
 applicable language.
 
-Interactsh is deliberately separate because it owns a long-lived callback session. It still uses the
-shared process-group owner, bounded reader, and cleanup behavior for stop, failure, timeout, overflow,
-and drop.
+Interactsh is deliberately separate because it owns a long-lived callback session. It still uses
+the shared platform process-tree owner, bounded reader, and cleanup behavior for stop, failure,
+timeout, overflow, and drop.
 
 Cloud production modules are the five bounded wrappers. Native AWS, GCP, and Azure implementations
 remain private and test-only until provider authentication and service requests use a policy-owned

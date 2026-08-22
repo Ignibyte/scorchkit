@@ -6,6 +6,8 @@ use scorchkit_core::{Result, ScorchError};
 use tempfile::{Builder, TempDir};
 
 use super::schema::ValidatedDastSchema;
+#[cfg(windows)]
+use crate::windows_support::set_directory_permissions;
 
 pub const PLAN_FILE: &str = "plan.yaml";
 pub const URL_REPORT_FILE: &str = "reports/urls.txt";
@@ -117,12 +119,10 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn set_directory_permissions(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    }
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
     Ok(())
 }
 
@@ -135,6 +135,7 @@ mod tests {
     fn workspace_uses_private_owned_files() {
         let workspace = DastWorkspace::create().expect("workspace");
         let plan = workspace.write_plan(b"env: {}\n").expect("plan");
+        assert!(plan.is_file());
         assert_eq!(workspace.read_artifact(PLAN_FILE, 64).expect("read"), b"env: {}\n");
         #[cfg(unix)]
         {

@@ -2,8 +2,8 @@
 title: INTAKE-windows-process-owner
 status: candidate
 created: 2026-08-17
-ticket:
-pipeline_spec:
+ticket: TICKET-023
+pipeline_spec: docs/planning/pipeline/active/windows-process-owner.spec.md
 ---
 
 # Windows Job Object process ownership

@@ -49,14 +49,15 @@ Bounded adapters submit a `ToolInvocation` through the context's `ToolExecutor`.
 - an 8 MiB cap for each output stream.
 
 The system executor resolves one canonical executable path before spawn. On Unix, the child owns a
-new process group. Success, nonzero exit, timeout, cancellation, output overflow, explicit stop, and
-drop all terminate and reap the owned process tree. Linux and macOS are supported. Windows remains
-disabled until Job Object cleanup proves the same contract.
+new process group. On Windows, ScorchKit creates the child suspended, assigns it and its inheriting
+descendants to a kill-on-close Job Object, and resumes it only after ownership succeeds. Success,
+nonzero exit, timeout, cancellation, output or artifact overflow, explicit stop, and drop all
+terminate and reap the owned process tree within the same two-second bound.
 
 Forty-five DAST adapters and 21 registered external SAST wrappers use this bounded path. Twenty SAST
 wrappers submit one invocation. CodeQL submits an ordered database-create and database-analyze pair
 for each applicable language. Interactsh owns a long-lived callback session, but it shares
-executable resolution, bounded readers, and process-group cleanup.
+executable resolution, bounded readers, and the platform process-tree owner.
 
 ## Native network boundary
 

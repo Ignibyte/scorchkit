@@ -104,8 +104,8 @@ provider authentication and service requests use a policy-owned transport.
 Native production modules use in-process HTTP, parsing, DNS, TCP, or TLS. Tool-backed modules
 declare owned invocations and run through the shared executor. Forty-five DAST adapters and 19
 application SAST wrappers are bounded one-shot processes. CodeQL uses two ordered bounded processes
-per applicable language. Interactsh owns a longer-lived callback session but uses the same
-process-group ownership and bounded output primitives.
+per applicable language. Interactsh owns a longer-lived callback session but uses the same platform
+process-tree ownership and bounded output primitives.
 
 ## Evidence and results
 
@@ -127,7 +127,8 @@ engagement snapshot used at creation and fail closed if the active policy change
   transaction is released.
 - Lifecycle hooks are local processes. Configured hooks require `ExternalTool` authorization.
 - CVE providers require separate endpoint and existing cache-path grants.
-- Linux and macOS are supported. Windows remains disabled until Job Object cleanup reaches parity.
+- Linux, macOS, and Windows are supported. Unix process groups and Windows kill-on-close Job
+  Objects enforce the same bounded descendant cleanup contract.
 
 ## Repository delivery architecture
 

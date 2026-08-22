@@ -716,6 +716,7 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<()> {
 
 fn create_private_directory(path: &Path) -> Result<()> {
     let mut builder = fs::DirBuilder::new();
+    builder.recursive(false);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;

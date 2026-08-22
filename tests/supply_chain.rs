@@ -28,9 +28,15 @@ fn local_engine(
     ))
 }
 
+#[cfg(unix)]
 fn make_private(path: &std::path::Path) -> std::io::Result<()> {
-    #[cfg(unix)]
     std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn make_private(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::metadata(path)?;
     Ok(())
 }
 

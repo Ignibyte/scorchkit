@@ -22,7 +22,7 @@ use tokio::process::ChildStdout;
 
 use super::error::{Result, ScorchError};
 use crate::runner::subprocess::{
-    configure_owned_process_group, resolve_tool_path, stop_owned_process, OwnedProcessGroup,
+    resolve_tool_path, spawn_owned_process, stop_owned_process, OwnedProcess,
     DEFAULT_TOOL_OUTPUT_LIMIT_BYTES,
 };
 
@@ -223,10 +223,8 @@ pub struct InteractshSession {
     resolved_program: PathBuf,
     /// The base callback domain (e.g., `abc123.oast.fun`).
     base_url: String,
-    /// Owned process group for the `interactsh-client` process tree.
-    process_group: OwnedProcessGroup,
-    /// Handle to the running `interactsh-client` subprocess.
-    child: tokio::process::Child,
+    /// Handle and platform owner for the running `interactsh-client` process tree.
+    child: OwnedProcess,
     /// Persistent reader for interaction lines produced after startup.
     stdout: BufReader<ChildStdout>,
     /// Total stdout bytes consumed across startup and polling.
@@ -255,21 +253,27 @@ impl InteractshSession {
     pub(crate) async fn start_with_arguments(program: &str, arguments: &[String]) -> Result<Self> {
         let resolved_program = resolve_tool_path(program)?;
         let mut command = tokio::process::Command::new(&resolved_program);
+        command.args(arguments);
+        Self::start_with_command(program, resolved_program, command).await
+    }
+
+    async fn start_with_command(
+        program: &str,
+        resolved_program: PathBuf,
+        mut command: tokio::process::Command,
+    ) -> Result<Self> {
         command
-            .args(arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        configure_owned_process_group(&mut command);
-        let mut child = command.spawn().map_err(|e| ScorchError::ToolFailed {
+        let mut child = spawn_owned_process(command).map_err(|e| ScorchError::ToolFailed {
             tool: program.to_string(),
             status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
             stderr: e.to_string(),
         })?;
-        let mut process_group = OwnedProcessGroup::for_child(&child);
 
-        let stdout = child.stdout.take().ok_or_else(|| ScorchError::ToolOutputParse {
+        let stdout = child.take_stdout().ok_or_else(|| ScorchError::ToolOutputParse {
             tool: program.to_string(),
             reason: "failed to capture stdout".to_string(),
         })?;
@@ -304,11 +308,11 @@ impl InteractshSession {
                     }
                 }
                 Ok(Err(e)) => {
-                    let _ = stop_owned_process(&mut child, &mut process_group).await;
+                    let _ = stop_owned_process(&mut child).await;
                     return Err(output_read_error(program, &e));
                 }
                 Err(_) => {
-                    let _ = stop_owned_process(&mut child, &mut process_group).await;
+                    let _ = stop_owned_process(&mut child).await;
                     return Err(ScorchError::Cancelled {
                         reason: "interactsh-client did not produce a base URL within 30s"
                             .to_string(),
@@ -318,7 +322,7 @@ impl InteractshSession {
         }
 
         if base_url.is_empty() {
-            let _ = stop_owned_process(&mut child, &mut process_group).await;
+            let _ = stop_owned_process(&mut child).await;
             return Err(ScorchError::ToolOutputParse {
                 tool: program.to_string(),
                 reason: "could not extract base URL from output".to_string(),
@@ -329,7 +333,6 @@ impl InteractshSession {
             program: program.to_string(),
             resolved_program,
             base_url,
-            process_group,
             child,
             stdout: reader,
             output_bytes,
@@ -400,12 +403,10 @@ impl InteractshSession {
     ///
     /// Returns an error if the subprocess cannot be terminated.
     pub async fn stop(&mut self) -> Result<()> {
-        stop_owned_process(&mut self.child, &mut self.process_group).await.map_err(|error| {
-            ScorchError::ToolFailed {
-                tool: self.program.clone(),
-                status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
-                stderr: error.to_string(),
-            }
+        stop_owned_process(&mut self.child).await.map_err(|error| ScorchError::ToolFailed {
+            tool: self.program.clone(),
+            status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
+            stderr: error.to_string(),
         })
     }
 }
@@ -501,7 +502,6 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    #[cfg(unix)]
     static SESSION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     #[cfg(unix)]
     const SESSION_STARTUP_LINE: &str = "[INF] session123.oast.fun";
@@ -509,10 +509,66 @@ mod tests {
     const SESSION_INTERACTION_LINE: &str =
         r#"{"protocol":"dns","unique-id":"session123","full-id":"ssrf-url.session123"}"#;
 
+    #[cfg(windows)]
+    const WINDOWS_OOB_FIXTURE_TEST: &str = "engine::oob::tests::windows_oob_process_fixture";
+    #[cfg(windows)]
+    const WINDOWS_OOB_FIXTURE_MODE: &str = "SCORCHKIT_WINDOWS_OOB_FIXTURE_MODE";
+    #[cfg(windows)]
+    const WINDOWS_OOB_FIXTURE_PID: &str = "SCORCHKIT_WINDOWS_OOB_FIXTURE_PID";
+
     #[cfg(unix)]
     async fn start_shell_fixture(script: &Path) -> Result<InteractshSession> {
         let arguments = vec![script.to_string_lossy().into_owned()];
         InteractshSession::start_with_arguments("/bin/sh", &arguments).await
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_oob_process_fixture() {
+        use std::io::Write as _;
+
+        let Ok(mode) = std::env::var(WINDOWS_OOB_FIXTURE_MODE) else {
+            return;
+        };
+        if mode == "descendant" {
+            std::thread::sleep(Duration::from_mins(1));
+            return;
+        }
+
+        assert_eq!(mode, "leader");
+        let pid_path = std::env::var_os(WINDOWS_OOB_FIXTURE_PID)
+            .map(PathBuf::from)
+            .expect("OOB descendant PID fixture path");
+        let executable = std::env::current_exe().expect("current OOB fixture executable");
+        let mut descendant = std::process::Command::new(executable)
+            .args(["--exact", WINDOWS_OOB_FIXTURE_TEST, "--nocapture"])
+            .env(WINDOWS_OOB_FIXTURE_MODE, "descendant")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn OOB descendant fixture");
+        let descendant_pid = descendant.id();
+        std::thread::spawn(move || {
+            let _ = descendant.wait();
+        });
+        std::fs::write(pid_path, descendant_pid.to_string()).expect("write OOB descendant PID");
+
+        let mut stdout = std::io::stdout().lock();
+        writeln!(stdout, "[INF] windows123.oast.fun").expect("write OOB startup line");
+        stdout.flush().expect("flush OOB startup line");
+        std::thread::sleep(Duration::from_mins(1));
+    }
+
+    #[cfg(windows)]
+    async fn start_windows_oob_fixture(pid_file: &Path) -> Result<InteractshSession> {
+        let executable = std::env::current_exe().expect("current OOB fixture executable");
+        let mut command = tokio::process::Command::new(&executable);
+        command
+            .args(["--exact", WINDOWS_OOB_FIXTURE_TEST, "--nocapture"])
+            .env(WINDOWS_OOB_FIXTURE_MODE, "leader")
+            .env(WINDOWS_OOB_FIXTURE_PID, pid_file);
+        InteractshSession::start_with_command("windows-oob-fixture", executable, command).await
     }
 
     // Test suite for OOB callback infrastructure.
@@ -903,6 +959,39 @@ sleep 60
         assert_process_exits(descendant).await;
     }
 
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_stop_terminates_interactsh_descendants() {
+        let _session_guard = SESSION_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let pid_file = directory.path().join("windows-stop-descendant.pid");
+
+        let mut session = start_windows_oob_fixture(&pid_file)
+            .await
+            .expect("start Windows OOB descendant fixture");
+        assert_eq!(session.base_url(), "windows123.oast.fun");
+        let descendant = wait_for_windows_oob_fixture_pid(&pid_file).await;
+        session.stop().await.expect("stop Windows OOB descendant fixture");
+
+        assert_windows_oob_process_exits(descendant).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_drop_terminates_interactsh_descendants() {
+        let _session_guard = SESSION_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let pid_file = directory.path().join("windows-drop-descendant.pid");
+
+        let session = start_windows_oob_fixture(&pid_file)
+            .await
+            .expect("start Windows OOB descendant fixture");
+        let descendant = wait_for_windows_oob_fixture_pid(&pid_file).await;
+        drop(session);
+
+        assert_windows_oob_process_exits(descendant).await;
+    }
+
     #[cfg(unix)]
     fn write_descendant_fixture(directory: &Path, pid_file: &Path) -> PathBuf {
         let script = directory.join(format!(
@@ -944,5 +1033,41 @@ sleep 60
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("interactsh descendant {pid:?} survived process-tree cleanup");
+    }
+
+    #[cfg(windows)]
+    async fn wait_for_windows_oob_fixture_pid(path: &Path) -> u32 {
+        for _ in 0..500 {
+            if let Ok(raw) = std::fs::read_to_string(path) {
+                if let Ok(pid) = raw.trim().parse() {
+                    return pid;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("OOB descendant PID fixture was not created at {}", path.display());
+    }
+
+    #[cfg(windows)]
+    async fn assert_windows_oob_process_exits(pid: u32) {
+        for _ in 0..100 {
+            if !windows_oob_process_is_running(pid) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("Windows OOB descendant process {pid} survived process-tree cleanup");
+    }
+
+    #[cfg(windows)]
+    fn windows_oob_process_is_running(pid: u32) -> bool {
+        let filter = format!("PID eq {pid}");
+        let output_format = concat!("/", "F", "O");
+        let output = std::process::Command::new("tasklist.exe")
+            .args(["/FI", &filter, output_format, "CSV", "/NH"])
+            .output()
+            .expect("query Windows OOB process state");
+        assert!(output.status.success(), "tasklist failed: {output:?}");
+        String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
     }
 }

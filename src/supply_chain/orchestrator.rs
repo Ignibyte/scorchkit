@@ -866,6 +866,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn promote_provider(store: &SupplyChainSnapshotStore, provider: &str) {
         use crate::supply_chain::cache::{SnapshotArtifact, SnapshotManifest};
 

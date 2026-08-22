@@ -476,15 +476,14 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
     #[test]
     fn recursive_discovery_does_not_follow_symlinked_directories() -> std::io::Result<()> {
         let dir = tempfile::tempdir()?;
         let outside = tempfile::tempdir()?;
         fs::write(outside.path().join("main.py"), "print('outside')")?;
-        #[cfg(unix)]
         std::os::unix::fs::symlink(outside.path(), dir.path().join("linked"))?;
 
-        #[cfg(unix)]
         assert!(detect_languages(dir.path()).is_empty());
         Ok(())
     }

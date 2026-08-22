@@ -34,9 +34,9 @@ and lower packages cannot depend on the root composition package. See the
 
 ## Install
 
-ScorchKit currently supports Unix process semantics on Linux and macOS. Windows builds are rejected
-until the external-process owner has a Windows Job Object backend with the same descendant cleanup
-guarantees.
+ScorchKit supports Linux, macOS, and Windows. External tools are owned as Unix process groups on
+Linux/macOS and kill-on-close Job Objects on Windows, with the same bounded descendant cleanup
+contract on every supported host. Individual scanner binaries may have narrower platform support.
 
 Install the current stable Rust toolchain, then build the smallest binary that fits the workflow:
 
@@ -228,8 +228,8 @@ capability, and effect authorization source.
 - NVD and OSV backends require grants for their provider endpoint and existing cache directory.
 - Native AWS, GCP, and Azure SDK modules remain outside the production registry until provider
   authentication and service requests use ScorchKit's policy-owned transport.
-- External processes have bounded time and output and are owned as Unix process groups so timeout,
-  cancellation, error, and drop clean up descendants.
+- External processes have bounded time and output and are owned as Unix process groups or Windows
+  Job Objects so timeout, cancellation, error, success, and drop clean up descendants.
 - Durable CLI and MCP job hosts can enqueue redacted lifecycle events in PostgreSQL and deliver
   them through the same policy-owned hostname, DNS-answer, connection, and redirect boundary.
   Delivery requires a separate `webhook-delivery`/`active-safe` grant and cannot change scan

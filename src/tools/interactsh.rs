@@ -40,7 +40,7 @@ impl Default for InteractshModule {
 }
 
 impl InteractshModule {
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     const fn with_client_invocation(client_program: String, client_arguments: Vec<String>) -> Self {
         Self { client_program, client_arguments }
     }
@@ -289,12 +289,16 @@ const fn remediation_for(category: BlindCategory) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::sync::Arc;
 
+    #[cfg(unix)]
     use httpmock::MockServer;
 
     use super::*;
+    #[cfg(unix)]
     use crate::config::AppConfig;
+    #[cfg(unix)]
     use crate::engine::target::Target;
 
     // Tests for interactsh OOB interaction correlation and finding builder.

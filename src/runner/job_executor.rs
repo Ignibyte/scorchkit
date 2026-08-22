@@ -7,6 +7,7 @@ pub use scorchkit_executor::{CancellationToken, ExecutionBudget, JobExecutor, Jo
 mod tests {
     #[cfg(feature = "infra")]
     use std::net::{IpAddr, Ipv4Addr};
+    #[cfg(unix)]
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -47,6 +48,7 @@ mod tests {
     #[cfg(feature = "infra")]
     use crate::runner::infra_orchestrator::InfraOrchestrator;
     use crate::runner::orchestrator::Orchestrator;
+    #[cfg(unix)]
     use crate::runner::subprocess::{SystemToolExecutor, ToolExecutor, ToolInvocation};
 
     struct DropFlag(Arc<AtomicBool>);

@@ -70,8 +70,8 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
   `credential-test` and `credential-use`; Commix and Metasploit require `exploit`. The legacy
   web-family Prowler adapter separately requires passive `credential-use` before it can inherit
   cloud credentials.
-- Linux and macOS are supported. Non-Unix builds fail until Windows Job Object cleanup provides the
-  same descendant-process guarantee.
+- Linux, macOS, and Windows are supported. External subprocesses use Unix process groups or Windows
+  kill-on-close Job Objects and retain the same descendant-process cleanup guarantee.
 - MCP uses local stdio by default. `serve --remote` enables the only supported remote profile:
   stateful Streamable HTTP behind a same-host trusted reverse proxy. The cleartext backend must bind
   to loopback; the proxy must terminate TLS, replace rather than append `X-Forwarded-Proto: https`,

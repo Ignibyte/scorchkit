@@ -1,8 +1,8 @@
 //! Compatibility re-exports for the extracted process boundary.
 
 pub(crate) use scorchkit_tools::{
-    configure_owned_process_group, is_tool_available, missing_required_tool, resolve_tool_path,
-    stop_owned_process, OwnedProcessGroup, SystemToolExecutor,
+    is_tool_available, missing_required_tool, resolve_tool_path, spawn_owned_process,
+    stop_owned_process, OwnedProcess, SystemToolExecutor,
 };
 pub use scorchkit_tools::{
     ArtifactBudget, EnvironmentPolicy, ExitPolicy, ToolExecutor, ToolInvocation, ToolOutput,

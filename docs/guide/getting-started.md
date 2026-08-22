@@ -6,8 +6,8 @@ approval does not authorize a scan.
 
 ## Install
 
-The supported production hosts are Linux and macOS. Install the current stable Rust toolchain, then
-build the core CLI:
+The supported production hosts are Linux, macOS, and Windows. Install the current stable Rust
+toolchain, then build the core CLI:
 
 ```bash
 git clone https://github.com/Ignibyte/scorchkit.git
@@ -37,8 +37,8 @@ scorchkit modules --check-tools
 Missing external scanners reduce the available tool-backed modules. Native DAST and infrastructure
 checks remain usable. Install only the tools required for the selected workflow; several AppSec
 integrations are exact-version contracts. The [external tool checklist](../tools-checklist.md) lists
-every binary and current install rule. Cloud production scans currently use five external-tool
-adapters.
+every binary and current install rule, and individual tools may support fewer operating systems.
+Cloud production scans currently use five external-tool adapters.
 
 ## Create a safe engagement
 

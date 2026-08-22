@@ -6,9 +6,19 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+#[cfg(unix)]
 use tokio::process::Child;
+use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
 
 use scorchkit_core::error::{Result, ScorchError};
+
+#[cfg(windows)]
+mod windows_owned_process;
+#[cfg(all(test, windows))]
+use windows_owned_process::spawn_windows_owned_process_rejected;
+#[cfg(windows)]
+#[doc(hidden)]
+pub use windows_owned_process::{spawn_owned_process, stop_owned_process, OwnedProcess};
 
 /// Default maximum captured bytes for each child-process output stream.
 pub const DEFAULT_TOOL_OUTPUT_LIMIT_BYTES: usize = 8_388_608;
@@ -242,33 +252,29 @@ pub trait ToolExecutor: Debug + Send + Sync {
 #[derive(Debug, Default)]
 pub struct SystemToolExecutor;
 
-/// RAII ownership for the process group created for one external tool.
+/// RAII ownership for the Unix process group created for one external tool.
 ///
 /// On Unix, dropping this guard sends `SIGKILL` to the whole group, including
 /// descendants that outlive or detach from the direct child. The direct child
 /// still uses Tokio's `kill_on_drop` as a platform fallback.
 #[derive(Debug)]
 #[doc(hidden)]
+#[cfg(unix)]
 pub struct OwnedProcessGroup {
-    #[cfg(unix)]
     process_group: Option<rustix::process::Pid>,
 }
 
+#[cfg(unix)]
 impl OwnedProcessGroup {
     #[doc(hidden)]
     pub fn for_child(child: &Child) -> Self {
-        #[cfg(unix)]
         let process_group = child
             .id()
             .and_then(|raw| i32::try_from(raw).ok())
             .and_then(rustix::process::Pid::from_raw);
-        Self {
-            #[cfg(unix)]
-            process_group,
-        }
+        Self { process_group }
     }
 
-    #[cfg(unix)]
     fn terminate(&mut self) -> std::io::Result<()> {
         let Some(process_group) = self.process_group.take() else {
             return Ok(());
@@ -278,13 +284,9 @@ impl OwnedProcessGroup {
             Err(error) => Err(std::io::Error::from_raw_os_error(error.raw_os_error())),
         }
     }
-
-    #[cfg(not(unix))]
-    fn terminate(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
+#[cfg(unix)]
 impl Drop for OwnedProcessGroup {
     fn drop(&mut self) {
         let _ = self.terminate();
@@ -293,29 +295,85 @@ impl Drop for OwnedProcessGroup {
 
 /// Put a child in a fresh owned process group before it is spawned.
 #[doc(hidden)]
+#[cfg(unix)]
 pub fn configure_owned_process_group(command: &mut tokio::process::Command) {
-    #[cfg(unix)]
-    {
-        command.process_group(0);
+    command.process_group(0);
+}
+
+/// A spawned Unix process paired with the owner for its complete descendant tree.
+#[derive(Debug)]
+#[doc(hidden)]
+#[cfg(unix)]
+pub struct OwnedProcess {
+    // Rust drops fields in declaration order. Keep the process-group owner before the direct child
+    // so cancellation terminates descendants before Tokio applies its direct-child fallback.
+    process_group: OwnedProcessGroup,
+    child: Child,
+}
+
+#[cfg(unix)]
+impl OwnedProcess {
+    /// Take the child's piped standard output, if configured.
+    #[doc(hidden)]
+    pub const fn take_stdout(&mut self) -> Option<ChildStdout> {
+        self.child.stdout.take()
+    }
+
+    /// Take the child's piped standard error, if configured.
+    #[doc(hidden)]
+    pub const fn take_stderr(&mut self) -> Option<ChildStderr> {
+        self.child.stderr.take()
+    }
+
+    /// Take the child's piped standard input, if configured.
+    #[doc(hidden)]
+    pub const fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.stdin.take()
+    }
+
+    /// Return the direct child's process identifier while it is available.
+    #[must_use]
+    #[doc(hidden)]
+    pub fn id(&self) -> Option<u32> {
+        self.child.id()
+    }
+
+    /// Observe only the direct child without waiting for descendants.
+    #[doc(hidden)]
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    /// Wait for only the direct child while retaining ownership of its descendants.
+    #[doc(hidden)]
+    pub async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.child.wait().await
     }
 }
 
-/// Terminate and reap an owned child process tree.
+/// Spawn a child only after configuring its Unix descendant-process owner.
 #[doc(hidden)]
-pub async fn stop_owned_process(
-    child: &mut Child,
-    process_group: &mut OwnedProcessGroup,
-) -> std::io::Result<()> {
-    let child_already_exited = child.try_wait()?.is_some();
-    let group_result = process_group.terminate();
+#[cfg(unix)]
+pub fn spawn_owned_process(command: Command) -> std::io::Result<OwnedProcess> {
+    let mut command = command;
+    configure_owned_process_group(&mut command);
+    let child = command.spawn()?;
+    let process_group = OwnedProcessGroup::for_child(&child);
+    Ok(OwnedProcess { process_group, child })
+}
 
-    #[cfg(unix)]
+/// Terminate and reap an owned Unix child process tree.
+#[doc(hidden)]
+#[cfg(unix)]
+pub async fn stop_owned_process(child: &mut OwnedProcess) -> std::io::Result<()> {
+    let child_already_exited = child.try_wait()?.is_some();
+    let group_result = child.process_group.terminate();
     match group_stop_disposition(child_already_exited, &group_result) {
         GroupStopDisposition::WaitForChild => {}
         GroupStopDisposition::ObserveExitRace => {
-            // The child can exit after `try_wait` but before `killpg`. macOS may report EPERM while
-            // that exited process is still being reaped. Bound the observation window so a genuine
-            // permission failure on a live process cannot hang session shutdown.
+            // The child can exit after `try_wait` but before `killpg`. macOS may report EPERM
+            // while that exited process is still being reaped. Bound the observation window so
+            // a genuine permission failure on a live process cannot hang session shutdown.
             return match tokio::time::timeout(Duration::from_secs(1), child.wait()).await {
                 Ok(wait_result) => {
                     reconcile_process_stop(true, group_result, wait_result.map(|_| ()))
@@ -324,11 +382,6 @@ pub async fn stop_owned_process(
             };
         }
         GroupStopDisposition::ReturnError => return group_result,
-    }
-
-    #[cfg(not(unix))]
-    if child.try_wait()?.is_none() {
-        child.kill().await?;
     }
 
     let wait_result = child.wait().await.map(|_| ());
@@ -358,6 +411,7 @@ fn group_stop_disposition(
     }
 }
 
+#[cfg(unix)]
 fn reconcile_process_stop(
     child_already_exited: bool,
     group_result: std::io::Result<()>,
@@ -385,7 +439,7 @@ impl ToolExecutor for SystemToolExecutor {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 async fn run_tool_lenient(tool_name: &str, args: &[&str], timeout: Duration) -> Result<ToolOutput> {
     SystemToolExecutor.execute(ToolInvocation::lenient(tool_name, args, timeout)).await
 }
@@ -417,6 +471,16 @@ pub fn missing_required_tool(
 }
 
 async fn execute_system(invocation: ToolInvocation) -> Result<ToolOutput> {
+    execute_system_with_spawner(invocation, spawn_owned_process).await
+}
+
+async fn execute_system_with_spawner<Spawn>(
+    invocation: ToolInvocation,
+    spawn: Spawn,
+) -> Result<ToolOutput>
+where
+    Spawn: FnOnce(Command) -> std::io::Result<OwnedProcess>,
+{
     let resolved_program = resolve_tool_path(&invocation.program)?;
     if let Some(budget) = &invocation.artifact_budget {
         validate_artifact_root(budget)?;
@@ -437,25 +501,23 @@ async fn execute_system(invocation: ToolInvocation) -> Result<ToolOutput> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    configure_owned_process_group(&mut command);
 
-    let mut child = command.spawn().map_err(|error| ScorchError::ToolFailed {
+    let mut child = spawn(command).map_err(|error| ScorchError::ToolFailed {
         tool: invocation.program.clone(),
         status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
         stderr: error.to_string(),
     })?;
-    let mut process_group = OwnedProcessGroup::for_child(&child);
-    let stdout = child.stdout.take().ok_or_else(|| ScorchError::ToolFailed {
+    let stdout = child.take_stdout().ok_or_else(|| ScorchError::ToolFailed {
         tool: invocation.program.clone(),
         status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
         stderr: "failed to capture stdout".to_string(),
     })?;
-    let stderr = child.stderr.take().ok_or_else(|| ScorchError::ToolFailed {
+    let stderr = child.take_stderr().ok_or_else(|| ScorchError::ToolFailed {
         tool: invocation.program.clone(),
         status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
         stderr: "failed to capture stderr".to_string(),
     })?;
-    let stdin = child.stdin.take();
+    let stdin = child.take_stdin();
     let stdin_bytes = invocation.stdin.clone();
 
     let execution =
@@ -466,22 +528,20 @@ async fn execute_system(invocation: ToolInvocation) -> Result<ToolOutput> {
     {
         Ok(Ok(output)) => output,
         Ok(Err(error)) => {
-            let _ = stop_owned_process(&mut child, &mut process_group).await;
+            let _ = stop_owned_process(&mut child).await;
             return Err(error);
         }
         Err(_) => {
-            let _ = stop_owned_process(&mut child, &mut process_group).await;
+            let _ = stop_owned_process(&mut child).await;
             return Err(ScorchError::Cancelled {
                 reason: format!("{} timed out after {:?}", invocation.program, invocation.timeout),
             });
         }
     };
-    stop_owned_process(&mut child, &mut process_group).await.map_err(|error| {
-        ScorchError::ToolFailed {
-            tool: invocation.program.clone(),
-            status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
-            stderr: format!("failed to clean up process tree: {error}"),
-        }
+    stop_owned_process(&mut child).await.map_err(|error| ScorchError::ToolFailed {
+        tool: invocation.program.clone(),
+        status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
+        stderr: format!("failed to clean up process tree: {error}"),
     })?;
     if let Some(budget) = &invocation.artifact_budget {
         enforce_artifact_budget(&invocation.program, budget)?;
@@ -548,10 +608,10 @@ type ChildIoOutcome = (
 );
 
 async fn coordinate_child_io(
-    child: &mut Child,
-    stdout: tokio::process::ChildStdout,
-    stderr: tokio::process::ChildStderr,
-    stdin: Option<tokio::process::ChildStdin>,
+    child: &mut OwnedProcess,
+    stdout: ChildStdout,
+    stderr: ChildStderr,
+    stdin: Option<ChildStdin>,
     stdin_bytes: Option<Vec<u8>>,
     invocation: &ToolInvocation,
 ) -> Result<ChildIoOutcome> {
@@ -825,6 +885,88 @@ mod tests {
     use super::*;
 
     static PROCESS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[cfg(windows)]
+    const WINDOWS_FIXTURE_TEST: &str = "tests::windows_process_fixture";
+    #[cfg(windows)]
+    const WINDOWS_FIXTURE_MODE: &str = "SCORCHKIT_WINDOWS_PROCESS_FIXTURE_MODE";
+    #[cfg(windows)]
+    const WINDOWS_FIXTURE_PID: &str = "SCORCHKIT_WINDOWS_PROCESS_FIXTURE_PID";
+    #[cfg(windows)]
+    const WINDOWS_FIXTURE_ARTIFACT: &str = "SCORCHKIT_WINDOWS_PROCESS_FIXTURE_ARTIFACT";
+    #[cfg(windows)]
+    const WINDOWS_FIXTURE_MARKER: &str = "SCORCHKIT_WINDOWS_PROCESS_FIXTURE_MARKER";
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_process_fixture() {
+        let Ok(mode) = std::env::var(WINDOWS_FIXTURE_MODE) else {
+            return;
+        };
+        if mode == "descendant" {
+            std::thread::sleep(Duration::from_mins(1));
+            return;
+        }
+
+        if mode == "marker" {
+            let marker = std::env::var_os(WINDOWS_FIXTURE_MARKER)
+                .map(PathBuf::from)
+                .expect("marker fixture path");
+            std::fs::write(marker, b"scanner work started").expect("write marker fixture");
+            std::thread::sleep(Duration::from_mins(1));
+            return;
+        }
+
+        let pid_path = std::env::var_os(WINDOWS_FIXTURE_PID)
+            .map(PathBuf::from)
+            .expect("descendant PID fixture path");
+        let executable = std::env::current_exe().expect("current fixture executable");
+        let mut descendant = std::process::Command::new(executable)
+            .args(["--exact", WINDOWS_FIXTURE_TEST, "--nocapture"])
+            .env(WINDOWS_FIXTURE_MODE, "descendant")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn descendant fixture");
+        let descendant_pid = descendant.id();
+        std::thread::spawn(move || {
+            let _ = descendant.wait();
+        });
+        std::fs::write(&pid_path, descendant_pid.to_string()).expect("write descendant PID");
+
+        match mode.as_str() {
+            "success" => {}
+            "failure" => panic!("forced fixture failure after descendant spawn"),
+            "wait" => std::thread::sleep(Duration::from_mins(1)),
+            "output" => {
+                use std::io::Write as _;
+
+                let mut stdout = std::io::stdout().lock();
+                loop {
+                    stdout.write_all(b"xxxxxxxxxxxxxxxx").expect("write output fixture");
+                    stdout.flush().expect("flush output fixture");
+                }
+            }
+            "artifact" => {
+                use std::io::Write as _;
+
+                let artifact = std::env::var_os(WINDOWS_FIXTURE_ARTIFACT)
+                    .map(PathBuf::from)
+                    .expect("artifact fixture path");
+                loop {
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&artifact)
+                        .and_then(|mut file| file.write_all(b"xxxxxxxxxxxxxxxx"))
+                        .expect("grow artifact fixture");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+            other => panic!("unknown Windows process fixture mode: {other}"),
+        }
+    }
 
     #[test]
     fn process_limits_and_failure_status_are_stable() {
@@ -1285,6 +1427,354 @@ mod tests {
 
         let descendant = read_fixture_pid(&pid_file);
         assert_process_exits(descendant).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn owned_process_accessors_preserve_pipes_and_direct_child_identity() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "IFS= read -r input; printf 'out:%s' \"$input\"; printf err >&2"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+
+        let mut child = spawn_owned_process(command).expect("spawn owned pipe fixture");
+        let direct_child = child.id().expect("direct child PID");
+        assert!(direct_child > 1, "direct child PID must be a real process identifier");
+        let mut stdin = child.take_stdin().expect("piped stdin");
+        let mut stdout = child.take_stdout().expect("piped stdout");
+        let mut stderr = child.take_stderr().expect("piped stderr");
+
+        stdin.write_all(b"fixture\n").await.expect("write fixture stdin");
+        stdin.shutdown().await.expect("close fixture stdin");
+        let mut stdout_bytes = Vec::new();
+        stdout.read_to_end(&mut stdout_bytes).await.expect("read fixture stdout");
+        let mut stderr_bytes = Vec::new();
+        stderr.read_to_end(&mut stderr_bytes).await.expect("read fixture stderr");
+        let status = child.wait().await.expect("wait for pipe fixture");
+
+        assert!(status.success());
+        assert_eq!(stdout_bytes, b"out:fixture");
+        assert_eq!(stderr_bytes, b"err");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dropping_owned_process_terminates_descendants_before_direct_child_fallback() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let pid_file = directory.path().join("owned-drop-descendant.pid");
+        let pid_path = pid_file.to_string_lossy().into_owned();
+        let mut command = Command::new("sh");
+        command
+            .args([
+                "-c",
+                "sleep 60 </dev/null >/dev/null 2>&1 & printf '%s' \"$!\" > \"$1\"; wait",
+                "scorchkit-owned-drop",
+                pid_path.as_str(),
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+
+        let child = spawn_owned_process(command).expect("spawn owned drop fixture");
+        let mut descendant = None;
+        for _ in 0..100 {
+            if let Ok(raw) = std::fs::read_to_string(&pid_file) {
+                descendant =
+                    raw.trim().parse::<i32>().ok().and_then(rustix::process::Pid::from_raw);
+                if descendant.is_some() {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let descendant = descendant.expect("descendant PID fixture");
+
+        drop(child);
+        assert_process_exits(descendant).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_executor_preserves_stdin_output_and_accepted_exit_contract() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let command = concat!(
+            "set /p input=& ",
+            "<nul set /p =out:!input!& ",
+            "<nul set /p =err 1>&2& ",
+            "exit /b 7"
+        );
+        let invocation = ToolInvocation::accepting(
+            "cmd.exe",
+            &["/D", "/V:ON", "/S", "/C", command],
+            Duration::from_secs(5),
+            &[7],
+        )
+        .with_stdin(b"input\r\n".to_vec());
+
+        let output = SystemToolExecutor
+            .execute(invocation)
+            .await
+            .unwrap_or_else(|error| panic!("Windows I/O fixture failed: {error}"));
+        assert_eq!(output.exit_code, 7);
+        assert_eq!(output.stdout, "out:input");
+        assert_eq!(output.stderr, "err");
+        assert!(output.resolved_program.is_absolute());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_successful_parent_exit_terminates_descendants() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let (invocation, pid_file) =
+            windows_fixture_invocation("success", directory.path(), Duration::from_secs(5));
+
+        let result = SystemToolExecutor.execute(invocation).await;
+        assert!(result.is_ok(), "direct parent should exit successfully: {result:?}");
+        let descendant = wait_for_windows_fixture_pid(&pid_file).await;
+        assert_windows_process_exits(descendant).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_nonzero_parent_exit_terminates_descendants() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let (invocation, pid_file) =
+            windows_fixture_invocation("failure", directory.path(), Duration::from_secs(5));
+
+        let result = SystemToolExecutor.execute(invocation).await;
+        assert!(matches!(
+            result,
+            Err(ScorchError::ToolFailed { status, .. })
+                if status != TOOL_INFRASTRUCTURE_FAILURE_STATUS
+        ));
+        let descendant = wait_for_windows_fixture_pid(&pid_file).await;
+        assert_windows_process_exits(descendant).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_timeout_terminates_descendants() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let (invocation, pid_file) =
+            windows_fixture_invocation("wait", directory.path(), Duration::from_secs(5));
+
+        let executor = SystemToolExecutor;
+        let mut execution = Box::pin(executor.execute(invocation));
+        let mut descendant = None;
+        for _ in 0..500 {
+            tokio::select! {
+                result = &mut execution => {
+                    panic!("Windows timeout fixture completed before publishing its descendant: {result:?}");
+                }
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+            if let Some(pid) = read_windows_fixture_pid(&pid_file) {
+                descendant = Some(pid);
+                break;
+            }
+        }
+        let descendant = descendant.unwrap_or_else(|| {
+            panic!("descendant PID fixture was not created at {}", pid_file.display())
+        });
+
+        let result = execution.await;
+        assert!(matches!(result, Err(ScorchError::Cancelled { .. })));
+        assert_windows_process_exits(descendant).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_output_limit_terminates_descendants() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let (invocation, pid_file) =
+            windows_fixture_invocation("output", directory.path(), Duration::from_secs(5));
+
+        // Leave room for libtest's own preamble so the fixture publishes its descendant before
+        // its deliberate infinite output crosses the executor boundary.
+        let result = SystemToolExecutor.execute(invocation.with_output_limit(4_096)).await;
+        assert!(matches!(
+            result,
+            Err(ScorchError::ToolOutputLimit { stream: "stdout", limit_bytes: 4_096, .. })
+        ));
+        let descendant = wait_for_windows_fixture_pid(&pid_file).await;
+        assert_windows_process_exits(descendant).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_artifact_limit_terminates_descendants() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let artifact = directory.path().join("growing-artifact");
+        let (invocation, pid_file) =
+            windows_fixture_invocation("artifact", directory.path(), Duration::from_secs(5));
+        let invocation = invocation
+            .with_environment(WINDOWS_FIXTURE_ARTIFACT, artifact.to_string_lossy())
+            .with_artifact_budget(ArtifactBudget::new(directory.path(), 32, 8));
+
+        let result = SystemToolExecutor.execute(invocation).await;
+        assert!(matches!(result, Err(ScorchError::ToolArtifactLimit { limit_bytes: 32, .. })));
+        let descendant = wait_for_windows_fixture_pid(&pid_file).await;
+        assert_windows_process_exits(descendant).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn dropping_windows_execution_future_terminates_descendants() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let (invocation, pid_file) =
+            windows_fixture_invocation("wait", directory.path(), Duration::from_mins(1));
+        let executor = SystemToolExecutor;
+        let mut execution = Box::pin(executor.execute(invocation));
+        let mut descendant = None;
+        for _ in 0..500 {
+            tokio::select! {
+                result = &mut execution => {
+                    panic!("Windows fixture completed before cancellation: {result:?}");
+                }
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+            if let Some(pid) = read_windows_fixture_pid(&pid_file) {
+                descendant = Some(pid);
+                break;
+            }
+        }
+        let descendant = descendant.unwrap_or_else(|| {
+            panic!("descendant PID fixture was not created at {}", pid_file.display())
+        });
+
+        drop(execution);
+        assert_windows_process_exits(descendant).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn explicit_windows_stop_terminates_descendants() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let pid_file = directory.path().join("explicit-stop-descendant.pid");
+        let mut command = windows_fixture_command("wait", &pid_file);
+        command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
+        let mut child = spawn_owned_process(command).expect("spawn owned Windows fixture");
+        let descendant = wait_for_windows_fixture_pid(&pid_file).await;
+
+        stop_owned_process(&mut child).await.expect("stop owned Windows fixture");
+        assert_windows_process_exits(descendant).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_ownership_failure_prevents_suspended_child_work() {
+        let _process_guard = PROCESS_TEST_LOCK.lock().await;
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let marker = directory.path().join("scanner-work.marker");
+        let pid_file = directory.path().join("unused.pid");
+        let executable = std::env::current_exe().expect("current fixture executable");
+        let invocation = ToolInvocation::strict_owned(
+            executable.to_string_lossy(),
+            windows_fixture_arguments(),
+            Duration::from_secs(5),
+        )
+        .with_environment(WINDOWS_FIXTURE_MODE, "marker")
+        .with_environment(WINDOWS_FIXTURE_PID, pid_file.to_string_lossy())
+        .with_environment(WINDOWS_FIXTURE_MARKER, marker.to_string_lossy());
+
+        let result =
+            execute_system_with_spawner(invocation, spawn_windows_owned_process_rejected).await;
+        assert!(matches!(
+            result,
+            Err(ScorchError::ToolFailed {
+                status: TOOL_INFRASTRUCTURE_FAILURE_STATUS,
+                ref stderr,
+                ..
+            }) if stderr.contains("forced Windows process-ownership setup failure")
+        ));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!marker.exists(), "suspended child performed work before ownership succeeded");
+    }
+
+    #[cfg(windows)]
+    fn windows_fixture_invocation(
+        mode: &str,
+        directory: &Path,
+        timeout: Duration,
+    ) -> (ToolInvocation, PathBuf) {
+        let pid_file = directory.join(format!("{mode}-descendant.pid"));
+        let executable = std::env::current_exe().expect("current fixture executable");
+        let invocation = ToolInvocation::strict_owned(
+            executable.to_string_lossy(),
+            windows_fixture_arguments(),
+            timeout,
+        )
+        .with_environment(WINDOWS_FIXTURE_MODE, mode)
+        .with_environment(WINDOWS_FIXTURE_PID, pid_file.to_string_lossy());
+        (invocation, pid_file)
+    }
+
+    #[cfg(windows)]
+    fn windows_fixture_command(mode: &str, pid_file: &Path) -> Command {
+        let executable = std::env::current_exe().expect("current fixture executable");
+        let mut command = Command::new(executable);
+        command
+            .args(windows_fixture_arguments())
+            .env(WINDOWS_FIXTURE_MODE, mode)
+            .env(WINDOWS_FIXTURE_PID, pid_file);
+        command
+    }
+
+    #[cfg(windows)]
+    fn windows_fixture_arguments() -> Vec<String> {
+        vec!["--exact".to_string(), WINDOWS_FIXTURE_TEST.to_string(), "--nocapture".to_string()]
+    }
+
+    #[cfg(windows)]
+    async fn wait_for_windows_fixture_pid(path: &Path) -> u32 {
+        for _ in 0..500 {
+            if let Some(pid) = read_windows_fixture_pid(path) {
+                return pid;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("descendant PID fixture was not created at {}", path.display());
+    }
+
+    #[cfg(windows)]
+    fn read_windows_fixture_pid(path: &Path) -> Option<u32> {
+        std::fs::read_to_string(path).ok()?.trim().parse().ok()
+    }
+
+    #[cfg(windows)]
+    async fn assert_windows_process_exits(pid: u32) {
+        for _ in 0..100 {
+            if !windows_process_is_running(pid) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("Windows descendant process {pid} survived owned process-tree cleanup");
+    }
+
+    #[cfg(windows)]
+    fn windows_process_is_running(pid: u32) -> bool {
+        let filter = format!("PID eq {pid}");
+        let output_format = concat!("/", "F", "O");
+        let output = std::process::Command::new("tasklist.exe")
+            .args(["/FI", &filter, output_format, "CSV", "/NH"])
+            .output()
+            .expect("query Windows process state");
+        assert!(output.status.success(), "tasklist failed: {output:?}");
+        String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
     }
 
     #[cfg(unix)]

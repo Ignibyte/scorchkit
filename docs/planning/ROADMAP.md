@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** SK-044 is complete; SK-045 is next; SK-049 through SK-057 are documented post-release candidates
+**Status:** SK-045 is complete; SK-046 is next; SK-049 through SK-057 are documented post-release candidates
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-22
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
@@ -60,8 +60,8 @@ This census is an inventory, not the intended default product surface. SK-034 in
 application-security classification and prevents non-application families from implicit Codex, CLI,
 MCP, or profile selection while preserving an explicit compatibility catalog.
 
-Supported production hosts are Linux and macOS. A non-Unix build fails until a Windows Job Object
-backend can match the descendant-process cleanup contract.
+Supported production hosts are Linux, macOS, and Windows. Unix process groups and Windows
+kill-on-close Job Objects enforce the same bounded descendant-process cleanup contract.
 
 ## Feature-readiness contract
 
@@ -148,6 +148,8 @@ file-mode observations while the index retains authoritative modes.
 | SK-041 | Added stable application-only pentest plans, closed trusted execution, isolated persona invariants, typed coverage, and atomic redacted HAR/manual evidence import. | Ten reportable inspection findings and three hardenings repaired; 84.03% line coverage; 1,861 strict cases; PostgreSQL and CLI/MCP contracts green; sealed evidence catches 194/194 viable focused mutations at 100% MSI. |
 | SK-042 | Added inert provider-neutral application context, immutable change sets, tiered workflow plans, two read-only MCP tools, and a Codex-first application-security coordinator. | Exact-tree security review found no reportable finding; 81.75% line coverage; 1,873 strict cases; PostgreSQL and CLI/MCP contracts green; sealed evidence catches 152/152 viable mutations at 100% MSI. |
 | SK-043 | Restored webhook delivery through a redacted durable queue, policy-owned network attempts, credential-indirect configuration, revision ownership, recovery, immutable audits, and foreground-independent workers. | Thirteen inspection findings repaired; 84.39% line coverage; 1,904 strict cases; PostgreSQL and CLI/MCP contracts green; canonical DIFF caught 276/283 viable mutations at 97.52% MSI, above the unchanged 95% floor. |
+| SK-044 | Added authenticated remote MCP through a trusted same-host TLS proxy with principal-to-engagement binding, isolated stateful sessions, bounded request guards, and credential scrubbing. | Ten inspection findings repaired; 84.55% line coverage; 1,928 strict cases; PostgreSQL and CLI/MCP contracts green; canonical DIFF caught 117/117 viable mutations at 100% MSI. |
+| SK-045 | Added Windows suspended-spawn Job Object ownership and native CI while preserving Unix process groups and one bounded provider-neutral child lifecycle for one-shot and Interactsh execution. | Seven inspection findings repaired; Windows-target workspace Clippy green; 84.58% line coverage; 1,931 strict cases; 100 PostgreSQL tests and CLI/MCP contracts green; canonical DIFF caught 16/16 viable mutations at 100% MSI. |
 
 The sealed Codex Security scan `efe30eaf-9b1b-4572-949a-0e8391d48247` reviewed 603 changed paths and
 closed 192/192 semantic rows. Its eight high-confidence findings have code fixes and regression
@@ -157,30 +159,30 @@ evidence.
 
 ## Current validation evidence
 
-Evidence produced through the TICKET-021 pre-completion worktree:
+Evidence produced through the TICKET-023 pre-completion worktree:
 
 | Signal | Last result | Final requirement |
 |---|---:|---:|
 | Compiler | all targets, workspace packages, and features passed | pass after final edits |
 | Strict Clippy | zero diagnostics across every derived feature state and workspace package | pass after final edits and every feature state |
 | All-feature tests | Workspace library, package, integration, and doctest suites passed; strict all-feature Clippy had zero diagnostics | pass after final edits with PostgreSQL |
-| Canonical line coverage | 84.39% | at least 62%; retain the measured floor before the next ratchet decision |
-| SK-043 DIFF mutation selection | 316 mutations evaluated in 71 minutes: 276 caught, 7 missed, and 33 compiler-unviable; 97.52% MSI at the unchanged 95% floor | retain the completed raw outcome set and remain at or above 95% |
-| Nextest strictness | 1,904 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
+| Canonical line coverage | 84.58% | at least 62%; retain the measured floor before the next ratchet decision |
+| SK-045 DIFF mutation selection | 25 mutations evaluated: 16 caught, 0 missed, and 9 compiler-unviable; 100% MSI at the unchanged 95% floor | retain the completed raw outcome set and remain at or above 95% |
+| Nextest strictness | 1,931 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
 | PostgreSQL integration | 77 MCP, 12 storage, and 11 storage-integration tests passed | pass |
 | CLI/MCP contracts | 24 CLI, 2 code-scan, 77 MCP, and 12 scan-plan tests passed | pass |
-| Delivery receipt | TICKET-021 pre-completion DIFF gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive DIFF receipt for the exact completed tree |
+| Delivery receipt | TICKET-023 pre-completion DIFF gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive DIFF receipt for the exact completed tree |
 
 The test count is historical evidence, not a promised final count. The gate output after all source and
 documentation edits is authoritative.
 
 ## Baseline blockers
 
-None. The feature-readiness baseline and SK-028 through SK-043 are closed above.
+None. The feature-readiness baseline and SK-028 through SK-045 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. TICKET-022 added authenticated remote MCP; SK-045 is the
+The pipeline permits one active ticket. TICKET-023 added Windows process ownership; SK-046 is the
 next platform candidate.
 Each later row has a specified candidate intake under `docs/planning/intake/` and becomes a numbered
 ticket only when promoted. SK-049 through SK-057 begin only after the current SK-043 through SK-048
@@ -193,7 +195,7 @@ queue is complete. Backlog status is not a waiver of a safety invariant.
 | 3 | SK-042 (completed) | Present change-aware commit, PR, staging, release, and deep AppSec workflows through Codex-first, agent-neutral contracts. | SK-036 through SK-041 | [TICKET-017](tickets/closed/TICKET-017-codex-appsec-workflows.md) |
 | 4 | SK-043 (completed) | Restore webhook delivery through a redacted, policy-owned, durable bounded queue outside scan execution. | SK-028, SK-035 | [TICKET-021](tickets/closed/TICKET-021-policy-webhooks.md) |
 | 5 | SK-044 (completed) | Add authenticated remote MCP with principal-to-engagement binding, host validation, and an explicit TLS policy. | SK-032, SK-035 | [TICKET-022](tickets/closed/TICKET-022-authenticated-remote-mcp.md) |
-| 6 | SK-045 | Add Windows Job Object process ownership before enabling Windows builds. | SK-028, SK-034 | [intake](intake/INTAKE-windows-process-owner.md) |
+| 6 | SK-045 (completed) | Add Windows Job Object process ownership before enabling Windows builds. | SK-028, SK-034 | [TICKET-023](tickets/closed/TICKET-023-windows-process-owner.md) |
 | 7 | SK-046 | Replace reachable unmaintained dependencies and remove the reviewed disabled-MySQL advisory exception. | upstream availability or replacement | [intake](intake/INTAKE-dependency-debt.md) |
 | 8 | SK-047 | Complete the scheduled full mutation inventory once, repair named survivors through focused scopes, and raise quality floors only from measured green evidence. | SK-027 | [intake](intake/INTAKE-quality-ratchet.md) |
 | 9 | SK-048 | Add reproducible ScorchKit releases, signed artifacts, SBOM/provenance, upgrade and rollback tests, and performance/chaos budgets. | SK-033, SK-035, SK-046 | [intake](intake/INTAKE-reproducible-releases.md) |

@@ -6,6 +6,8 @@ use scorchkit_core::{Result, ScorchError};
 use tempfile::{Builder, TempDir};
 
 use super::collection::VerifiedNucleiCollection;
+#[cfg(windows)]
+use crate::windows_support::set_directory_permissions;
 
 pub const RESULT_FILE: &str = "reports/findings.jsonl";
 
@@ -134,12 +136,10 @@ fn read_owned_artifact(root: &Path, relative: &str, limit: usize) -> Result<Vec<
     Ok(bytes)
 }
 
+#[cfg(unix)]
 fn set_directory_permissions(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    }
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
     Ok(())
 }
 

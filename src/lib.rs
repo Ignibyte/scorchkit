@@ -50,10 +50,10 @@
 //! - **[`facade`]** — High-level [`Engine`] for library consumers
 //! - **[`prelude`]** — Convenience re-exports
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 compile_error!(
-    "ScorchKit currently supports Unix hosts only because external-tool process-tree isolation \
-     requires Unix process groups; add a kill-on-close job-object backend before enabling Windows"
+    "ScorchKit supports Unix process groups and Windows Job Objects; this target has no owned \
+     descendant-process backend"
 );
 
 pub mod adapter_catalog;
@@ -84,6 +84,8 @@ pub mod supply_chain;
 pub mod tools;
 mod trusted_nuclei;
 pub mod webhooks;
+#[cfg(windows)]
+mod windows_support;
 
 #[cfg(test)]
 pub(crate) static TEST_ENVIRONMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

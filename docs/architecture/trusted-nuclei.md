@@ -67,7 +67,7 @@ and disables redirects. Approved structured paths cannot replace that authority.
 does not perform a second DNS resolution for the target.
 
 The version probe, signature validation, and scan use the repository process executor with whole
-process-group ownership. Each invocation uses a clean environment, private home/config/cache and
+process-tree ownership. Each invocation uses a clean environment, private home/config/cache and
 working directories, bounded output and artifacts, `-duc`, `-dut`, `-ni`, `-dr`, `-no-stdin`, exact
 template paths, explicit rate and concurrency limits, and no cloud, remote-template, AI, workflow,
 headless, code, file, or update flags. Supported runtime is pinned to Nuclei 3.11.1 for this ticket.

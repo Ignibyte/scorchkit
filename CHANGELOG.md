@@ -27,6 +27,14 @@ All notable changes to ScorchKit will be documented in this file.
   89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
 
 ### Added
+- **Windows Job Object process ownership (TICKET-023 / SK-045)** — Enabled Windows builds without
+  weakening the external-process boundary. One-shot tools and long-lived Interactsh sessions now
+  share a platform-owned child abstraction: Unix retains process groups, while Windows creates
+  children suspended, assigns a kill-on-close Job Object, and resumes only after ownership
+  succeeds. Success, nonzero exit, timeout, cancellation, output or artifact overflow, explicit
+  stop, and owner drop terminate descendants under the same two-second contract. Added fail-closed
+  pre-resume coverage, Windows lifecycle fixtures, workspace cross-compilation, and a native
+  `windows-latest` Clippy/test lane.
 - **Authenticated remote MCP (TICKET-022 / SK-044)** — Added an explicit `serve --remote`
   Streamable HTTP host behind a same-host TLS reverse proxy. Remote startup now requires a
   loopback backend, exact Host and HTTPS Origin allowlists, one trusted HTTPS forwarding assertion,

@@ -41,7 +41,7 @@ Codex / Claude compatibility / other hosts / humans / CI
 | Persistence | Provider-neutral job store with in-memory and PostgreSQL adapters; stateless MCP supported |
 | Reasoning contracts | Typed `scorchkit.ai/v1` planning, analysis, correlation, and remediation tasks |
 | Scanner evidence | Preserved independently from agent-generated interpretation |
-| Supported OS | Linux and macOS until Windows Job Object process ownership is implemented |
+| Supported OS | Linux, macOS, and Windows with platform-owned descendant process trees |
 
 ## Build order
 

@@ -33,8 +33,9 @@ window, or evidence-handling requirement.
 ## Process controls
 
 Each invocation has a timeout, bounded stdout and stderr, canonical executable resolution, no shell
-interpolation, and Unix process-group cleanup. Hook output is untrusted until JSON parsing succeeds.
-Secrets should not be written to stdout or stderr because hook output can enter logs and reports.
+interpolation, and whole-tree cleanup through a Unix process group or Windows Job Object. Hook
+output is untrusted until JSON parsing succeeds. Secrets should not be written to stdout or stderr
+because hook output can enter logs and reports.
 
 ## Webhooks
 

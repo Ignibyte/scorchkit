@@ -1040,8 +1040,10 @@ fn render_doctor_summary(summary: &DoctorSummary, deep: bool) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     struct PathGuard(Option<std::ffi::OsString>);
 
+    #[cfg(unix)]
     impl Drop for PathGuard {
         fn drop(&mut self) {
             if let Some(path) = self.0.take() {
@@ -1097,6 +1099,7 @@ mod tests {
         root
     }
 
+    #[cfg(unix)]
     fn with_path<T>(path: &std::path::Path, test: impl FnOnce() -> T) -> T {
         let _guard = PathGuard(std::env::var_os("PATH"));
         std::env::set_var("PATH", path);

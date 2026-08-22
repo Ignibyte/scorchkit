@@ -5,8 +5,10 @@ the report.
 
 **Time:** about 30 minutes for a first build.
 
-**You will need:** Linux or macOS, a current stable Rust toolchain, Python 3 for the disposable local
-server, and two terminals.
+**You will need:** Linux, macOS, or Windows, a current stable Rust toolchain, Python 3 for the
+disposable local server, and two terminals. Commands below use a POSIX shell; on Windows, Git Bash
+can run them with `python` in place of `python3` and the built binary is
+`target/release/scorchkit.exe`.
 
 Only scan systems you own or have written permission to test. This tutorial stays on loopback.
 

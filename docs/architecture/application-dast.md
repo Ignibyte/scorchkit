@@ -107,8 +107,8 @@ disables release checks, release downloads, and add-on update installation befor
 clean: the required report must contain parsed warnings and the persona outcome becomes degraded or
 incomplete according to the warning class. Exit 1 or any other status is failure.
 
-The shared executor owns the process group, wall clock, stdout/stderr bounds, and a recursive
-artifact budget rooted at the already-created persona workspace. The budget counts every
+The shared executor owns the platform process tree, wall clock, stdout/stderr bounds, and a
+recursive artifact budget rooted at the already-created persona workspace. The budget counts every
 filesystem entry without following links, sums regular-file bytes, and stops the process tree when
 total bytes or entry count exceeds the
 request. The workspace uses owner-only permissions and is removed on success, failure,

@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::engine::error::{Result, ScorchError};
+#[cfg(windows)]
+use crate::windows_support::{ensure_same_filesystem, require_private_directory};
 use scorchkit_core::{ProviderSnapshot, ProviderSnapshotState};
 
 const METADATA_LIMIT_BYTES: usize = 64 * 1024;
@@ -425,6 +427,7 @@ fn require_canonical_descendant(root: &Path, path: &Path, label: &str) -> Result
 
 fn create_private_directory(path: &Path) -> Result<()> {
     let mut builder = fs::DirBuilder::new();
+    builder.recursive(false);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -467,11 +470,6 @@ fn require_private_directory(path: &Path) -> Result<()> {
             path.display()
         )))
     }
-}
-
-#[cfg(not(unix))]
-fn require_private_directory(_path: &Path) -> Result<()> {
-    Ok(())
 }
 
 fn read_bounded(path: &Path, maximum_bytes: usize) -> Result<Vec<u8>> {
@@ -538,11 +536,6 @@ fn ensure_same_filesystem(left: &Path, right: &Path) -> Result<()> {
             "provider snapshot staging must use the cache filesystem".to_string(),
         ));
     }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn ensure_same_filesystem(_left: &Path, _right: &Path) -> Result<()> {
     Ok(())
 }
 
