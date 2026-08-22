@@ -16,6 +16,7 @@ use crate::engine::target::Target;
 use crate::facade::Engine;
 use crate::runner::job_executor::CancellationToken;
 use crate::runner::orchestrator::Orchestrator;
+use crate::webhooks::WebhookService;
 
 use scorchkit_executor::integration::{lease_deadline, normalize_job_progress, transition_job};
 #[cfg(test)]
@@ -90,6 +91,7 @@ pub struct ScanJobService {
     store: Arc<dyn JobStore>,
     active: Arc<StdMutex<HashMap<Uuid, CancellationToken>>>,
     owner_id: Uuid,
+    webhooks: Option<Arc<WebhookService>>,
 }
 
 impl ScanJobService {
@@ -101,7 +103,15 @@ impl ScanJobService {
             store,
             active: Arc::new(StdMutex::new(HashMap::new())),
             owner_id: Uuid::new_v4(),
+            webhooks: None,
         }
+    }
+
+    /// Attach durable webhook enqueueing to every job-owned orchestrator.
+    #[must_use]
+    pub fn with_webhooks(mut self, webhooks: Arc<WebhookService>) -> Self {
+        self.webhooks = Some(webhooks);
+        self
     }
 
     /// Build a process-local service suitable for stateless MCP.
@@ -284,8 +294,14 @@ impl ScanJobService {
     }
 
     fn orchestrator_for(&self, job: &ScanJob) -> Result<Orchestrator> {
-        let engine = Engine::new(Arc::clone(&self.config));
+        let engine = Engine::for_engagement(
+            Arc::clone(&self.config),
+            Arc::new(job.request.engagement.clone()),
+        );
         let ctx = engine.dast_context(&job.request.target, &job.request.profile)?;
+        if let Some(webhooks) = &self.webhooks {
+            ctx.events.add_durable_sink(webhooks.sink(job.request.engagement.clone()));
+        }
         let mut orchestrator = Orchestrator::new(ctx);
         orchestrator.register_default_modules();
         orchestrator.apply_selection(&job.request.profile, job.request.modules.as_deref());

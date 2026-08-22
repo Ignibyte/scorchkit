@@ -50,7 +50,7 @@ engagement and therefore authorizes no scan.
 | `cve` | disabled, mock, NVD, OSV, or composite lookup |
 | `network_credentials` | SSH, SMB, SNMP, and Kerberos inputs |
 | `cloud` | AWS, GCP, Azure, and Kubernetes credential hints |
-| `webhooks` | compatibility-only shape; outbound delivery is disabled |
+| `webhooks` | durable event destination, filters, credential reference, and queue/worker bounds |
 
 Secret-bearing structs use redacted `Debug` implementations. TOML serialization is not redaction and
 must be protected like any other credentials file.
@@ -83,6 +83,38 @@ profile = "quick"
 
 The real file also contains a generated UUID and every default section. A later DNS change is denied
 until the operator regenerates or deliberately changes the engagement.
+
+## Durable webhooks
+
+Webhook delivery is available only on PostgreSQL-backed job hosts. The engagement that runs the job
+must separately authorize the destination hostname and every resolved address with
+`webhook-delivery` and `active-safe`; scan-target grants do not imply notification authority.
+
+```toml
+[[webhooks]]
+id = "security-events"
+url = "https://events.owned.example/scorchkit"
+events = ["finding_produced", "scan_completed"]
+authorization_env = "SCORCHKIT_WEBHOOK_AUTHORIZATION"
+max_pending = 1000
+max_payload_bytes = 262144
+max_attempts = 5
+timeout_seconds = 10
+backoff_seconds = 5
+max_backoff_seconds = 300
+max_redirects = 0
+batch_size = 25
+```
+
+`authorization_env` names an environment variable containing the complete `Authorization` header.
+The value is resolved only after a worker claims an authorized attempt and is absent from config
+debug output, queue records, audits, reports, and CLI/MCP projections. Embedded URL credentials,
+fragments, duplicate IDs, invalid event names, and zero or excessive bounds fail configuration.
+URL-only legacy entries derive a stable non-secret destination ID, but they still require durable
+storage and explicit policy grants before delivery.
+Authenticated destinations must set `max_redirects = 0`, preventing an authorization value from
+crossing an origin boundary. Unauthenticated destinations may follow at most ten separately
+authorized redirects.
 
 ## AI
 

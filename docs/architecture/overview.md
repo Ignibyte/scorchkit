@@ -64,7 +64,8 @@ See [SECURITY.md](../../SECURITY.md), [engine.md](engine.md), and [config.md](co
 | Rust facade | Embedded operation | `Engine::for_engagement` or a config containing an engagement |
 | AI adapters | Optional planning and analysis | Codex by default; output remains labeled analysis |
 
-Remote MCP transport and outbound webhook delivery are not supported. MCP is local stdio only.
+MCP remains local stdio only. PostgreSQL-backed job hosts support durable webhook delivery through
+an independently authorized, redacted, bounded queue; remote MCP transport remains unsupported.
 
 ## Engine and contexts
 

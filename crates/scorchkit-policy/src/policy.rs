@@ -52,6 +52,8 @@ pub enum Capability {
     LocalState,
     /// Retrieve a security-provider snapshot outside scan-time execution.
     ProviderRefresh,
+    /// Deliver a redacted application event to a configured webhook destination.
+    WebhookDelivery,
 }
 
 /// A normalized target presented to the policy engine.

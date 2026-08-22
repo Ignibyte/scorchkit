@@ -9,6 +9,8 @@ use crate::config::AppConfig;
 use crate::engine::error::{Result, ScorchError};
 use crate::runner::job::{DastJobRequest, JobStore, ScanJob, ScanJobService};
 use crate::storage::jobs::PostgresJobStore;
+use crate::storage::webhooks::PostgresWebhookStore;
+use crate::webhooks::WebhookService;
 
 fn comma_separated(value: &str) -> Vec<String> {
     value.split(',').map(str::trim).filter(|item| !item.is_empty()).map(str::to_string).collect()
@@ -21,8 +23,16 @@ fn parse_job_id(value: &str) -> Result<Uuid> {
 
 async fn service(config: &Arc<AppConfig>, database_url: Option<&str>) -> Result<ScanJobService> {
     let pool = crate::storage::connect_from_config(&config.database, database_url).await?;
-    let store: Arc<dyn JobStore> = Arc::new(PostgresJobStore::new(pool));
-    Ok(ScanJobService::new(Arc::clone(config), store))
+    let store: Arc<dyn JobStore> = Arc::new(PostgresJobStore::new(pool.clone()));
+    let mut jobs = ScanJobService::new(Arc::clone(config), store);
+    if !config.webhooks.is_empty() {
+        let service = Arc::new(WebhookService::new(
+            &config.webhooks,
+            Arc::new(PostgresWebhookStore::new(pool)),
+        )?);
+        jobs = jobs.with_webhooks(Arc::clone(&service));
+    }
+    Ok(jobs)
 }
 
 fn print_json(value: &impl serde::Serialize) -> Result<()> {

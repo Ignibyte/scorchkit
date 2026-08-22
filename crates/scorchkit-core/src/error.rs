@@ -63,6 +63,9 @@ pub enum ScorchError {
     #[error("scan job error: {0}")]
     Job(String),
 
+    #[error("webhook delivery error: {0}")]
+    Webhook(String),
+
     #[error("scan cancelled: {reason}")]
     Cancelled { reason: String },
 

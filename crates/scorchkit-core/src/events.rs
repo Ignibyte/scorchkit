@@ -41,7 +41,7 @@
 //! });
 //! ```
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use tokio::sync::broadcast;
@@ -153,9 +153,20 @@ pub enum ScanEvent {
 ///
 /// Cheaply cloneable — each clone shares the same underlying channel so
 /// publishers and subscribers created from clones all talk to the same bus.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct EventBus {
     sender: broadcast::Sender<ScanEvent>,
+    durable_sinks: Arc<RwLock<Vec<Arc<dyn DurableEventSink>>>>,
+}
+
+impl std::fmt::Debug for EventBus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EventBus")
+            .field("subscribers", &self.subscriber_count())
+            .field("durable_sinks", &self.durable_sink_count())
+            .finish()
+    }
 }
 
 impl EventBus {
@@ -167,7 +178,7 @@ impl EventBus {
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         let (sender, _rx) = broadcast::channel(capacity);
-        Self { sender }
+        Self { sender, durable_sinks: Arc::new(RwLock::new(Vec::new())) }
     }
 
     /// Publish an event to all current subscribers.
@@ -182,6 +193,27 @@ impl EventBus {
         if let Err(e) = self.sender.send(event) {
             debug!("event bus: no subscribers — {e}");
         }
+    }
+
+    /// Attach one awaited persistence boundary for lifecycle publication.
+    pub fn add_durable_sink(&self, sink: Arc<dyn DurableEventSink>) {
+        self.durable_sinks.write().unwrap_or_else(std::sync::PoisonError::into_inner).push(sink);
+    }
+
+    /// Persist an event to every durable sink before broadcasting it.
+    ///
+    /// Sink failures are advisory and must already be sanitized by the sink.
+    /// They are logged but never replace the scan result. Awaiting the sink
+    /// prevents the durable channel from inheriting broadcast lag or loss.
+    pub async fn publish_durable(&self, event: ScanEvent) {
+        let sinks =
+            self.durable_sinks.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        for sink in sinks {
+            if sink.persist(&event).await.is_err() {
+                warn!("durable event sink persistence failed");
+            }
+        }
+        self.publish(event);
     }
 
     /// Create a new subscriber receiver.
@@ -201,6 +233,12 @@ impl EventBus {
     #[must_use]
     pub fn subscriber_count(&self) -> usize {
         self.sender.receiver_count()
+    }
+
+    /// Return the number of awaited persistence sinks.
+    #[must_use]
+    pub fn durable_sink_count(&self) -> usize {
+        self.durable_sinks.read().unwrap_or_else(std::sync::PoisonError::into_inner).len()
     }
 }
 
@@ -224,6 +262,15 @@ pub trait EventHandler: Send + Sync {
     /// Implementations may return `Err(message)` for diagnostic purposes;
     /// errors are logged but do not abort the scan or other handlers.
     async fn handle(&self, event: ScanEvent) -> Result<(), String>;
+}
+
+/// Awaited provider-neutral persistence boundary for lifecycle events.
+#[async_trait]
+pub trait DurableEventSink: Send + Sync {
+    /// Persist one event before it enters best-effort broadcast telemetry.
+    ///
+    /// Returned diagnostics must not contain event evidence or credentials.
+    async fn persist(&self, event: &ScanEvent) -> Result<(), String>;
 }
 
 /// Spawn a background task that drives `handler` with every event published
@@ -370,12 +417,48 @@ mod tests {
         received: Arc<Mutex<Vec<ScanEvent>>>,
     }
 
+    #[derive(Default)]
+    struct CollectingDurableSink {
+        received: Arc<Mutex<Vec<ScanEvent>>>,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl DurableEventSink for CollectingDurableSink {
+        async fn persist(&self, event: &ScanEvent) -> Result<(), String> {
+            self.received.lock().map_err(|error| error.to_string())?.push(event.clone());
+            if self.fail {
+                Err("sanitized fixture failure".to_string())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     #[async_trait]
     impl EventHandler for CollectingHandler {
         async fn handle(&self, event: ScanEvent) -> Result<(), String> {
             self.received.lock().map_err(|e| e.to_string())?.push(event);
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn durable_publish_awaits_sinks_and_broadcasts_despite_sink_failure() {
+        let bus = EventBus::new(16);
+        assert_eq!(bus.durable_sink_count(), 0);
+        assert!(format!("{bus:?}").contains("durable_sinks: 0"));
+        let sink = Arc::new(CollectingDurableSink {
+            received: Arc::new(Mutex::new(Vec::new())),
+            fail: true,
+        });
+        bus.add_durable_sink(sink.clone());
+        let mut receiver = bus.subscribe();
+        bus.publish_durable(sample_event()).await;
+        assert_eq!(bus.durable_sink_count(), 1);
+        assert!(format!("{bus:?}").contains("durable_sinks: 1"));
+        assert_eq!(sink.received.lock().unwrap().len(), 1);
+        assert!(matches!(receiver.recv().await, Ok(ScanEvent::ScanStarted { .. })));
     }
 
     /// Verify `subscribe_handler` delivers events to an `EventHandler`.

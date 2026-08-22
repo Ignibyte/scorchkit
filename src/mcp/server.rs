@@ -20,6 +20,8 @@ use crate::engine::error::ScorchError;
 use crate::runner::job::{JobStore, ScanJobService};
 use crate::runner::job_executor::CancellationToken;
 use crate::storage::jobs::PostgresJobStore;
+use crate::storage::webhooks::PostgresWebhookStore;
+use crate::webhooks::WebhookService;
 
 const RECOVERY_INTERVAL_SECONDS: u64 = 5;
 
@@ -34,6 +36,9 @@ pub struct ScorchKitServer {
     pub(crate) pool: Option<PgPool>,
     /// Provider-neutral job control plane used by stateless and stateful sessions.
     pub(crate) jobs: ScanJobService,
+    /// Optional durable webhook service for lifecycle enqueue and background delivery.
+    pub(crate) webhooks: Option<Arc<WebhookService>>,
+    webhook_configuration_error: Option<String>,
 }
 
 impl ScorchKitServer {
@@ -42,20 +47,41 @@ impl ScorchKitServer {
     pub fn new(config: Arc<AppConfig>, pool: PgPool) -> Self {
         let store: Arc<dyn JobStore> = Arc::new(PostgresJobStore::new(pool.clone()));
         let jobs = ScanJobService::new(Arc::clone(&config), store);
-        Self { config, pool: Some(pool), jobs }
+        let (jobs, webhooks, webhook_configuration_error) = match WebhookService::new(
+            &config.webhooks,
+            Arc::new(PostgresWebhookStore::new(pool.clone())),
+        ) {
+            Ok(webhooks) if webhooks.is_enabled() => {
+                let webhooks = Arc::new(webhooks);
+                (jobs.with_webhooks(Arc::clone(&webhooks)), Some(webhooks), None)
+            }
+            Ok(_) => (jobs, None, None),
+            Err(error) => (jobs, None, Some(error.to_string())),
+        };
+        Self { config, pool: Some(pool), jobs, webhooks, webhook_configuration_error }
     }
 
     /// Create a stateless server backed by process-local jobs and no database.
     #[must_use]
     pub fn new_stateless(config: Arc<AppConfig>) -> Self {
         let jobs = ScanJobService::in_memory(Arc::clone(&config));
-        Self { config, pool: None, jobs }
+        let webhook_configuration_error = (!config.webhooks.is_empty()).then(|| {
+            "webhook delivery requires an explicitly configured durable database".to_string()
+        });
+        Self { config, pool: None, jobs, webhooks: None, webhook_configuration_error }
     }
 
     pub(crate) fn require_pool(&self) -> Result<&PgPool, String> {
         self.pool.as_ref().ok_or_else(|| {
             "database unavailable: start MCP with an explicit database URL".to_string()
         })
+    }
+
+    fn require_valid_webhook_host(&self) -> crate::engine::error::Result<()> {
+        if let Some(error) = &self.webhook_configuration_error {
+            return Err(ScorchError::Config(error.clone()));
+        }
+        Ok(())
     }
 }
 
@@ -143,8 +169,10 @@ pub async fn serve(config: Arc<AppConfig>) -> crate::engine::error::Result<()> {
     } else {
         ScorchKitServer::new_stateless(config)
     };
+    server.require_valid_webhook_host()?;
     server.jobs.recover_interrupted().await?;
     let recovery_jobs = server.jobs.clone();
+    let recovery_webhooks = server.webhooks.clone();
 
     let service = server
         .serve(stdio())
@@ -165,6 +193,11 @@ pub async fn serve(config: Arc<AppConfig>) -> crate::engine::error::Result<()> {
                     if let Err(error) = recovery_jobs.recover_interrupted().await {
                         tracing::warn!(%error, "scan job recovery pass failed");
                     }
+                    if let Some(webhooks) = &recovery_webhooks {
+                        if let Err(error) = webhooks.run_due().await {
+                            tracing::warn!(%error, "webhook delivery pass failed");
+                        }
+                    }
                 }
             }
         }
@@ -179,4 +212,24 @@ pub async fn serve(config: Arc<AppConfig>) -> crate::engine::error::Result<()> {
     service_result?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stateless_host_rejects_webhook_enabled_configuration() {
+        let mut config = AppConfig::default();
+        config.webhooks.push(
+            serde_json::from_value(serde_json::json!({
+                "id": "primary",
+                "url": "https://hooks.example.test/delivery"
+            }))
+            .unwrap(),
+        );
+        let server = ScorchKitServer::new_stateless(Arc::new(config));
+        assert!(server.require_valid_webhook_host().is_err());
+        assert!(server.webhooks.is_none());
+    }
 }

@@ -111,6 +111,10 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-local-api-principal-boundary-001` | Establish a local API principal through an operating-system-protected transport or explicit authentication; loopback location and client-supplied identity metadata are not authority. | `AAR-020-post-release-platform-roadmap` |
 | `PR-scorchkit-extension-persistence-boundary-001` | Make third-party extensions return typed proposals and evidence through engine validation; never expose database, canonical-path, or finding-state handles that bypass engine-owned persistence. | `AAR-020-post-release-platform-roadmap` |
 | `PR-scorchkit-local-frontend-bind-boundary-001` | Before team identity and isolation exist, bind optional local frontends only to loopback or an operating-system-protected local socket and reject non-loopback listeners. | `AAR-020-post-release-platform-roadmap` |
+| `PR-scorchkit-effect-lease-covers-deadline-001` | Size ownership leases to cover the complete external-effect deadline plus a bounded commit margin. | `AAR-021-policy-webhooks` |
+| `PR-scorchkit-durable-effect-idempotency-001` | Give every durable at-least-once external effect stable operation and attempt identities that receivers can use for deduplication. | `AAR-021-policy-webhooks` |
+| `PR-scorchkit-durable-worker-foreground-separation-001` | Foreground scans await only durable enqueue; background or explicit worker owners perform bounded network attempts. | `AAR-021-policy-webhooks` |
+| `PR-scorchkit-shared-db-fixture-recovery-001` | Shared-database tests remove only their own abandoned fixtures and never infer record membership from an arbitrarily small global page. | `AAR-021-policy-webhooks` |
 
 ## Register
 
@@ -200,3 +204,6 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-workflow-boundary-mutation-gap-001` | test-gap bug | `AAR-017-codex-appsec-workflows` |
 | `BF-scorchkit-public-census-drift-001` | documentation-integrity bug | `AAR-018-public-documentation-sync` |
 | `BF-scorchkit-shared-mount-site-builder-exec-001` | build-environment failure | `AAR-018-public-documentation-sync` |
+| `BF-scorchkit-webhook-lease-shorter-effect-001` | concurrency bug | `AAR-021-policy-webhooks` |
+| `BF-scorchkit-shared-queue-test-page-assumption-001` | test reliability bug | `AAR-021-policy-webhooks` |
+| `BF-scorchkit-webhook-mutation-state-gap-001` | test-gap bug | `AAR-021-policy-webhooks` |

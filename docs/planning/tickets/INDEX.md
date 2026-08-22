@@ -2,7 +2,7 @@
 
 This directory is the canonical ticket store.
 
-**Next ticket number:** `021`
+**Next ticket number:** `022`
 
 ## Open queue
 

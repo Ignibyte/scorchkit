@@ -338,10 +338,13 @@ impl Orchestrator {
         let _audit_log_handle =
             subscribe_audit_log_if_enabled(&self.ctx.config.audit_log, &self.ctx.events);
 
-        self.ctx.events.publish(ScanEvent::ScanStarted {
-            scan_id: scan_id.clone(),
-            target: self.ctx.target.url.as_str().to_string(),
-        });
+        self.ctx
+            .events
+            .publish_durable(ScanEvent::ScanStarted {
+                scan_id: scan_id.clone(),
+                target: self.ctx.target.url.as_str().to_string(),
+            })
+            .await;
 
         if progress::is_visible(quiet) {
             println!(
@@ -370,11 +373,14 @@ impl Orchestrator {
                     );
                 }
                 let reason = format!("external tool '{tool}' not found");
-                self.ctx.events.publish(ScanEvent::ModuleSkipped {
-                    scan_id: scan_id.clone(),
-                    module_id: module.id().to_string(),
-                    reason: reason.clone(),
-                });
+                self.ctx
+                    .events
+                    .publish_durable(ScanEvent::ModuleSkipped {
+                        scan_id: scan_id.clone(),
+                        module_id: module.id().to_string(),
+                        reason: reason.clone(),
+                    })
+                    .await;
                 if let Some(sink) = &self.job_progress {
                     sink.publish(JobProgressUpdate::Skipped {
                         module_id: module.id().to_string(),
@@ -471,18 +477,24 @@ impl Orchestrator {
                         };
 
                         for finding in &findings {
-                            self.ctx.events.publish(ScanEvent::FindingProduced {
+                            self.ctx
+                                .events
+                                .publish_durable(ScanEvent::FindingProduced {
+                                    scan_id: scan_id.clone(),
+                                    module_id: module_id.clone(),
+                                    finding: Box::new(finding.clone()),
+                                })
+                                .await;
+                        }
+                        self.ctx
+                            .events
+                            .publish_durable(ScanEvent::ModuleCompleted {
                                 scan_id: scan_id.clone(),
                                 module_id: module_id.clone(),
-                                finding: Box::new(finding.clone()),
-                            });
-                        }
-                        self.ctx.events.publish(ScanEvent::ModuleCompleted {
-                            scan_id: scan_id.clone(),
-                            module_id: module_id.clone(),
-                            findings_count: findings.len(),
-                            duration_ms,
-                        });
+                                findings_count: findings.len(),
+                                duration_ms,
+                            })
+                            .await;
                         if let Some(sink) = &self.job_progress {
                             sink.publish(JobProgressUpdate::Completed {
                                 module_id: module_id.clone(),
@@ -497,22 +509,28 @@ impl Orchestrator {
                         let error = crate::engine::observation::redact_text(&error.to_string());
                         let outcome = module_error_outcome(&self.ctx, &module_id, &error);
                         if outcome.status == ModuleOutcomeStatus::Skipped {
-                            self.ctx.events.publish(ScanEvent::ModuleSkipped {
-                                scan_id: scan_id.clone(),
-                                module_id: module_id.clone(),
-                                reason: error.clone(),
-                            });
+                            self.ctx
+                                .events
+                                .publish_durable(ScanEvent::ModuleSkipped {
+                                    scan_id: scan_id.clone(),
+                                    module_id: module_id.clone(),
+                                    reason: error.clone(),
+                                })
+                                .await;
                             if let Some(sink) = &self.job_progress {
                                 sink.publish(JobProgressUpdate::Skipped {
                                     module_id: module_id.clone(),
                                 })?;
                             }
                         } else {
-                            self.ctx.events.publish(ScanEvent::ModuleError {
-                                scan_id: scan_id.clone(),
-                                module_id: module_id.clone(),
-                                error: error.clone(),
-                            });
+                            self.ctx
+                                .events
+                                .publish_durable(ScanEvent::ModuleError {
+                                    scan_id: scan_id.clone(),
+                                    module_id: module_id.clone(),
+                                    error: error.clone(),
+                                })
+                                .await;
                             if let Some(sink) = &self.job_progress {
                                 sink.publish(JobProgressUpdate::Failed {
                                     module_id: module_id.clone(),
@@ -553,11 +571,14 @@ impl Orchestrator {
         ensure_not_cancelled(cancellation)?;
         let total_duration_ms =
             u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.ctx.events.publish(ScanEvent::ScanCompleted {
-            scan_id: scan_id.clone(),
-            total_findings: all_findings.len(),
-            duration_ms: total_duration_ms,
-        });
+        self.ctx
+            .events
+            .publish_durable(ScanEvent::ScanCompleted {
+                scan_id: scan_id.clone(),
+                total_findings: all_findings.len(),
+                duration_ms: total_duration_ms,
+            })
+            .await;
 
         Ok(ScanResult::new(
             scan_id,
@@ -1011,11 +1032,13 @@ async fn execute_scan_modules<'module>(
                 }
                 let spinner =
                     progress::is_visible(quiet).then(|| progress::module_spinner(&module_name));
-                ctx.events.publish(ScanEvent::ModuleStarted {
-                    scan_id,
-                    module_id: module_id.clone(),
-                    module_name: module_name.clone(),
-                });
+                ctx.events
+                    .publish_durable(ScanEvent::ModuleStarted {
+                        scan_id,
+                        module_id: module_id.clone(),
+                        module_name: module_name.clone(),
+                    })
+                    .await;
                 let result = module.run(ctx).await;
                 match &result {
                     Ok(findings) => {

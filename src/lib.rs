@@ -83,6 +83,7 @@ pub mod storage;
 pub mod supply_chain;
 pub mod tools;
 mod trusted_nuclei;
+pub mod webhooks;
 
 #[cfg(test)]
 pub(crate) static TEST_ENVIRONMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

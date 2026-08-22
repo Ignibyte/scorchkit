@@ -27,6 +27,15 @@ All notable changes to ScorchKit will be documented in this file.
   89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
 
 ### Added
+- **Policy-owned durable webhook delivery (TICKET-021 / SK-043)** — Restored lifecycle webhooks for
+  PostgreSQL-backed CLI and MCP job hosts through an awaited pre-persistence redaction sink and a
+  provider-neutral queued/delivering/succeeded/exhausted state machine. Added hard queue, payload,
+  batch, timeout, redirect, retry, and backoff bounds; revision CAS, leases, recovery, and atomic
+  audit history; an explicit `webhook-delivery`/`active-safe` policy tuple enforced across direct
+  URLs, DNS answers, connections, and redirects; runtime-only authorization environment references;
+  background MCP processing; and typed CLI list/status/audit/run-due operations. Delivery and
+  enqueue failures remain observable without changing scan results, and webhook-enabled stateless
+  MCP is rejected.
 - **Codex-first application-security workflows (TICKET-017 / SK-042)** — Added versioned,
   provider-neutral application context and inert commit, pull-request, staging, release, deep, and
   focused-remediation workflow plans. Read-only MCP tools expose exact scope, provenance,

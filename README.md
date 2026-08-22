@@ -228,8 +228,10 @@ authorization source.
   authentication and service requests use ScorchKit's policy-owned transport.
 - External processes have bounded time and output and are owned as Unix process groups so timeout,
   cancellation, error, and drop clean up descendants.
-- Webhook configuration is accepted for file compatibility, but outbound webhook delivery is
-  disabled until it can use the same policy-owned network boundary.
+- Durable CLI and MCP job hosts can enqueue redacted lifecycle events in PostgreSQL and deliver
+  them through the same policy-owned hostname, DNS-answer, connection, and redirect boundary.
+  Delivery requires a separate `webhook-delivery`/`active-safe` grant and cannot change scan
+  success. Authorization values are resolved from environment references only for claimed attempts.
 - Remote MCP transport is not supported. The current server uses local stdio transport.
 
 See [SECURITY.md](SECURITY.md) for the enforced boundary and current limitations.

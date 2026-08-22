@@ -38,7 +38,20 @@ Secrets should not be written to stdout or stderr because hook output can enter 
 
 ## Webhooks
 
-Webhook configuration is retained only for configuration compatibility. ScorchKit does not send
-outbound webhook requests. A future delivery service must use an engagement-bound HTTP client,
-authorize redirects and resolved addresses, apply the common redaction policy, and bound its queue
-and retry behavior outside scan execution.
+Webhooks are output-only durable notifications and do not replace lifecycle hooks. Durable CLI and
+MCP job hosts redact matching events before enqueueing them in PostgreSQL. Records hold a stable
+destination ID and an engagement snapshot but never the configured URL or authorization value.
+
+The delivery worker uses revision compare-and-swap, a bounded ownership lease, recovery, batches,
+timeouts, redirects, exponential backoff, and a terminal `succeeded` or `exhausted` state. Every
+attempt uses `Capability::WebhookDelivery` and `EffectClass::ActiveSafe` through the shared
+engagement-bound client, including hostname, every DNS answer, connection, and redirect checks.
+Remote response bodies are never read or persisted. Enqueue and delivery faults remain visible in
+queue and audit state but cannot replace a scan result.
+
+Delivery is at-least-once across a worker crash after remote acceptance but before terminal commit.
+Every request includes stable `X-ScorchKit-Delivery-Id` and one-based
+`X-ScorchKit-Delivery-Attempt` headers so receivers can enforce idempotency.
+
+CLI operators can use `scorchkit webhook list`, `status`, `audit`, and `run-due`. Stateful MCP runs
+the same recovery and delivery pass in the background; webhook-enabled stateless MCP startup fails.

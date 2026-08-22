@@ -28,6 +28,7 @@ pub mod models;
 pub mod projects;
 pub mod scans;
 pub mod schedules;
+pub mod webhooks;
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;

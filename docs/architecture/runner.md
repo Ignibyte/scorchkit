@@ -67,13 +67,17 @@ clients that add redirect authorization.
 
 ## Events and hooks
 
-The in-process event bus publishes scan, module, and finding lifecycle events. Publishing never
-changes scanner evidence. Local hooks are awaited and run sequentially within a hook point through
-the same bounded executor used for tools.
+The in-process event bus publishes scan, module, and finding lifecycle events. Its broadcast channel
+remains bounded best-effort telemetry. Durable job orchestrators additionally await registered
+`DurableEventSink` persistence before broadcast, so a lagging subscriber cannot lose a webhook
+enqueue. Sink failures are sanitized diagnostics and never change scanner evidence or the scan's
+terminal result. Local hooks are awaited and run sequentially within a hook point through the same
+bounded executor used for tools.
 
-Outbound webhook delivery is disabled. The serializable webhook configuration remains readable for
-file compatibility, but no HTTP sender exists. Reintroduction requires a policy-owned delivery
-service with destination authorization, redaction, queue bounds, and failure tests.
+The webhook sink redacts serialized events and enforces payload and pending-record bounds before its
+first store call. A separate worker claims due records under revision CAS and a recoverable lease,
+then delivers through the policy-owned service client. Delivery and retries occur after and outside
+scan execution.
 
 ## Failure behavior
 

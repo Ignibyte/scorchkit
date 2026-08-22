@@ -78,7 +78,7 @@ pub fn build_service_client(
     redirects: RedirectMode,
 ) -> Result<reqwest::Client> {
     engagement.authorize(PolicyTarget::Web(endpoint.clone()), capability, effect).require()?;
-    let builder = reqwest::Client::builder().user_agent(user_agent).timeout(timeout);
+    let builder = reqwest::Client::builder().no_proxy().user_agent(user_agent).timeout(timeout);
     bind_builder(builder, engagement, capability, effect, redirects)
         .build()
         .map_err(|error| ScorchError::Config(format!("failed to build HTTP client: {error}")))

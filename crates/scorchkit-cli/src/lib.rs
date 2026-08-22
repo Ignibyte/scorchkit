@@ -292,6 +292,13 @@ pub enum Commands {
         command: JobCommands,
     },
 
+    /// Inspect and run the durable webhook delivery queue.
+    #[cfg(feature = "storage")]
+    Webhook {
+        #[command(subcommand)]
+        command: WebhookCommands,
+    },
+
     /// Start the MCP server on stdio transport
     #[cfg(feature = "mcp")]
     Serve,
@@ -673,6 +680,40 @@ pub enum JobCommands {
     Resume {
         /// Interrupted scan job UUID.
         id: String,
+        /// Database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+}
+
+/// Durable webhook queue subcommands.
+#[cfg(feature = "storage")]
+#[derive(Subcommand, Debug)]
+pub enum WebhookCommands {
+    /// List at most 1,000 deliveries in creation order.
+    List {
+        /// Database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Show one delivery record.
+    Status {
+        /// Delivery UUID.
+        id: String,
+        /// Database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Show immutable audit history for one delivery.
+    Audit {
+        /// Delivery UUID.
+        id: String,
+        /// Database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Recover expired claims and process one bounded due batch.
+    RunDue {
         /// Database URL override.
         #[arg(long)]
         database_url: Option<String>,

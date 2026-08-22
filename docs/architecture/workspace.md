@@ -10,8 +10,8 @@ are compatibility re-exports of package-owned types where a stable contract has 
 |---|---|---|
 | `scorchkit-policy` | engagement, scope, capability, effect, and decision types | clients, contexts, or effect execution |
 | `scorchkit-core` | targets, findings, evidence, results, events, correlation, CVE, compliance, and scanner-adapter contracts | CLI, MCP, storage, or agent adapters |
-| `scorchkit-config` | application configuration, credentials, CVE configuration, and webhook shape | effect authorization or webhook delivery |
-| `scorchkit-executor` | bounded scheduling plus durable job and store contracts | family orchestration or PostgreSQL queries |
+| `scorchkit-config` | application configuration, credentials, CVE configuration, and bounded webhook destination shape | effect authorization or delivery execution |
+| `scorchkit-executor` | bounded scheduling plus durable job, webhook queue, and store contracts | family orchestration, HTTP, or PostgreSQL queries |
 | `scorchkit-tools` | bounded subprocess invocation, output, cancellation, and process ownership | scanner-specific argument construction |
 | `scorchkit-web` | DAST/recon category and descriptor vocabulary | contexts, registries, or concrete scanners |
 | `scorchkit-code` | SAST category and descriptor vocabulary | code-path authorization or concrete scanners |

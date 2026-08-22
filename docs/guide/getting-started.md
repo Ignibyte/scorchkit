@@ -261,8 +261,12 @@ See [CVE backends](../architecture/cve-backends.md) for exact configuration.
 profile effect. Post-module hooks may replace a valid findings array. Pre-scan and post-scan output is
 currently not applied.
 
-Outbound webhook delivery is disabled. Existing webhook configuration is parsed only for file
-compatibility.
+PostgreSQL-backed `job run` and stateful MCP hosts can persist and deliver redacted lifecycle
+webhooks. Configure `[[webhooks]]`, grant the destination and its addresses the separate
+`webhook-delivery`/`active-safe` tuple, and use an environment-variable reference for any
+`Authorization` value. `scorchkit webhook list`, `status`, `audit`, and `run-due` expose bounded
+queue state. Delivery failures and retries never change the scan result; stateless MCP rejects
+webhook-enabled configuration.
 
 ## Compare and resume
 

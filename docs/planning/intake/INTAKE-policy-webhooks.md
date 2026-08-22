@@ -1,9 +1,9 @@
 ---
 title: INTAKE-policy-webhooks
-status: candidate
+status: promoted
 created: 2026-08-17
-ticket:
-pipeline_spec:
+ticket: TICKET-021
+pipeline_spec: docs/planning/pipeline/active/policy-webhooks.spec.md
 ---
 
 # Policy-owned redacted webhook delivery

@@ -48,11 +48,14 @@ infrastructure. The test suite never treats a timeout against an external addres
 - External processes have bounded time, output, filesystem ownership, and termination behavior.
 - Agent analysis never replaces or silently changes scanner evidence.
 - Remote MCP transport requires authentication and host validation.
+- Webhook events are redacted before durable enqueue, and every delivery requires an exact
+  `webhook-delivery`/`active-safe` grant for the configured URL, redirects, and resolved addresses.
 
 The current implementation has direct regression coverage for absence denial, HTTP redirects and
 DNS answers, project membership, stored schedule snapshots, CVE-provider endpoints and cache paths,
-process-tree cleanup, terminal-control neutralization, and secret-safe configuration diagnostics.
-The executable gate and its exact-worktree receipt remain the delivery evidence.
+webhook queue ownership and redaction, process-tree cleanup, terminal-control neutralization, and
+secret-safe configuration diagnostics. The executable gate and its exact-worktree receipt remain
+the delivery evidence.
 
 ## Current support boundary
 
@@ -69,8 +72,13 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
   same descendant-process guarantee.
 - MCP is local stdio only. Do not expose it through an unauthenticated remote wrapper. Any future
   remote transport must authenticate its principal, validate the host, and define TLS termination.
-- Outbound webhook delivery is disabled. The configuration shape remains readable for compatibility,
-  but delivery may return only after it uses the policy-owned network client.
+- Durable CLI and MCP job hosts may deliver configured webhooks through PostgreSQL. Queue records
+  contain a destination identity, redacted event payload, and engagement snapshot, never the
+  destination URL or authorization value. Each direct and redirected request uses the shared
+  policy-owned client under `webhook-delivery`/`active-safe`; resolved addresses are reauthorized.
+  Credentials are environment-variable references resolved only for a claimed authorized attempt.
+  Queue, payload, batch, timeout, redirect, retry, and backoff bounds are mandatory. Delivery and
+  retry cannot change the scan's terminal result. Webhook-enabled stateless MCP startup is rejected.
 - CVE provider access is separate from the scan target. NVD or OSV use requires scope grants for the
   provider hostname and resolved addresses plus a path-prefix grant for an existing cache directory.
 - Native DNS, TLS, TCP, and infrastructure probes use the engagement-owned network policy. They

@@ -836,8 +836,18 @@ rate_limit = 17
             Some("postgresql://db-user:db-secret@localhost/scorchkit".to_string());
         config.cve.nvd.api_key = Some("nvd-secret".to_string());
         config.webhooks.push(crate::runner::hooks::WebhookConfig {
+            id: Some("debug-fixture".to_string()),
             url: "https://webhook-secret@hooks.example/path".to_string(),
             events: Vec::new(),
+            authorization_env: None,
+            max_pending: 1_000,
+            max_payload_bytes: 256 * 1_024,
+            max_attempts: 5,
+            timeout_seconds: 10,
+            backoff_seconds: 5,
+            max_backoff_seconds: 300,
+            max_redirects: 3,
+            batch_size: 25,
         });
 
         let rendered = format!("{config:?}");

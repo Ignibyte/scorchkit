@@ -24,6 +24,8 @@ use scorchkit::runner::job::{DastJobRequest, JobStore, ScanJob};
 use scorchkit::storage;
 use scorchkit::storage::jobs::PostgresJobStore;
 use scorchkit::storage::models::VulnStatus;
+use scorchkit::storage::webhooks::PostgresWebhookStore;
+use scorchkit_executor::webhook::{WebhookDelivery, WebhookDeliveryState, WebhookStore};
 
 /// Helper to get a database pool or skip the test.
 ///
@@ -128,6 +130,85 @@ async fn postgres_job_store_matches_compare_and_swap_contract() {
         .execute(&pool)
         .await
         .expect("delete scan job fixture");
+}
+
+#[tokio::test]
+async fn postgres_webhook_store_enforces_capacity_cas_and_atomic_audits() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    sqlx::query("DELETE FROM webhook_deliveries WHERE destination_id LIKE 'fixture-%'")
+        .execute(&pool)
+        .await
+        .expect("delete stale webhook fixtures");
+    let store = PostgresWebhookStore::new(pool.clone());
+    let engagement = Engagement::new("postgres-webhook-store", EngagementPolicy::default());
+    let delivery = WebhookDelivery::new(
+        format!("fixture-{}", uuid::Uuid::new_v4()),
+        "scan_completed".to_string(),
+        serde_json::json!({"schema":"scorchkit.webhook-event/v1","event":"redacted"}),
+        engagement,
+        2,
+    );
+    store.create(&delivery, 1).await.expect("create delivery");
+    assert_eq!(store.get(delivery.id).await.expect("get delivery").unwrap().id, delivery.id);
+    assert!(store.list().await.expect("list deliveries").iter().any(|item| item.id == delivery.id));
+    assert!(store
+        .list_due(chrono::Utc::now(), 1_000)
+        .await
+        .expect("list due deliveries")
+        .iter()
+        .any(|item| item.id == delivery.id));
+    let competing = WebhookDelivery::new(
+        delivery.destination_id.clone(),
+        delivery.event_kind.clone(),
+        delivery.payload.clone(),
+        delivery.engagement.clone(),
+        2,
+    );
+    assert!(store.create(&competing, 1).await.is_err(), "capacity must be atomic");
+
+    let mut claimed = delivery.clone();
+    let now = chrono::Utc::now();
+    scorchkit_executor::webhook_integration::transition_delivery(
+        &mut claimed,
+        WebhookDeliveryState::Delivering,
+        now,
+    )
+    .expect("legal claim transition");
+    claimed.revision = 1;
+    claimed.attempts = 1;
+    claimed.owner_id = Some(uuid::Uuid::new_v4());
+    claimed.lease_expires_at = Some(now + chrono::Duration::seconds(15));
+    claimed.next_attempt_at = None;
+    claimed.updated_at = now;
+    assert!(store.compare_and_swap(0, &claimed).await.expect("claim current revision"));
+    assert!(!store.compare_and_swap(0, &claimed).await.expect("reject stale claim"));
+    assert_eq!(
+        sqlx::query_scalar::<_, i32>("SELECT attempts FROM webhook_deliveries WHERE id = $1")
+            .bind(delivery.id)
+            .fetch_one(&pool)
+            .await
+            .expect("read indexed attempts"),
+        1
+    );
+    assert!(!store
+        .list_due(now + chrono::Duration::seconds(30), 10)
+        .await
+        .expect("claimed delivery is not due")
+        .iter()
+        .any(|item| item.id == delivery.id));
+    assert_eq!(store.audit_events(delivery.id).await.expect("delivery audits").len(), 2);
+    assert!(store
+        .list_recoverable(now + chrono::Duration::seconds(30), 10)
+        .await
+        .expect("recoverable deliveries")
+        .iter()
+        .any(|item| item.id == delivery.id));
+
+    sqlx::query("DELETE FROM webhook_deliveries WHERE id = $1")
+        .bind(delivery.id)
+        .execute(&pool)
+        .await
+        .expect("delete webhook fixture");
 }
 
 /// Generate a unique project name to avoid collisions in parallel test runs.

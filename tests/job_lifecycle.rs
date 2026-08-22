@@ -13,6 +13,8 @@ use scorchkit::engine::severity::Severity;
 use scorchkit::runner::job::{
     DastJobRequest, InMemoryJobStore, JobStore, ScanJobService, ScanJobState,
 };
+use scorchkit::webhooks::WebhookService;
+use scorchkit_executor::webhook::{InMemoryWebhookStore, WebhookDelivery, WebhookStore};
 
 fn engagement() -> Engagement {
     let policy = EngagementPolicy::default()
@@ -90,6 +92,44 @@ async fn authorized_loopback_job_persists_progress_and_result_without_duplicates
     assert_eq!(result.modules_run, ["headers"]);
     assert_eq!(result.findings.len(), finished.progress.findings.len());
     assert_eq!(result.summary.total_findings, result.findings.len());
+    Ok(())
+}
+
+#[tokio::test]
+async fn webhook_enqueue_failure_does_not_change_successful_scan_state(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start_async().await;
+    let _mock = server
+        .mock_async(|when, then| {
+            when.any_request();
+            then.status(200).header("content-type", "text/html").body("<html>ok</html>");
+        })
+        .await;
+    let destination: scorchkit::config::WebhookConfig =
+        serde_json::from_value(serde_json::json!({
+            "id": "full-queue",
+            "url": "https://hooks.example.test/delivery",
+            "events": ["scan_completed"],
+            "max_pending": 1
+        }))?;
+    let webhook_store = Arc::new(InMemoryWebhookStore::new());
+    let existing = WebhookDelivery::new(
+        destination.destination_id(),
+        "scan_completed".to_string(),
+        serde_json::json!({"schema":"scorchkit.webhook-event/v1"}),
+        engagement(),
+        destination.max_attempts,
+    );
+    webhook_store.create(&existing, 1).await?;
+    let webhooks = Arc::new(WebhookService::new(&[destination], webhook_store.clone())?);
+    let config = config();
+    let jobs = ScanJobService::in_memory(Arc::clone(&config)).with_webhooks(webhooks);
+    let queued = jobs.submit(request(&server, engagement())).await?;
+
+    let finished = jobs.run(queued.id).await?;
+
+    assert_eq!(finished.state, ScanJobState::Succeeded);
+    assert_eq!(webhook_store.list().await?.len(), 1, "failed enqueue must not exceed capacity");
     Ok(())
 }
 

@@ -6,6 +6,7 @@
 //! provider-neutral lifecycle and store contracts used by the composition layer.
 
 pub mod job;
+pub mod webhook;
 
 /// Narrow cross-package helpers for composition and storage adapters.
 #[doc(hidden)]
@@ -64,6 +65,38 @@ pub mod integration {
         expected_revision: u64,
     ) -> Result<()> {
         job.validate_replacement(existing, expected_revision)
+    }
+}
+
+/// Narrow webhook lifecycle helpers for composition and storage adapters.
+#[doc(hidden)]
+pub mod webhook_integration {
+    use chrono::{DateTime, Utc};
+    use scorchkit_core::error::Result;
+
+    use crate::webhook::{WebhookDelivery, WebhookDeliveryState};
+
+    /// Apply one validated delivery transition.
+    pub fn transition_delivery(
+        delivery: &mut WebhookDelivery,
+        next: WebhookDeliveryState,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        delivery.transition(next, now)
+    }
+
+    /// Validate a delivery before creation.
+    pub fn validate_delivery_create(delivery: &WebhookDelivery) -> Result<()> {
+        delivery.validate_create()
+    }
+
+    /// Validate a compare-and-swap replacement.
+    pub fn validate_delivery_replacement(
+        delivery: &WebhookDelivery,
+        existing: &WebhookDelivery,
+        expected_revision: u64,
+    ) -> Result<()> {
+        delivery.validate_replacement(existing, expected_revision)
     }
 }
 

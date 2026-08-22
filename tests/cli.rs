@@ -14,6 +14,7 @@ fn cli_job_engagement() -> scorchkit::engine::policy::Engagement {
         .allow_scope(ScopeRule::CidrV6 { network: 1, mask: u128::MAX })
         .allow_capability(Capability::DastScan)
         .allow_capability(Capability::ExternalTool)
+        .allow_capability(Capability::WebhookDelivery)
         .allow_effect(EffectClass::ActiveSafe)
         .allow_effect(EffectClass::Intrusive);
     Engagement::new("cli-job-contract", policy)
@@ -274,6 +275,47 @@ fn test_cli_job_lifecycle_help() {
         .stdout(predicate::str::contains("resume"));
 }
 
+/// Durable webhook commands expose bounded read and worker operations.
+#[cfg(feature = "storage")]
+#[test]
+fn test_cli_webhook_lifecycle_help() {
+    Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["webhook", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("list"))
+        .stdout(predicate::str::contains("status"))
+        .stdout(predicate::str::contains("audit"))
+        .stdout(predicate::str::contains("run-due"));
+}
+
+/// Webhook CLI dispatch emits JSON and rejects malformed delivery identifiers.
+#[cfg(feature = "storage")]
+#[test]
+fn test_cli_webhook_list_and_invalid_status_contract() {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL not set — skipping CLI webhook integration test");
+        return;
+    };
+    let list = Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["webhook", "list", "--database-url", &database_url])
+        .output()
+        .expect("list webhook deliveries");
+    assert!(list.status.success(), "{}", String::from_utf8_lossy(&list.stderr));
+    assert!(serde_json::from_slice::<serde_json::Value>(&list.stdout)
+        .expect("webhook list JSON")
+        .is_array());
+
+    Command::cargo_bin("scorchkit")
+        .unwrap()
+        .args(["webhook", "status", "not-a-uuid", "--database-url", &database_url])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid webhook delivery UUID"));
+}
+
 /// Job commands fail explicitly when `PostgreSQL` was not configured.
 #[cfg(feature = "storage")]
 #[test]
@@ -311,6 +353,15 @@ async fn test_cli_job_run_and_status_lifecycle() {
     config.scan.timeout_seconds = 5;
     config.database.url = Some(database_url.clone());
     config.database.migrate_on_startup = true;
+    let webhook_id = format!("cli-job-{}", uuid::Uuid::new_v4());
+    config.webhooks.push(
+        serde_json::from_value(serde_json::json!({
+            "id": webhook_id.clone(),
+            "url": "http://127.0.0.1:9/delivery",
+            "events": ["scan_completed"]
+        }))
+        .expect("valid webhook config"),
+    );
     std::fs::write(&config_path, toml::to_string_pretty(&config).expect("serialize CLI config"))
         .expect("write CLI config");
 
@@ -368,6 +419,18 @@ async fn test_cli_job_run_and_status_lifecycle() {
     assert_eq!(stored.state, scorchkit::runner::job::ScanJobState::Succeeded);
 
     let pool = scorchkit::storage::connect(&database_url).await.expect("connect cleanup pool");
+    let queued: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM webhook_deliveries WHERE destination_id = $1")
+            .bind(&webhook_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count CLI webhook delivery");
+    assert_eq!(queued, 1);
+    sqlx::query("DELETE FROM webhook_deliveries WHERE destination_id = $1")
+        .bind(&webhook_id)
+        .execute(&pool)
+        .await
+        .expect("delete CLI webhook fixture");
     sqlx::query("DELETE FROM scan_jobs WHERE id = $1")
         .bind(job.id)
         .execute(&pool)

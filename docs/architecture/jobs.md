@@ -84,6 +84,14 @@ transaction.
   cancellation. `job list`, `status`, `cancel`, and `recover` operate across processes through
   `PostgreSQL`.
 
+When webhooks are configured, the job orchestrator attaches an awaited durable event sink bound to
+the job's exact engagement snapshot. The sink redacts before PostgreSQL enqueue; queue failure is an
+observable delivery diagnostic and does not change the job's scan state. CLI exposes an explicit
+bounded `webhook run-due` worker suitable for operator or scheduler invocation, while stateful MCP
+runs recovery and due delivery every five seconds. A CLI scan never waits for outbound delivery.
+Stateless MCP refuses webhook-enabled configuration because process memory cannot satisfy the
+durability contract.
+
 ## Evidence
 
 Focused tests cover legal transitions, stale writers and audit events in both stores, authorized
