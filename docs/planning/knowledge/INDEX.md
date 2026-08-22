@@ -108,6 +108,9 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-ci-engagement-run-identity-001` | Give each CI engagement a fresh run identifier while keeping authorization in explicit scope, capability, and effect grants. | `AAR-018-public-documentation-sync` |
 | `PR-scorchkit-site-executable-scratch-001` | Validate an exact website source copy on disposable executable local scratch when the shared workspace cannot execute native JavaScript build helpers. | `AAR-018-public-documentation-sync` |
 | `PR-scorchkit-model-access-claim-boundary-001` | Public host/model claims must distinguish model access and selection from engine authorization and scanner evidence, and link the current official access source. | `AAR-019-daybreak-codex-website` |
+| `PR-scorchkit-local-api-principal-boundary-001` | Establish a local API principal through an operating-system-protected transport or explicit authentication; loopback location and client-supplied identity metadata are not authority. | `AAR-020-post-release-platform-roadmap` |
+| `PR-scorchkit-extension-persistence-boundary-001` | Make third-party extensions return typed proposals and evidence through engine validation; never expose database, canonical-path, or finding-state handles that bypass engine-owned persistence. | `AAR-020-post-release-platform-roadmap` |
+| `PR-scorchkit-local-frontend-bind-boundary-001` | Before team identity and isolation exist, bind optional local frontends only to loopback or an operating-system-protected local socket and reject non-loopback listeners. | `AAR-020-post-release-platform-roadmap` |
 
 ## Register
 

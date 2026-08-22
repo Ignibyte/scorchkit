@@ -60,6 +60,9 @@ effectiveness: 5 - strong
 
 | ID | Rule | Why |
 |---|---|---|
+| `PR-scorchkit-local-api-principal-boundary-001` | Establish a local API principal through an operating-system-protected transport or explicit authentication; loopback location and client-supplied identity metadata are not authority. | Prevents a privileged-looking local caller from authorizing effects without an authenticated principal. |
+| `PR-scorchkit-extension-persistence-boundary-001` | Make third-party extensions return typed proposals and evidence through engine validation; never expose database, canonical-path, or finding-state handles that bypass engine-owned persistence. | Preserves validation, provenance, append-only history, and canonical storage ownership. |
+| `PR-scorchkit-local-frontend-bind-boundary-001` | Before team identity and isolation exist, bind optional local frontends only to loopback or an operating-system-protected local socket and reject non-loopback listeners. | Prevents a local console from becoming an unauthenticated network service before the team security boundary exists. |
 
 Every new ID must also be added to `docs/planning/knowledge/INDEX.md`.
 
