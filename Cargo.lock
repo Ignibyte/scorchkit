@@ -867,6 +867,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "axum"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
+dependencies = [
+ "axum-core",
+ "bytes",
+ "futures-util",
+ "http 1.5.0",
+ "http-body 1.1.0",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "itoa",
+ "matchit",
+ "memchr",
+ "mime",
+ "percent-encoding",
+ "pin-project-lite",
+ "serde_core",
+ "sync_wrapper",
+ "tokio",
+ "tower",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
+name = "axum-core"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08c78f31d7b1291f7ee735c1c6780ccde7785daae9a9206026862dab7d8792d1"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "http 1.5.0",
+ "http-body 1.1.0",
+ "http-body-util",
+ "mime",
+ "pin-project-lite",
+ "sync_wrapper",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
 name = "azure_core"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3290,6 +3336,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "matchit"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4416,19 +4468,27 @@ checksum = "1d1f571c72940a19d9532fe52dbea8bc9912bf1d766c2970bb824056b86f3f59"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "bytes",
  "chrono",
  "futures",
+ "http 1.5.0",
+ "http-body 1.1.0",
+ "http-body-util",
  "pastey",
  "pin-project-lite",
+ "rand 0.10.2",
  "rmcp-macros",
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "sse-stream",
  "thiserror 2.0.20",
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tower-service",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -4663,6 +4723,7 @@ dependencies = [
  "aws-sdk-ec2",
  "aws-sdk-iam",
  "aws-sdk-s3",
+ "axum",
  "azure_core",
  "azure_identity",
  "base64 0.22.1",
@@ -4706,12 +4767,14 @@ dependencies = [
  "serde_yaml",
  "sha2 0.10.9",
  "sqlx",
+ "subtle",
  "tar",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",
+ "tokio-util",
  "toml",
  "tracing",
  "tracing-subscriber",
@@ -4719,6 +4782,7 @@ dependencies = [
  "uuid",
  "webpki-roots 1.0.9",
  "x509-parser",
+ "zeroize",
  "zip",
  "zstd",
 ]
@@ -4766,6 +4830,7 @@ dependencies = [
  "tempfile",
  "toml",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -5458,6 +5523,19 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "sse-stream"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c123f296ade4ec4b8b0f6162116e6629f5146922ca5ab40ca9d3c2e73ab4761e"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http-body 1.1.0",
+ "http-body-util",
+ "pin-project-lite",
 ]
 
 [[package]]

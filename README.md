@@ -48,7 +48,7 @@ cargo build --locked --release
 
 The core binary at `target/release/scorchkit` supports web, code, supply-chain, reporting, and local
 AI-adapter commands. Build the supported production feature set when you also need infrastructure,
-cloud compatibility, PostgreSQL-backed state, or local stdio MCP:
+cloud compatibility, PostgreSQL-backed state, or local/remote MCP:
 
 ```bash
 cargo build --locked --release --features "infra cloud mcp"
@@ -212,9 +212,11 @@ same agent-neutral engine and is not installed into a personal marketplace by th
 
 All 39 MCP tools advertise a versioned object output schema, complete safety annotations, and one
 read, local-state, or external-effect class. Routed calls return native structured success/error
-content; successful calls also retain the unchanged legacy text payload. The local-process principal
-and self-asserted client name are trace context only; ScorchKit engagement policy remains the sole
-authorization source.
+content; successful calls also retain the unchanged legacy text payload. Local stdio calls use the
+local-process principal. The optional remote host derives `authenticated_bearer` subjects from
+environment-backed credentials and binds them to the exact configured engagement. Self-asserted
+client names remain untrusted trace context; ScorchKit engagement policy remains the sole target,
+capability, and effect authorization source.
 
 ## Network and integration boundaries
 
@@ -232,7 +234,10 @@ authorization source.
   them through the same policy-owned hostname, DNS-answer, connection, and redirect boundary.
   Delivery requires a separate `webhook-delivery`/`active-safe` grant and cannot change scan
   success. Authorization values are resolved from environment references only for claimed attempts.
-- Remote MCP transport is not supported. The current server uses local stdio transport.
+- Authenticated remote MCP is opt-in through `scorchkit serve --remote`. Its supported profile is a
+  loopback-only backend behind a same-host TLS reverse proxy with exact Host/Origin and HTTPS
+  forwarding assertions, bounded requests/sessions, and bearer principal-to-engagement bindings.
+  Direct TLS, public backend listeners, OAuth/OIDC, tenants, and RBAC remain unsupported.
 
 See [SECURITY.md](SECURITY.md) for the enforced boundary and current limitations.
 

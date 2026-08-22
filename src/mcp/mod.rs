@@ -8,6 +8,7 @@
 pub mod contract;
 pub mod instructions;
 pub mod prompts;
+pub mod remote;
 pub mod resources;
 pub mod server;
 pub mod tools;

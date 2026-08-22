@@ -299,9 +299,13 @@ pub enum Commands {
         command: WebhookCommands,
     },
 
-    /// Start the MCP server on stdio transport
+    /// Start the MCP server on local stdio or authenticated remote HTTP.
     #[cfg(feature = "mcp")]
-    Serve,
+    Serve {
+        /// Use the authenticated `[mcp.remote]` Streamable HTTP transport.
+        #[arg(long)]
+        remote: bool,
+    },
 
     /// Run a unified assessment: DAST + SAST + Infra + Cloud combined.
     ///
@@ -724,4 +728,19 @@ pub enum WebhookCommands {
 pub fn print_completions(shell: Shell) {
     let mut cmd = Cli::command();
     generate(shell, &mut cmd, "scorchkit", &mut std::io::stdout());
+}
+
+#[cfg(all(test, feature = "mcp"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serve_transport_selection_is_explicit_and_local_by_default() {
+        let local = Cli::try_parse_from(["scorchkit", "serve"]).expect("local serve arguments");
+        assert!(matches!(local.command, Commands::Serve { remote: false }));
+
+        let remote = Cli::try_parse_from(["scorchkit", "serve", "--remote"])
+            .expect("remote serve arguments");
+        assert!(matches!(remote.command, Commands::Serve { remote: true }));
+    }
 }

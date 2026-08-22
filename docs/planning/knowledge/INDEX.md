@@ -115,6 +115,10 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-durable-effect-idempotency-001` | Give every durable at-least-once external effect stable operation and attempt identities that receivers can use for deduplication. | `AAR-021-policy-webhooks` |
 | `PR-scorchkit-durable-worker-foreground-separation-001` | Foreground scans await only durable enqueue; background or explicit worker owners perform bounded network attempts. | `AAR-021-policy-webhooks` |
 | `PR-scorchkit-shared-db-fixture-recovery-001` | Shared-database tests remove only their own abandoned fixtures and never infer record membership from an arbitrarily small global page. | `AAR-021-policy-webhooks` |
+| `PR-scorchkit-remote-session-principal-001` | Authenticate and select a principal-specific session manager before stateful protocol routing; client and session metadata never select authority. | `AAR-022-authenticated-remote-mcp` |
+| `PR-scorchkit-remote-request-lifecycle-001` | Recheck the bound engagement at host composition and every authenticated request, scrub credentials before downstream routing, and bound body reads; the trusted proxy owns pre-header connection budgets. | `AAR-022-authenticated-remote-mcp` |
+| `PR-scorchkit-rejected-session-cleanup-001` | Reconcile session IDs around stateful initialization and close every newly allocated session when the response does not establish it. | `AAR-022-authenticated-remote-mcp` |
+| `PR-scorchkit-bounded-validator-mutation-table-001` | Test serde defaults, safe projections, unique exact collection ceilings, each compound clause, and thin lifecycle wrapper behavior independently. | `AAR-022-authenticated-remote-mcp` |
 
 ## Register
 
@@ -207,3 +211,8 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-webhook-lease-shorter-effect-001` | concurrency bug | `AAR-021-policy-webhooks` |
 | `BF-scorchkit-shared-queue-test-page-assumption-001` | test reliability bug | `AAR-021-policy-webhooks` |
 | `BF-scorchkit-webhook-mutation-state-gap-001` | test-gap bug | `AAR-021-policy-webhooks` |
+| `BF-scorchkit-rejected-mcp-init-session-leak-001` | session-capacity bug | `AAR-022-authenticated-remote-mcp` |
+| `BF-scorchkit-remote-engagement-expiry-gap-001` | authorization-lifecycle bug | `AAR-022-authenticated-remote-mcp` |
+| `BF-scorchkit-remote-authorization-header-retention-001` | credential-boundary bug | `AAR-022-authenticated-remote-mcp` |
+| `BF-scorchkit-remote-validator-mutation-gap-001` | test-gap bug | `AAR-022-authenticated-remote-mcp` |
+| `BF-scorchkit-cli-zero-test-inventory-stale-001` | verification-plan gap | `AAR-022-authenticated-remote-mcp` |

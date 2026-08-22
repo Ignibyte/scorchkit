@@ -9,6 +9,7 @@ use rmcp::model::{CallToolResult, Content, JsonObject};
 #[cfg(test)]
 use serde_json::Value;
 
+use super::server::McpTransportPrincipal;
 use super::server::ScorchKitServer;
 use crate::report::terminal::escape_terminal_text;
 
@@ -22,18 +23,22 @@ use scorchkit_mcp::integration::{error_envelope, success_envelope, tool_contract
 
 const TOOL_CONTRACTS: &[McpToolContract] = tool_contracts();
 
-fn local_principal<S>(context: &ToolCallContext<'_, S>) -> McpPrincipalContext {
+fn call_principal(context: &ToolCallContext<'_, ScorchKitServer>) -> McpPrincipalContext {
     let client_attribution =
         context.request_context().peer.peer_info().map(|info| McpClientAttribution {
             name: info.client_info.name.clone(),
             version: info.client_info.version.clone(),
             trusted: false,
         });
-    McpPrincipalContext {
-        kind: "local_process".to_string(),
-        subject: "local-mcp-process".to_string(),
-        client_attribution,
-    }
+    let (kind, subject) = match &context.service.transport_principal {
+        McpTransportPrincipal::LocalProcess => {
+            ("local_process".to_string(), "local-mcp-process".to_string())
+        }
+        McpTransportPrincipal::AuthenticatedBearer { subject } => {
+            ("authenticated_bearer".to_string(), subject.clone())
+        }
+    };
+    McpPrincipalContext { kind, subject, client_attribution }
 }
 
 /// Routed name and local principal extracted from rmcp's request context.
@@ -56,9 +61,11 @@ impl McpCallContext {
     }
 }
 
-impl<S> FromContextPart<ToolCallContext<'_, S>> for McpCallContext {
-    fn from_context_part(context: &mut ToolCallContext<'_, S>) -> Result<Self, rmcp::ErrorData> {
-        Ok(Self { tool: context.name().to_string(), principal: local_principal(context) })
+impl FromContextPart<ToolCallContext<'_, ScorchKitServer>> for McpCallContext {
+    fn from_context_part(
+        context: &mut ToolCallContext<'_, ScorchKitServer>,
+    ) -> Result<Self, rmcp::ErrorData> {
+        Ok(Self { tool: context.name().to_string(), principal: call_principal(context) })
     }
 }
 

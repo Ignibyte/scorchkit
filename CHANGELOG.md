@@ -27,6 +27,14 @@ All notable changes to ScorchKit will be documented in this file.
   89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
 
 ### Added
+- **Authenticated remote MCP (TICKET-022 / SK-044)** — Added an explicit `serve --remote`
+  Streamable HTTP host behind a same-host TLS reverse proxy. Remote startup now requires a
+  loopback backend, exact Host and HTTPS Origin allowlists, one trusted HTTPS forwarding assertion,
+  bounded bodies/concurrency/sessions, environment-indirect bearer credentials, and exact binding
+  of every stable subject to the enabled unexpired configured engagement. Credential digests are
+  compared in constant time across all bindings, each principal owns an isolated rmcp session
+  manager, failed initialization cannot leak session capacity, and client name/version remains
+  explicitly untrusted attribution. Local stdio and all engine policy/evidence paths are unchanged.
 - **Policy-owned durable webhook delivery (TICKET-021 / SK-043)** — Restored lifecycle webhooks for
   PostgreSQL-backed CLI and MCP job hosts through an awaited pre-persistence redaction sink and a
   provider-neutral queued/delivering/succeeded/exhausted state machine. Added hard queue, payload,

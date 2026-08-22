@@ -44,6 +44,7 @@ engagement and therefore authorizes no scan.
 | `ai` | optional provider adapter |
 | `report` | artifact directory and evidence/remediation inclusion |
 | `database` | connection URL, pool size, and migration behavior |
+| `mcp` | optional authenticated remote transport, bounds, and principal bindings |
 | `wordlists` | optional discovery and enumeration files |
 | `hooks` | bounded local lifecycle processes |
 | `audit_log` | local JSONL event sink |
@@ -83,6 +84,42 @@ profile = "quick"
 
 The real file also contains a generated UUID and every default section. A later DNS change is denied
 until the operator regenerates or deliberately changes the engagement.
+
+## Authenticated remote MCP
+
+Local `scorchkit serve` does not require this section. Remote operation is selected explicitly with
+`scorchkit serve --remote` and fails before binding unless the complete shape is valid:
+
+```toml
+[mcp.remote]
+bind = "127.0.0.1:7443"
+tls_termination = "trusted_reverse_proxy"
+allowed_hosts = ["security.owned.example"]
+allowed_origins = ["https://console.owned.example"]
+max_body_bytes = 262144
+max_concurrent_requests = 16
+max_sessions_per_principal = 8
+
+[[mcp.remote.bindings]]
+subject = "operator@owned.example"
+engagement_id = "00000000-0000-0000-0000-000000000001"
+token_env = "SCORCHKIT_MCP_OPERATOR_TOKEN"
+```
+
+`bind` must be loopback. The same-host proxy owns certificates and the public listener; it must
+replace `X-Forwarded-Proto` with the single exact value `https`, preserve the public Host, and pass
+the bearer `Authorization` header. A supplied browser Origin must match the HTTPS allowlist; missing
+Origin remains valid for non-browser MCP clients. The endpoint path is fixed at `/mcp`.
+
+Each subject and environment reference is unique. Token values must be 32–4096 printable ASCII
+bytes, are resolved before listening, zeroized after hashing, and retained only as runtime SHA-256
+digests. Every binding UUID must equal the one enabled, unexpired `[engagement]` UUID. Client
+initialization name/version is never a credential or binding. Each principal receives a separate
+stateful session manager, and body, concurrent-request, and per-principal session limits are hard
+bounds. Rotate a token by changing its environment value and restarting the host.
+
+This profile does not terminate TLS directly and does not support a non-loopback cleartext hop,
+OIDC/OAuth, multiple selectable engagements, tenants, or RBAC.
 
 ## Durable webhooks
 

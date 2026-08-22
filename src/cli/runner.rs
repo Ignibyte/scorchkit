@@ -307,7 +307,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
         }
 
         #[cfg(feature = "mcp")]
-        Commands::Serve => crate::cli::serve::run_serve(&config).await,
+        Commands::Serve { remote } => crate::cli::serve::run_serve(&config, remote).await,
 
         #[cfg(feature = "infra")]
         Commands::Infra { target, profile, modules, skip, quiet } => {

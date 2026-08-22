@@ -2,8 +2,8 @@
 title: INTAKE-authenticated-remote-mcp
 status: candidate
 created: 2026-08-17
-ticket:
-pipeline_spec:
+ticket: TICKET-022
+pipeline_spec: docs/planning/pipeline/active/authenticated-remote-mcp.spec.md
 ---
 
 # Authenticated remote MCP transport

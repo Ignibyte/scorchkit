@@ -17,8 +17,8 @@
           "anyOf": [{"$ref": "#/$defs/McpClientAttribution"}, {"type": "null"}],
           "description": "Self-asserted client metadata, kept separate from the transport principal."
         },
-        "kind": {"description": "Transport-derived principal kind. SK-032 supports only `local_process`.", "type": "string"},
-        "subject": {"description": "Stable subject for the local-process trust boundary.", "type": "string"}
+        "kind": {"description": "Transport-derived principal kind: local process or authenticated bearer.", "type": "string"},
+        "subject": {"description": "Stable subject selected by the trusted transport host.", "type": "string"}
       },
       "required": ["kind", "subject"],
       "type": "object"

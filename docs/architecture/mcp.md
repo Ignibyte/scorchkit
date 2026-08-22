@@ -1,7 +1,8 @@
 # MCP server
 
-ScorchKit exposes its local security engine through MCP over stdio. Codex is the preferred client,
-but the server uses standard MCP types and has no vendor-specific authorization path.
+ScorchKit exposes its security engine through local stdio MCP by default and an optional
+authenticated Streamable HTTP host. Codex is the preferred client, but both transports use standard
+MCP types and have no vendor-specific authorization path.
 
 The current `mcp` Cargo feature implies the storage code is compiled, but local scan operation does
 not require a database. With no configured database URL, the server starts with process-local jobs;
@@ -10,17 +11,19 @@ project, schedule, finding, resource, and migration operations fail explicitly.
 ## Process and trust boundary
 
 ```text
-local MCP host
-      |
-  stdio transport
-      |
-ScorchKitServer ── optional PostgreSQL
-      |                 |
-ScanJobService     project storage
-      |
-policy-gated Engine
-      |
-DAST / SAST / infra / cloud executors
+local MCP host                 remote MCP client
+      |                               |
+  stdio transport              HTTPS reverse proxy
+      |                               |
+      |                    loopback authenticated HTTP guard
+      |                               |
+      +--------- ScorchKitServer -----+
+                       |        |
+              ScanJobService   optional PostgreSQL
+                       |        |
+                 policy-gated Engine
+                       |
+             DAST / SAST / infra / cloud executors
 ```
 
 The MCP host is not an authorization authority. `ScorchKitServer` holds one immutable `AppConfig`,
@@ -39,6 +42,7 @@ pub struct ScorchKitServer {
     pub(crate) config: Arc<AppConfig>,
     pub(crate) pool: Option<PgPool>,
     pub(crate) jobs: ScanJobService,
+    pub(crate) transport_principal: McpTransportPrincipal,
 }
 ```
 
@@ -125,11 +129,13 @@ The text content remains byte-for-byte compatible for successful calls so pre-SK
 continue decoding the original result. New hosts should prefer `structuredContent`, verify the
 schema version and tool name, and use the text block only as a compatibility fallback.
 
-The current transport is local stdio, so the principal kind records the local process boundary.
-MCP client name and version are self-asserted and explicitly `trusted=false`; they are useful for
-trace attribution only. Neither the principal nor client metadata grants an engagement, target,
-capability, or effect. Authenticated remote principals and principal-to-engagement binding remain
-blocked on SK-044.
+Local stdio records `kind=local_process` and subject `local-mcp-process`. Remote HTTP records
+`kind=authenticated_bearer` and the subject selected by the matched runtime credential binding.
+Remote startup separately proves that binding names the exact configured engagement UUID. MCP
+client name and version remain self-asserted and explicitly `trusted=false` on both transports; a
+client calling itself an administrator gains nothing. The transport principal selects a remote
+session boundary but grants no target, capability, or effect. The immutable engagement and engine
+policy still decide every operation.
 
 ## Behavior classes and annotations
 
@@ -222,20 +228,43 @@ store.
 
 ## Remote transport
 
-ScorchKit does not ship SSE, streamable HTTP, or another remote MCP transport. Do not expose stdio
-through an unauthenticated network wrapper. A future remote server must:
+`scorchkit serve --remote` starts stateful Streamable HTTP at the fixed `/mcp` path only after the
+complete `[mcp.remote]` configuration passes. The supported deployment is deliberately narrow:
 
-1. authenticate the principal;
-2. bind that principal to an engagement;
-3. validate the listening and requested hosts;
-4. define TLS termination and proxy trust;
-5. preserve the same deny-before-effects behavior;
-6. rate-limit, audit, and test destructive operations.
+```text
+client -- TLS --> same-host reverse proxy -- cleartext loopback --> ScorchKit
+```
+
+The backend address must be loopback. The proxy must replace `X-Forwarded-Proto` with the single
+exact value `https`, preserve an allowed public Host, and forward bearer authorization. ScorchKit
+checks the path, HTTPS assertion, exact Host, optional exact HTTPS Origin, body ceiling, and global
+in-flight ceiling before rmcp parses the message. Body reads have a 30-second deadline, and the raw
+authorization header is removed before routing. Missing Origin is valid for non-browser clients.
+The public proxy must independently bound connection counts and connection, header, request, and
+idle time because those phases begin before the loopback application handler.
+
+Bindings name a stable subject, the exact configured engagement UUID, and an environment variable.
+Token values are validated at startup, hashed with SHA-256, zeroized, and matched across the entire
+bounded digest list in constant time. Missing, duplicate, short, malformed, mismatched, disabled, or
+expired bindings fail before listening. Credential values are absent from serializable config,
+`Debug`, responses, logs, and errors.
+
+Each binding selects its own rmcp service and bounded stateful session manager. A session ID used
+with another valid bearer therefore resolves as unknown. Initialization is serialized around the
+session ceiling, and rejected initialization is cleaned up so malformed traffic cannot consume a
+slot. Negotiated client metadata remains untrusted attribution inside that principal-owned session.
+
+Direct TLS certificate handling, non-loopback backends, a proxy on another host, OAuth/OIDC,
+multi-engagement selection, tenant isolation, RBAC, and remote queue administration are not part of
+this profile. Do not expose stdio through a wrapper or broaden the cleartext listener.
 
 ## Tests and delivery evidence
 
-`tests/mcp_tools.rs` uses a migrated disposable database and loopback servers. It covers authorized
-and denied scans, the exact 39-tool inventory and schema snapshot, annotations, structured success
+`tests/mcp_tools.rs` and `mcp::remote` tests use a migrated disposable database, duplex transports,
+and real loopback HTTP. They cover authenticated startup denials, TLS/Host/Origin/body/concurrency
+guards, credential secrecy, session ceilings and cross-principal isolation, failed-initialization
+cleanup, authenticated principal projection, authorized and denied scans, the exact 39-tool
+inventory and schema snapshot, annotations, structured success
 and failure, spoofed client attribution, stateless jobs over duplex MCP transport, project
 membership, schedule snapshots, one-slot concurrency, N-caller at-most-once execution, finding
 lifecycle, resources, and prompts. Contract unit tests decorate and reject generated routers without
@@ -253,8 +282,9 @@ crates/scorchkit-mcp/src/
   instructions.rs  host-neutral server instructions
 src/mcp/
   contract.rs      rmcp router and structured-result adapter over package contracts
-  server.rs        server state, handler implementation, stdio startup
-  tools.rs         37 tool wrappers and do_* business methods
+  server.rs        shared server state, recovery lifecycle, stdio and remote startup
+  remote.rs        authenticated bounded Streamable HTTP adapter and session isolation
+  tools.rs         39 tool wrappers and do_* business methods
   types.rs         compatibility re-exports
   resources.rs     URI parser, listings, templates, and reads
   prompts.rs       five workflow prompts and compatibility-only unverified correlation rules

@@ -29,6 +29,7 @@ const RECOVERY_INTERVAL_SECONDS: u64 = 5;
 ///
 /// Holds shared application state (configuration and database pool)
 /// that all MCP tool methods can access.
+#[derive(Clone)]
 pub struct ScorchKitServer {
     /// Shared application configuration.
     pub(crate) config: Arc<AppConfig>,
@@ -39,6 +40,14 @@ pub struct ScorchKitServer {
     /// Optional durable webhook service for lifecycle enqueue and background delivery.
     pub(crate) webhooks: Option<Arc<WebhookService>>,
     webhook_configuration_error: Option<String>,
+    pub(crate) transport_principal: McpTransportPrincipal,
+}
+
+/// Host-owned identity source for MCP result attribution.
+#[derive(Clone)]
+pub(crate) enum McpTransportPrincipal {
+    LocalProcess,
+    AuthenticatedBearer { subject: String },
 }
 
 impl ScorchKitServer {
@@ -58,7 +67,14 @@ impl ScorchKitServer {
             Ok(_) => (jobs, None, None),
             Err(error) => (jobs, None, Some(error.to_string())),
         };
-        Self { config, pool: Some(pool), jobs, webhooks, webhook_configuration_error }
+        Self {
+            config,
+            pool: Some(pool),
+            jobs,
+            webhooks,
+            webhook_configuration_error,
+            transport_principal: McpTransportPrincipal::LocalProcess,
+        }
     }
 
     /// Create a stateless server backed by process-local jobs and no database.
@@ -68,7 +84,19 @@ impl ScorchKitServer {
         let webhook_configuration_error = (!config.webhooks.is_empty()).then(|| {
             "webhook delivery requires an explicitly configured durable database".to_string()
         });
-        Self { config, pool: None, jobs, webhooks: None, webhook_configuration_error }
+        Self {
+            config,
+            pool: None,
+            jobs,
+            webhooks: None,
+            webhook_configuration_error,
+            transport_principal: McpTransportPrincipal::LocalProcess,
+        }
+    }
+
+    pub(crate) fn with_remote_principal(mut self, subject: String) -> Self {
+        self.transport_principal = McpTransportPrincipal::AuthenticatedBearer { subject };
+        self
     }
 
     pub(crate) fn require_pool(&self) -> Result<&PgPool, String> {
@@ -161,24 +189,54 @@ impl ServerHandler for ScorchKitServer {
 /// Returns an error if an explicitly configured database connection fails or the MCP transport
 /// encounters an I/O error.
 pub async fn serve(config: Arc<AppConfig>) -> crate::engine::error::Result<()> {
-    let database_configured =
-        config.database.url.is_some() || std::env::var_os("DATABASE_URL").is_some();
-    let server = if database_configured {
-        let pool = crate::storage::connect_from_config(&config.database, None).await?;
-        ScorchKitServer::new(config, pool)
-    } else {
-        ScorchKitServer::new_stateless(config)
-    };
+    let server = compose_server(config).await?;
     server.require_valid_webhook_host()?;
     server.jobs.recover_interrupted().await?;
-    let recovery_jobs = server.jobs.clone();
-    let recovery_webhooks = server.webhooks.clone();
 
     let service = server
+        .clone()
         .serve(stdio())
         .await
         .map_err(|e| ScorchError::Config(format!("MCP server failed to start: {e}")))?;
+    let (recovery_stop, recovery_task) = spawn_recovery(&server);
 
+    let service_result =
+        service.waiting().await.map_err(|e| ScorchError::Config(format!("MCP server error: {e}")));
+    stop_recovery(recovery_stop, recovery_task).await?;
+    service_result.map(|_| ())
+}
+
+/// Start authenticated Streamable HTTP MCP behind the configured trusted TLS proxy.
+///
+/// # Errors
+///
+/// Returns an error before listening when remote authentication, engagement binding, TLS policy,
+/// database composition, or the listener cannot be established.
+pub async fn serve_remote(config: Arc<AppConfig>) -> crate::engine::error::Result<()> {
+    let prepared = super::remote::PreparedRemoteMcp::from_app_config(&config)?;
+    let server = compose_server(config).await?;
+    server.require_valid_webhook_host()?;
+    server.jobs.recover_interrupted().await?;
+    let (recovery_stop, recovery_task) = spawn_recovery(&server);
+    let service_result = super::remote::listen(prepared, &server).await;
+    stop_recovery(recovery_stop, recovery_task).await?;
+    service_result
+}
+
+async fn compose_server(config: Arc<AppConfig>) -> crate::engine::error::Result<ScorchKitServer> {
+    let database_configured =
+        config.database.url.is_some() || std::env::var_os("DATABASE_URL").is_some();
+    if database_configured {
+        let pool = crate::storage::connect_from_config(&config.database, None).await?;
+        Ok(ScorchKitServer::new(config, pool))
+    } else {
+        Ok(ScorchKitServer::new_stateless(config))
+    }
+}
+
+fn spawn_recovery(server: &ScorchKitServer) -> (CancellationToken, tokio::task::JoinHandle<()>) {
+    let recovery_jobs = server.jobs.clone();
+    let recovery_webhooks = server.webhooks.clone();
     let recovery_stop = CancellationToken::new();
     let recovery_stop_task = recovery_stop.clone();
     let recovery_task = tokio::spawn(async move {
@@ -202,20 +260,24 @@ pub async fn serve(config: Arc<AppConfig>) -> crate::engine::error::Result<()> {
             }
         }
     });
+    (recovery_stop, recovery_task)
+}
 
-    let service_result =
-        service.waiting().await.map_err(|e| ScorchError::Config(format!("MCP server error: {e}")));
+async fn stop_recovery(
+    recovery_stop: CancellationToken,
+    recovery_task: tokio::task::JoinHandle<()>,
+) -> crate::engine::error::Result<()> {
     recovery_stop.cancel();
     recovery_task
         .await
         .map_err(|error| ScorchError::Job(format!("scan job recovery task failed: {error}")))?;
-    service_result?;
-
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use super::*;
 
     #[test]
@@ -231,5 +293,21 @@ mod tests {
         let server = ScorchKitServer::new_stateless(Arc::new(config));
         assert!(server.require_valid_webhook_host().is_err());
         assert!(server.webhooks.is_none());
+    }
+
+    #[tokio::test]
+    async fn recovery_shutdown_cancels_and_awaits_the_background_task() {
+        let stop = CancellationToken::new();
+        let waiter = stop.clone();
+        let observed = Arc::new(AtomicBool::new(false));
+        let observed_by_task = Arc::clone(&observed);
+        let task = tokio::spawn(async move {
+            waiter.cancelled().await;
+            observed_by_task.store(true, Ordering::SeqCst);
+        });
+
+        stop_recovery(stop, task).await.expect("stop recovery task");
+
+        assert!(observed.load(Ordering::SeqCst));
     }
 }

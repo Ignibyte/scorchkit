@@ -15,6 +15,7 @@ scorchkit-policy = { version = "=3.0.0", path = "../scorchkit-policy" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 url = "2"
+uuid = { version = "1", features = ["serde"] }
 
 [dev-dependencies]
 serde_json = "1"

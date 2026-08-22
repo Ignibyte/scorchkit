@@ -17,7 +17,16 @@ storage = [
   "dep:scorchkit-storage",
   "scorchkit-cli/storage",
 ]
-mcp = ["storage", "dep:rmcp", "dep:scorchkit-mcp", "scorchkit-cli/mcp"]
+mcp = [
+  "storage",
+  "dep:axum",
+  "dep:rmcp",
+  "dep:scorchkit-mcp",
+  "dep:subtle",
+  "dep:tokio-util",
+  "dep:zeroize",
+  "scorchkit-cli/mcp",
+]
 infra = ["dep:ipnet", "dep:hickory-resolver", "scorchkit-cli/infra"]
 # SHA-256 is always available for supply-chain and evidence integrity; infra reuses it for
 # content-addressed CVE cache filenames.
@@ -144,12 +153,6 @@ zip = { version = "=8.6.0", default-features = false, features = [
   "deflate-flate2-zlib-rs",
 ] }
 zstd = { version = "=0.13.3", default-features = false }
-# Uses default features (`system-config` + `tokio`) — we need both for
-# `TokioResolver::builder_tokio()` to resolve from `/etc/resolv.conf`.
-# `dnssec-aws-lc-rs` enables full DNSSEC chain validation via
-# `ResolverOpts::validate = true` (WORK-145). aws-lc-rs matches the
-# crypto provider rustls already uses (WORK-143) — single crypto
-# backend across the binary.
 
 # AWS SDK crates used by quarantined native-check tests.
 [dependencies.aws-config]
@@ -180,6 +183,12 @@ optional = true
 default-features = false
 features = ["default-https-client", "rt-tokio"]
 
+[dependencies.axum]
+version = "0.8"
+default-features = false
+features = ["http1", "tokio"]
+optional = true
+
 [dependencies.azure_core]
 version = "0.22"
 optional = true
@@ -198,6 +207,12 @@ optional = true
 version = "1"
 optional = true
 
+# Uses default features (`system-config` + `tokio`) — we need both for
+# `TokioResolver::builder_tokio()` to resolve from `/etc/resolv.conf`.
+# `dnssec-aws-lc-rs` enables full DNSSEC chain validation via
+# `ResolverOpts::validate = true` (WORK-145). aws-lc-rs matches the
+# crypto provider rustls already uses (WORK-143) — single crypto
+# backend across the binary.
 [dependencies.hickory-resolver]
 version = "0.26"
 optional = true
@@ -209,7 +224,12 @@ optional = true
 
 [dependencies.rmcp]
 version = "1.3"
-features = ["server", "transport-io", "macros"]
+features = [
+  "server",
+  "transport-io",
+  "transport-streamable-http-server",
+  "macros",
+]
 optional = true
 
 [dependencies.sha2]
@@ -228,6 +248,19 @@ features = [
   "migrate",
   "macros",
 ]
+optional = true
+
+[dependencies.subtle]
+version = "2"
+optional = true
+
+[dependencies.tokio-util]
+version = "0.7"
+features = ["rt"]
+optional = true
+
+[dependencies.zeroize]
+version = "1"
 optional = true
 
 [target.'cfg(unix)'.dependencies]

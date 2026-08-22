@@ -34,6 +34,9 @@ pub struct AppConfig {
     pub ai: AiConfig,
     pub report: ReportConfig,
     pub database: DatabaseConfig,
+    /// Local and authenticated remote MCP transport configuration.
+    #[serde(default)]
+    pub mcp: crate::mcp::McpConfig,
     /// Custom wordlist paths for brute-force and enumeration modules.
     #[serde(default)]
     pub wordlists: WordlistConfig,

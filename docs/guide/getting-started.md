@@ -242,9 +242,20 @@ Build with `mcp` and `storage`, configure PostgreSQL and an engagement, then sta
 scorchkit serve
 ```
 
-The current MCP surface is local stdio only. Do not place it behind an unauthenticated remote
-wrapper. See [the MCP architecture](../architecture/mcp.md) for its 26 tools, resources, prompts, and
-authorization rules.
+The default remains local stdio. For authenticated remote operation, use a same-host TLS reverse
+proxy and configure `[mcp.remote]` as shown in [the configuration architecture](../architecture/config.md).
+Set each referenced token to a unique 32-byte-or-longer value, make its binding UUID equal the
+enabled, unexpired configured engagement, then start the loopback backend explicitly:
+
+```bash
+export SCORCHKIT_MCP_OPERATOR_TOKEN='replace-with-a-unique-high-entropy-value'
+scorchkit serve --remote
+```
+
+The proxy must terminate TLS, replace `X-Forwarded-Proto` with `https`, preserve the allowed public
+Host, and forward bearer authentication to `/mcp`. Do not expose the cleartext backend, place it on
+a different host, or add an unauthenticated wrapper. See [the MCP architecture](../architecture/mcp.md)
+for all 39 tools, resources, prompts, identity rules, and authorization boundaries.
 
 ## CVE providers
 

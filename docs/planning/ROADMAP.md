@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** SK-043 is complete; SK-044 is next; SK-049 through SK-057 are documented post-release candidates
+**Status:** SK-044 is complete; SK-045 is next; SK-049 through SK-057 are documented post-release candidates
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-22
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
@@ -180,8 +180,8 @@ None. The feature-readiness baseline and SK-028 through SK-043 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. TICKET-021 restored policy-owned durable webhooks; SK-044
-is the next product candidate.
+The pipeline permits one active ticket. TICKET-022 added authenticated remote MCP; SK-045 is the
+next platform candidate.
 Each later row has a specified candidate intake under `docs/planning/intake/` and becomes a numbered
 ticket only when promoted. SK-049 through SK-057 begin only after the current SK-043 through SK-048
 queue is complete. Backlog status is not a waiver of a safety invariant.
@@ -192,7 +192,7 @@ queue is complete. Backlog status is not a waiver of a safety invariant.
 | 2 | SK-041 (completed) | Add code-informed, application-only pentest scenarios plus HAR/manual proxy evidence interoperability. | SK-038 through SK-040 | [TICKET-016](tickets/closed/TICKET-016-application-pentest.md) |
 | 3 | SK-042 (completed) | Present change-aware commit, PR, staging, release, and deep AppSec workflows through Codex-first, agent-neutral contracts. | SK-036 through SK-041 | [TICKET-017](tickets/closed/TICKET-017-codex-appsec-workflows.md) |
 | 4 | SK-043 (completed) | Restore webhook delivery through a redacted, policy-owned, durable bounded queue outside scan execution. | SK-028, SK-035 | [TICKET-021](tickets/closed/TICKET-021-policy-webhooks.md) |
-| 5 | SK-044 | Add authenticated remote MCP with principal-to-engagement binding, host validation, and an explicit TLS policy. | SK-032, SK-035 | [intake](intake/INTAKE-authenticated-remote-mcp.md) |
+| 5 | SK-044 (completed) | Add authenticated remote MCP with principal-to-engagement binding, host validation, and an explicit TLS policy. | SK-032, SK-035 | [TICKET-022](tickets/closed/TICKET-022-authenticated-remote-mcp.md) |
 | 6 | SK-045 | Add Windows Job Object process ownership before enabling Windows builds. | SK-028, SK-034 | [intake](intake/INTAKE-windows-process-owner.md) |
 | 7 | SK-046 | Replace reachable unmaintained dependencies and remove the reviewed disabled-MySQL advisory exception. | upstream availability or replacement | [intake](intake/INTAKE-dependency-debt.md) |
 | 8 | SK-047 | Complete the scheduled full mutation inventory once, repair named survivors through focused scopes, and raise quality floors only from measured green evidence. | SK-027 | [intake](intake/INTAKE-quality-ratchet.md) |

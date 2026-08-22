@@ -47,15 +47,17 @@ infrastructure. The test suite never treats a timeout against an external addres
   evidence.
 - External processes have bounded time, output, filesystem ownership, and termination behavior.
 - Agent analysis never replaces or silently changes scanner evidence.
-- Remote MCP transport requires authentication and host validation.
+- Remote MCP transport requires bearer authentication, exact principal-to-engagement binding,
+  loopback backend ownership, host/origin validation, bounded input and sessions, and an explicit
+  TLS-termination policy before listening.
 - Webhook events are redacted before durable enqueue, and every delivery requires an exact
   `webhook-delivery`/`active-safe` grant for the configured URL, redirects, and resolved addresses.
 
 The current implementation has direct regression coverage for absence denial, HTTP redirects and
 DNS answers, project membership, stored schedule snapshots, CVE-provider endpoints and cache paths,
-webhook queue ownership and redaction, process-tree cleanup, terminal-control neutralization, and
-secret-safe configuration diagnostics. The executable gate and its exact-worktree receipt remain
-the delivery evidence.
+webhook queue ownership and redaction, authenticated remote MCP identity/session isolation,
+process-tree cleanup, terminal-control neutralization, and secret-safe configuration diagnostics.
+The executable gate and its exact-worktree receipt remain the delivery evidence.
 
 ## Current support boundary
 
@@ -70,8 +72,17 @@ the delivery evidence.
   cloud credentials.
 - Linux and macOS are supported. Non-Unix builds fail until Windows Job Object cleanup provides the
   same descendant-process guarantee.
-- MCP is local stdio only. Do not expose it through an unauthenticated remote wrapper. Any future
-  remote transport must authenticate its principal, validate the host, and define TLS termination.
+- MCP uses local stdio by default. `serve --remote` enables the only supported remote profile:
+  stateful Streamable HTTP behind a same-host trusted reverse proxy. The cleartext backend must bind
+  to loopback; the proxy must terminate TLS, replace rather than append `X-Forwarded-Proto: https`,
+  preserve the public Host, and forward `Authorization`. ScorchKit validates the exact path, Host,
+  optional Origin, HTTPS assertion, body and concurrency bounds, body-read deadline, and bearer
+  credential before rmcp routing. The proxy must independently enforce public connection, header,
+  request, and idle timeouts and rate limits. Credentials are environment references resolved to
+  runtime-only SHA-256 digests, and the raw authorization header is removed before rmcp routing.
+  Every binding must name the exact enabled, unexpired configured engagement. Each principal owns
+  a separate bounded session manager, so session IDs do not cross valid credentials. Direct TLS,
+  non-loopback backends, OAuth/OIDC, multi-engagement selection, tenants, and RBAC are not supported.
 - Durable CLI and MCP job hosts may deliver configured webhooks through PostgreSQL. Queue records
   contain a destination identity, redacted event payload, and engagement snapshot, never the
   destination URL or authorization value. Each direct and redirected request uses the shared

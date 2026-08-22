@@ -49,9 +49,9 @@ pub struct McpClientAttribution {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct McpPrincipalContext {
-    /// Transport-derived principal kind. SK-032 supports only `local_process`.
+    /// Transport-derived principal kind: local process or authenticated bearer.
     pub kind: String,
-    /// Stable subject for the local-process trust boundary.
+    /// Stable subject selected by the trusted transport host.
     pub subject: String,
     /// Self-asserted client metadata, kept separate from the transport principal.
     pub client_attribution: Option<McpClientAttribution>,

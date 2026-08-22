@@ -400,7 +400,6 @@ nextest_gate() {
     # covered by the root integration and workspace-architecture suites. Keep the list exact so a
     # newly empty package fails, and adding package-local tests forces removal of the stale entry.
     allowlisted_empty_suites="$(printf '%s\n' \
-        scorchkit-cli \
         scorchkit-cloud \
         scorchkit-infra \
         scorchkit-web \
