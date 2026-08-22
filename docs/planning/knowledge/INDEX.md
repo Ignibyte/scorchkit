@@ -122,6 +122,10 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-target-inactive-mutation-files-001` | Put host-exclusive process and filesystem bodies in exact target-only modules; exclude only those files from an unlike-host mutation run while native CI compiles and executes them. | `AAR-023-windows-process-owner` |
 | `PR-scorchkit-owned-process-accessor-contract-001` | Directly assert every owned-child pipe accessor and the direct-child identity used by wait and cleanup. | `AAR-023-windows-process-owner` |
 | `PR-scorchkit-descendant-owner-drop-order-001` | Destroy the whole-tree owner before the direct-child fallback and pin declaration-order cleanup with a semantic descendant-exit test. | `AAR-023-windows-process-owner` |
+| `PR-scorchkit-dependency-lock-activation-separation-001` | For dependency retirement, test lockfile advisory presence, active reverse edges, and enabled features as separate properties. | `AAR-024-dependency-debt` |
+| `PR-scorchkit-transitive-platform-feature-contract-001` | When an upgraded dependency obtains local identity or platform configuration through a transitive crate with defaults off, declare the minimum platform feature and test the semantic value. | `AAR-024-dependency-debt` |
+| `PR-scorchkit-config-parser-error-layering-001` | Exercise each wrapped configuration-parser rejection layer with credential-shaped input and assert redacted, compatible public diagnostics. | `AAR-024-dependency-debt` |
+| `PR-scorchkit-validation-evidence-before-receipt-001` | Populate tracked validation evidence before the receipt-producing gate, transition immediately after green, and reserve final archive outcomes for the required delivery rerun. | `AAR-024-dependency-debt` |
 
 ## Register
 
@@ -222,3 +226,7 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-linux-mutation-windows-target-001` | mutation-measurement failure | `AAR-023-windows-process-owner` |
 | `BF-scorchkit-owned-process-accessor-mutation-001` | test-gap bug | `AAR-023-windows-process-owner` |
 | `BF-scorchkit-redundant-owned-process-drop-001` | lifecycle-design duplication | `AAR-023-windows-process-owner` |
+| `BF-scorchkit-transitive-platform-stub-001` | compatibility bug | `AAR-024-dependency-debt` |
+| `BF-scorchkit-optional-lock-activation-assumption-001` | verification-plan gap | `AAR-024-dependency-debt` |
+| `BF-scorchkit-layered-config-error-redaction-001` | security test gap | `AAR-024-dependency-debt` |
+| `BF-scorchkit-validation-note-receipt-drift-001` | process failure | `AAR-024-dependency-debt` |

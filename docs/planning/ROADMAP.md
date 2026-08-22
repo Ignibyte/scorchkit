@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** SK-045 is complete; SK-046 is next; SK-049 through SK-057 are documented post-release candidates
+**Status:** SK-046 is complete; SK-047 is next; SK-049 through SK-057 are documented post-release candidates
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-22
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
@@ -150,6 +150,7 @@ file-mode observations while the index retains authoritative modes.
 | SK-043 | Restored webhook delivery through a redacted durable queue, policy-owned network attempts, credential-indirect configuration, revision ownership, recovery, immutable audits, and foreground-independent workers. | Thirteen inspection findings repaired; 84.39% line coverage; 1,904 strict cases; PostgreSQL and CLI/MCP contracts green; canonical DIFF caught 276/283 viable mutations at 97.52% MSI, above the unchanged 95% floor. |
 | SK-044 | Added authenticated remote MCP through a trusted same-host TLS proxy with principal-to-engagement binding, isolated stateful sessions, bounded request guards, and credential scrubbing. | Ten inspection findings repaired; 84.55% line coverage; 1,928 strict cases; PostgreSQL and CLI/MCP contracts green; canonical DIFF caught 117/117 viable mutations at 100% MSI. |
 | SK-045 | Added Windows suspended-spawn Job Object ownership and native CI while preserving Unix process groups and one bounded provider-neutral child lifecycle for one-shot and Interactsh execution. | Seven inspection findings repaired; Windows-target workspace Clippy green; 84.58% line coverage; 1,931 strict cases; 100 PostgreSQL tests and CLI/MCP contracts green; canonical DIFF caught 16/16 viable mutations at 100% MSI. |
+| SK-046 | Replaced reachable unmaintained parser and progress dependencies, upgraded SQLx with an exact PostgreSQL-only graph, and removed the disabled-MySQL RSA audit exception. | Unignored Audit/Deny/Machete green; HTML, progress, peer-auth, PostgreSQL, CLI, and MCP contracts green; 84.59% line coverage; 1,937 strict cases; canonical DIFF caught 7/7 viable mutations at 100% MSI. |
 
 The sealed Codex Security scan `efe30eaf-9b1b-4572-949a-0e8391d48247` reviewed 603 changed paths and
 closed 192/192 semantic rows. Its eight high-confidence findings have code fixes and regression
@@ -159,33 +160,33 @@ evidence.
 
 ## Current validation evidence
 
-Evidence produced through the TICKET-023 pre-completion worktree:
+Evidence produced through the TICKET-024 pre-completion worktree:
 
 | Signal | Last result | Final requirement |
 |---|---:|---:|
 | Compiler | all targets, workspace packages, and features passed | pass after final edits |
 | Strict Clippy | zero diagnostics across every derived feature state and workspace package | pass after final edits and every feature state |
 | All-feature tests | Workspace library, package, integration, and doctest suites passed; strict all-feature Clippy had zero diagnostics | pass after final edits with PostgreSQL |
-| Canonical line coverage | 84.58% | at least 62%; retain the measured floor before the next ratchet decision |
-| SK-045 DIFF mutation selection | 25 mutations evaluated: 16 caught, 0 missed, and 9 compiler-unviable; 100% MSI at the unchanged 95% floor | retain the completed raw outcome set and remain at or above 95% |
-| Nextest strictness | 1,931 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
+| Canonical line coverage | 84.59% | at least 62%; retain the measured floor before the next ratchet decision |
+| SK-046 DIFF mutation selection | 9 mutations evaluated: 7 caught, 0 missed, and 2 compiler-unviable; 100% MSI at the unchanged 95% floor | retain the completed raw outcome set and remain at or above 95% |
+| Nextest strictness | 1,937 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
 | PostgreSQL integration | 77 MCP, 12 storage, and 11 storage-integration tests passed | pass |
 | CLI/MCP contracts | 24 CLI, 2 code-scan, 77 MCP, and 12 scan-plan tests passed | pass |
-| Delivery receipt | TICKET-023 pre-completion DIFF gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive DIFF receipt for the exact completed tree |
+| Delivery receipt | TICKET-024 pre-completion DIFF gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive DIFF receipt for the exact completed tree |
 
 The test count is historical evidence, not a promised final count. The gate output after all source and
 documentation edits is authoritative.
 
 ## Baseline blockers
 
-None. The feature-readiness baseline and SK-028 through SK-045 are closed above.
+None. The feature-readiness baseline and SK-028 through SK-046 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. TICKET-023 added Windows process ownership; SK-046 is the
-next platform candidate.
+The pipeline permits one active ticket. TICKET-024 retired the named dependency debt; SK-047 is the
+next quality candidate.
 Each later row has a specified candidate intake under `docs/planning/intake/` and becomes a numbered
-ticket only when promoted. SK-049 through SK-057 begin only after the current SK-043 through SK-048
+ticket only when promoted. SK-049 through SK-057 begin only after the remaining SK-047 through SK-048
 queue is complete. Backlog status is not a waiver of a safety invariant.
 
 | Order | Batch | Planned outcome | Depends on | Planning artifact |
@@ -196,7 +197,7 @@ queue is complete. Backlog status is not a waiver of a safety invariant.
 | 4 | SK-043 (completed) | Restore webhook delivery through a redacted, policy-owned, durable bounded queue outside scan execution. | SK-028, SK-035 | [TICKET-021](tickets/closed/TICKET-021-policy-webhooks.md) |
 | 5 | SK-044 (completed) | Add authenticated remote MCP with principal-to-engagement binding, host validation, and an explicit TLS policy. | SK-032, SK-035 | [TICKET-022](tickets/closed/TICKET-022-authenticated-remote-mcp.md) |
 | 6 | SK-045 (completed) | Add Windows Job Object process ownership before enabling Windows builds. | SK-028, SK-034 | [TICKET-023](tickets/closed/TICKET-023-windows-process-owner.md) |
-| 7 | SK-046 | Replace reachable unmaintained dependencies and remove the reviewed disabled-MySQL advisory exception. | upstream availability or replacement | [intake](intake/INTAKE-dependency-debt.md) |
+| 7 | SK-046 (completed) | Replace reachable unmaintained dependencies and remove the reviewed disabled-MySQL advisory exception. | upstream availability or replacement | [TICKET-024](tickets/closed/TICKET-024-dependency-debt.md) |
 | 8 | SK-047 | Complete the scheduled full mutation inventory once, repair named survivors through focused scopes, and raise quality floors only from measured green evidence. | SK-027 | [intake](intake/INTAKE-quality-ratchet.md) |
 | 9 | SK-048 | Add reproducible ScorchKit releases, signed artifacts, SBOM/provenance, upgrade and rollback tests, and performance/chaos budgets. | SK-033, SK-035, SK-046 | [intake](intake/INTAKE-reproducible-releases.md) |
 | 10 | SK-049 | Add a versioned provider-neutral control API and self-description contract for configuration, engagements, jobs, findings, evidence, modules, reports, and event streams. | SK-029, SK-032, SK-033, SK-044, SK-048 | [intake](intake/INTAKE-control-api.md) |

@@ -2,8 +2,8 @@
 title: INTAKE-dependency-debt
 status: candidate
 created: 2026-08-17
-ticket:
-pipeline_spec:
+ticket: TICKET-024
+pipeline_spec: docs/planning/pipeline/active/dependency-debt.spec.md
 ---
 
 # Dependency and advisory debt retirement

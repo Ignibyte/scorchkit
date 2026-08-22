@@ -17,6 +17,14 @@ fn read(relative: &str) -> String {
         .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"))
 }
 
+fn lockfile_has_package(lockfile: &str, name: &str) -> bool {
+    let expected = format!("name = \"{name}\"");
+    lockfile
+        .split("[[package]]")
+        .skip(1)
+        .any(|package| package.lines().any(|line| line == expected))
+}
+
 #[test]
 fn constitution_and_runner_keep_stable_gate_ids() {
     let constitution = read("CONSTITUTION.md");
@@ -123,4 +131,61 @@ fn ci_executes_the_workspace_and_process_owner_suite_on_windows() {
         windows.contains("cargo clippy --workspace --all-targets --all-features -- -D warnings")
     );
     assert!(windows.contains("cargo test --workspace --all-features"));
+}
+
+#[test]
+fn dependency_policy_keeps_retired_paths_and_audit_exceptions_absent() {
+    let manifest_text = read("Cargo.toml");
+    let manifest: toml::Value =
+        toml::from_str(&manifest_text).expect("root Cargo manifest must parse");
+    let storage_manifest_text = read("crates/scorchkit-storage/Cargo.toml");
+    let storage_manifest: toml::Value =
+        toml::from_str(&storage_manifest_text).expect("storage Cargo manifest must parse");
+
+    assert_eq!(manifest["dependencies"]["scraper"].as_str(), Some("0.27"));
+    assert_eq!(manifest["dependencies"]["indicatif"].as_str(), Some("0.18"));
+    let whoami = &manifest["dependencies"]["whoami"];
+    assert_eq!(whoami["version"].as_str(), Some("2"));
+    assert_eq!(whoami["default-features"].as_bool(), Some(false));
+    assert_eq!(whoami["optional"].as_bool(), Some(true));
+    assert!(whoami["features"]
+        .as_array()
+        .expect("whoami features must be explicit")
+        .iter()
+        .any(|feature| feature.as_str() == Some("std")));
+    assert!(manifest["features"]["storage"]
+        .as_array()
+        .expect("storage feature must be explicit")
+        .iter()
+        .any(|feature| feature.as_str() == Some("dep:whoami")));
+    for sqlx in [
+        &manifest["dependencies"]["sqlx"],
+        &manifest["dev-dependencies"]["sqlx"],
+        &storage_manifest["dependencies"]["sqlx"],
+    ] {
+        assert_eq!(sqlx["version"].as_str(), Some("0.9"));
+        assert_eq!(sqlx["default-features"].as_bool(), Some(false));
+        let features = sqlx["features"].as_array().expect("SQLx features must be explicit");
+        assert!(features.iter().any(|feature| feature.as_str() == Some("postgres")));
+        assert!(!features.iter().any(|feature| {
+            matches!(feature.as_str(), Some("mysql" | "mysql-rsa" | "sqlite" | "any"))
+        }));
+    }
+
+    let lockfile = read("Cargo.lock");
+    for retired in ["fxhash", "number_prefix", "rsa"] {
+        assert!(
+            !lockfile_has_package(&lockfile, retired),
+            "retired package {retired} must stay out of Cargo.lock"
+        );
+    }
+
+    let deny = read("deny.toml");
+    assert!(!deny.contains("RUSTSEC-2025-0057"));
+    assert!(!deny.contains("RUSTSEC-2025-0119"));
+    for automation in [read("bin/gate.sh"), read(".github/workflows/ci.yml")] {
+        assert!(automation.contains("cargo audit"));
+        assert!(!automation.contains("cargo audit --ignore"));
+        assert!(!automation.contains("RUSTSEC-2023-0071"));
+    }
 }

@@ -158,11 +158,7 @@ doc_gate() {
 
 audit_gate() {
     need cargo-audit "cargo install cargo-audit --locked" || return 1
-    # JUSTIFICATION: rsa is recorded through sqlx's optional MySQL dependency,
-    # but ScorchKit compiles only the Postgres graph; cargo-deny verifies the
-    # active graph independently and fails if this ever becomes reachable.
-    # Review by 2026-11-14; remove or replace sqlx before expiry 2027-02-14.
-    cargo audit --ignore RUSTSEC-2023-0071
+    cargo audit
 }
 
 deny_gate() {

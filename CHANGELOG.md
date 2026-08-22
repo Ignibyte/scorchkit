@@ -5,6 +5,13 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Dependency and advisory debt retirement (TICKET-024 / SK-046)** — Upgraded the HTML parser to
+  `scraper` 0.27, progress rendering to `indicatif` 0.18, and every SQLx declaration to 0.9 with
+  defaults disabled and an exact PostgreSQL-only feature graph. Removed `fxhash`, `number_prefix`,
+  and vulnerable `rsa` from the lockfile, then deleted their obsolete Cargo Deny and Cargo Audit
+  exceptions from local and CI policy. Preserved username-less local PostgreSQL peer authentication
+  through a shared credential-safe connection adapter, retained explicit URL/query users, and added
+  executable dependency-graph and parser/renderer/storage compatibility contracts.
 - **Post-release platform roadmap (TICKET-020)** — Extended the ordered candidate backlog through
   SK-057 with a versioned provider-neutral control API, capability-declared extension runtime,
   typed run preprocessors and hooks, provider-neutral model analysis, append-only finding triage,

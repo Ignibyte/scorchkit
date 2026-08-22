@@ -2576,6 +2576,8 @@ async fn application_pentest_storage_rolls_back_scan_and_findings_as_one_unit(
         return Ok(());
     };
     let suffix = Uuid::new_v4().simple().to_string();
+    assert_eq!(suffix.len(), 32);
+    assert!(suffix.bytes().all(|byte| byte.is_ascii_hexdigit()));
     let trigger = format!("scorchkit_t16_{suffix}");
     let function = format!("scorchkit_t16_fail_{suffix}");
     let failing_module = format!("transaction-failure-{suffix}");
@@ -2584,12 +2586,14 @@ async fn application_pentest_storage_rolls_back_scan_and_findings_as_one_unit(
          BEGIN IF NEW.module_id = '{failing_module}' THEN \
          RAISE EXCEPTION 'fixture transaction failure'; END IF; RETURN NEW; END $$"
     );
-    sqlx::query(&create_function).execute(&pool).await?;
+    // SQL identifiers cannot be bind parameters. Every interpolated byte is a locally generated,
+    // length-pinned hexadecimal UUID suffix, so this fixture DDL has no operator-controlled input.
+    sqlx::query(sqlx::AssertSqlSafe(create_function)).execute(&pool).await?;
     let create_trigger = format!(
         "CREATE TRIGGER {trigger} BEFORE INSERT OR UPDATE ON tracked_findings \
          FOR EACH ROW EXECUTE FUNCTION {function}()"
     );
-    sqlx::query(&create_trigger).execute(&pool).await?;
+    sqlx::query(sqlx::AssertSqlSafe(create_trigger)).execute(&pool).await?;
 
     let project =
         storage::projects::create_project(&pool, &unique_name("mcp-atomic-pentest"), "").await?;
@@ -2624,8 +2628,10 @@ async fn application_pentest_storage_rolls_back_scan_and_findings_as_one_unit(
     assert!(storage::scans::list_scans(&pool, project.id).await?.is_empty());
     assert!(storage::findings::list_findings(&pool, project.id).await?.is_empty());
 
-    sqlx::query(&format!("DROP TRIGGER {trigger} ON tracked_findings")).execute(&pool).await?;
-    sqlx::query(&format!("DROP FUNCTION {function}()")).execute(&pool).await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP TRIGGER {trigger} ON tracked_findings")))
+        .execute(&pool)
+        .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP FUNCTION {function}()"))).execute(&pool).await?;
     let stored =
         storage::findings::save_application_pentest_scan(&pool, project.id, &result).await?;
     assert_eq!(stored.findings_new, 2);

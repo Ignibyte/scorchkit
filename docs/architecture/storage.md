@@ -12,6 +12,13 @@ PostgreSQL via `sqlx` (async, runtime queries with `FromRow` derives) behind a `
 - **PostgreSQL over SQLite**: concurrent access from MCP server + CLI, JSONB columns for flexible finding storage, full-text search, production-grade
 - **Runtime queries over compile-time macros**: `sqlx::query_as!()` requires `DATABASE_URL` at build time which breaks CI and binary distribution; runtime `sqlx::query_as()` with `FromRow` trades compile-time SQL verification for build portability
 - **Feature flag**: `--features storage` opt-in keeps default CLI build lightweight (no libpq dependency)
+- **Exact driver graph**: production, model-package, and test SQLx declarations disable defaults
+  and enable only PostgreSQL plus the runtime, TLS, data, derive, macro, and migration capabilities
+  each owner uses. MySQL, SQLite, and `any` drivers are inactive; optional driver metadata in the
+  Cargo lockfile does not activate those code paths.
+- **Local peer identity**: the shared connection adapter preserves PostgreSQL's operating-system
+  username default for `postgresql:///database` URLs, while explicit authority or query usernames
+  win. Invalid URL and driver-option diagnostics do not echo credential-bearing input.
 
 ## Schema
 

@@ -23,21 +23,7 @@ targets = []
 # advisory escalates (new severity, upstream patch released), open a pipeline
 # to bump the relevant dep chain.
 [advisories]
-ignore = [
-  # JUSTIFICATION: `fxhash` is no longer maintained. Comes in via
-  # scraper -> selectors -> fxhash. No safe upgrade is available; the
-  # upstream advisory itself says "No safe upgrade". Replacing scraper
-  # is a separate, larger pipeline (HTML parsing surface).
-  # Tracker: https://rustsec.org/advisories/RUSTSEC-2025-0057
-  { id = "RUSTSEC-2025-0057", reason = "unmaintained fxhash via scraper->selectors; no safe upgrade; scraper swap is a separate pipeline" },
-
-  # JUSTIFICATION: `number_prefix` is no longer maintained. Comes in via
-  # indicatif (progress spinners). No safe upgrade available. indicatif
-  # itself is actively maintained but hasn't migrated off number_prefix.
-  # Tracker: https://rustsec.org/advisories/RUSTSEC-2025-0119
-  { id = "RUSTSEC-2025-0119", reason = "unmaintained number_prefix via indicatif; no safe upgrade; revisit after next indicatif major" },
-
-]
+ignore = []
 
 # =============================================================================
 # [licenses] -- License compliance

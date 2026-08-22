@@ -496,13 +496,7 @@ async fn create_project_from_init(
     fingerprint: &TargetFingerprint,
     database_url: &str,
 ) -> Result<()> {
-    use sqlx::postgres::PgPoolOptions;
-
-    let pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(database_url)
-        .await
-        .map_err(|e| ScorchError::Database(format!("failed to connect: {e}")))?;
+    let pool = crate::storage::connect_with_max(database_url, 2).await?;
 
     let description = build_fingerprint_summary(fingerprint);
     let project = crate::storage::projects::create_project(&pool, name, &description).await?;

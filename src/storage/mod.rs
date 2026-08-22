@@ -30,7 +30,9 @@ pub mod scans;
 pub mod schedules;
 pub mod webhooks;
 
-use sqlx::postgres::PgPoolOptions;
+use std::str::FromStr;
+
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::PgPool;
 
 use crate::engine::error::{Result, ScorchError};
@@ -44,9 +46,10 @@ use crate::engine::error::{Result, ScorchError};
 ///
 /// Returns an error if the database connection fails.
 pub async fn connect(database_url: &str) -> Result<PgPool> {
+    let options = connection_options(database_url)?;
     PgPoolOptions::new()
         .max_connections(5)
-        .connect(database_url)
+        .connect_with(options)
         .await
         .map_err(|e| ScorchError::Database(format!("connection failed: {e}")))
 }
@@ -57,11 +60,38 @@ pub async fn connect(database_url: &str) -> Result<PgPool> {
 ///
 /// Returns an error if the database connection fails.
 pub async fn connect_with_max(database_url: &str, max_connections: u32) -> Result<PgPool> {
+    let options = connection_options(database_url)?;
     PgPoolOptions::new()
         .max_connections(max_connections)
-        .connect(database_url)
+        .connect_with(options)
         .await
         .map_err(|e| ScorchError::Database(format!("connection failed: {e}")))
+}
+
+fn connection_options(database_url: &str) -> Result<PgConnectOptions> {
+    let parsed_url = url::Url::parse(database_url).map_err(|_| {
+        ScorchError::Database("connection failed: connection URL is invalid".to_string())
+    })?;
+    let options = PgConnectOptions::from_str(database_url).map_err(|_| {
+        ScorchError::Database("connection failed: connection URL is invalid".to_string())
+    })?;
+
+    let username_is_explicit =
+        !parsed_url.username().is_empty() || parsed_url.query_pairs().any(|(key, _)| key == "user");
+    if !username_is_explicit {
+        let expected_username = std::env::var("PGUSER")
+            .ok()
+            .or_else(|| whoami::username().ok())
+            .unwrap_or_else(|| "unknown".to_string());
+        if options.get_username() != expected_username {
+            return Err(ScorchError::Database(
+                "connection URL omitted a username, but the local PostgreSQL username could not be resolved"
+                    .to_string(),
+            ));
+        }
+    }
+
+    Ok(options)
 }
 
 /// Connect using application configuration.
@@ -101,4 +131,58 @@ pub async fn connect_from_config(
     }
 
     Ok(pool)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::connection_options;
+
+    #[test]
+    fn omitted_username_uses_the_local_postgresql_identity() {
+        let options = connection_options("postgresql:///scorchkit_test").expect("valid options");
+        let expected = std::env::var("PGUSER")
+            .ok()
+            .or_else(|| whoami::username().ok())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        assert_eq!(options.get_username(), expected);
+    }
+
+    #[test]
+    fn explicit_username_is_preserved() {
+        let options = connection_options("postgresql://scorch_user@localhost/scorchkit_test")
+            .expect("valid options");
+
+        assert_eq!(options.get_username(), "scorch_user");
+    }
+
+    #[test]
+    fn query_username_is_preserved() {
+        let options = connection_options("postgresql:///scorchkit_test?user=query_user")
+            .expect("valid options");
+
+        assert_eq!(options.get_username(), "query_user");
+    }
+
+    #[test]
+    fn invalid_connection_url_is_rejected_without_echoing_it() {
+        let invalid_url = "postgresql://user:secret@[invalid/scorchkit";
+        let error = connection_options(invalid_url).expect_err("invalid URL must fail");
+        let message = error.to_string();
+
+        assert!(message.contains("connection URL is invalid"));
+        assert!(!message.contains("secret"));
+    }
+
+    #[test]
+    fn invalid_connection_option_is_rejected_without_echoing_it() {
+        let invalid_url =
+            "postgresql://user:secret@localhost/scorchkit?sslmode=invalid-secret-mode";
+        let error = connection_options(invalid_url).expect_err("invalid option must fail");
+        let message = error.to_string();
+
+        assert!(message.contains("connection URL is invalid"));
+        assert!(!message.contains("secret"));
+        assert!(!message.contains("invalid-secret-mode"));
+    }
 }
