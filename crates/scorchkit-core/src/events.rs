@@ -49,6 +49,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
 use super::finding::Finding;
+use super::run_pipeline::RunProcessorOutcome;
 
 /// Default capacity for the broadcast channel.
 ///
@@ -125,6 +126,14 @@ pub enum ScanEvent {
         /// usual in pattern matches and accessors.
         finding: Box<Finding>,
     },
+    /// A typed lifecycle processor proposal was accepted, ignored, rejected, or degraded.
+    PipelineProcessorOutcome {
+        /// UUID of the scan.
+        scan_id: String,
+        /// Bounded provider-neutral processor outcome.
+        #[serde(serialize_with = "serialize_pipeline_outcome")]
+        outcome: Box<RunProcessorOutcome>,
+    },
     /// The scan has completed. Emitted once at the very end.
     ScanCompleted {
         /// UUID of the scan.
@@ -147,6 +156,17 @@ pub enum ScanEvent {
         /// to encode typed data and `serde_json::from_value(data)` to decode.
         data: serde_json::Value,
     },
+}
+
+fn serialize_pipeline_outcome<S>(
+    outcome: &RunProcessorOutcome,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let normalized = outcome.clone().normalized().map_err(serde::ser::Error::custom)?;
+    serde::Serialize::serialize(&normalized, serializer)
 }
 
 /// Broadcast channel for scan events.

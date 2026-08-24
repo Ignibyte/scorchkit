@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -45,6 +46,45 @@ pub struct ScanContext {
 }
 
 impl ScanContext {
+    /// Build the proposal ceiling from the exact grants already sealed into this context.
+    pub(crate) fn run_pipeline_authority<I, S>(
+        &self,
+        modules: I,
+    ) -> scorchkit_core::run_pipeline::RunAuthority
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let target = PolicyTarget::Web(self.target.url.clone());
+        let mut capabilities: BTreeSet<_> = self
+            .authorization
+            .iter()
+            .filter(|decision| decision.allowed && decision.target == target)
+            .map(|decision| decision.capability)
+            .collect();
+        if cfg!(test) && capabilities.is_empty() {
+            capabilities.extend([Capability::DastScan, Capability::ExternalTool]);
+        }
+        let max_effect = self
+            .authorization
+            .iter()
+            .filter(|decision| {
+                decision.allowed
+                    && decision.target == target
+                    && decision.capability == Capability::DastScan
+            })
+            .map(|decision| decision.effect)
+            .max()
+            .unwrap_or(EffectClass::ActiveSafe);
+        scorchkit_core::run_pipeline::RunAuthority {
+            target,
+            modules: modules.into_iter().map(Into::into).collect(),
+            credential_use: capabilities.contains(&Capability::CredentialUse),
+            capabilities,
+            max_effect,
+        }
+    }
+
     /// Create a new scan context with an empty shared data store and a
     /// default-capacity event bus.
     #[must_use]
@@ -185,16 +225,21 @@ impl ScanContext {
         self.tool_executor.execute(ToolInvocation::lenient(tool_name, args, timeout)).await
     }
 
-    /// Execute an authorized external tool with owned standard input.
-    pub(crate) async fn run_tool_with_stdin(
+    /// Execute an authorized lifecycle processor with an exact stream ceiling.
+    pub(crate) async fn run_tool_with_stdin_limit(
         &self,
         tool_name: &str,
         stdin: &[u8],
         timeout: Duration,
+        output_limit_bytes: usize,
     ) -> Result<ToolOutput> {
         self.require_tool_authorization(tool_name)?;
         self.tool_executor
-            .execute(ToolInvocation::strict(tool_name, &[], timeout).with_stdin(stdin))
+            .execute(
+                ToolInvocation::strict(tool_name, &[], timeout)
+                    .with_stdin(stdin)
+                    .with_output_limit(output_limit_bytes),
+            )
             .await
     }
 
@@ -640,5 +685,51 @@ mod tests {
         let target = Target::parse("https://example.com").expect("target");
         let context = context(target.clone(), Vec::new());
         assert!(context.extension_http_client(&target.url, EffectClass::ActiveSafe).is_err());
+    }
+
+    #[test]
+    fn pipeline_authority_uses_only_allowed_exact_target_dast_grants() {
+        let target = Target::parse("https://example.com").expect("target");
+        let other = Target::parse("https://outside.test").expect("other target");
+        let mut decisions = vec![
+            decision(&target, Capability::DastScan, EffectClass::ActiveSafe),
+            decision(&target, Capability::ExternalTool, EffectClass::Intrusive),
+            decision(&other, Capability::DastScan, EffectClass::Exploit),
+            decision(&target, Capability::ExternalTool, EffectClass::Exploit),
+        ];
+        decisions.push(AuthorizationDecision {
+            engagement_id: Uuid::nil(),
+            target: PolicyTarget::Web(target.url.clone()),
+            capability: Capability::CredentialUse,
+            effect: EffectClass::Exploit,
+            allowed: false,
+            matched_scope: None,
+            denial: Some(DenialReason::CapabilityNotGranted),
+        });
+        decisions.push(AuthorizationDecision {
+            engagement_id: Uuid::nil(),
+            target: PolicyTarget::Web(target.url.clone()),
+            capability: Capability::DastScan,
+            effect: EffectClass::Exploit,
+            allowed: false,
+            matched_scope: None,
+            denial: Some(DenialReason::CapabilityNotGranted),
+        });
+        let authorized = context(target.clone(), decisions);
+
+        let authority = authorized.run_pipeline_authority(["headers"]);
+
+        assert_eq!(authority.capabilities, [Capability::DastScan, Capability::ExternalTool].into());
+        assert!(!authority.credential_use);
+        assert_eq!(authority.max_effect, EffectClass::ActiveSafe);
+        assert_eq!(authority.modules, ["headers".to_string()].into());
+
+        let credential_only = context(
+            target.clone(),
+            vec![decision(&target, Capability::CredentialUse, EffectClass::CredentialTest)],
+        );
+        let authority = credential_only.run_pipeline_authority(["headers"]);
+        assert_eq!(authority.capabilities, [Capability::CredentialUse].into());
+        assert!(authority.credential_use);
     }
 }

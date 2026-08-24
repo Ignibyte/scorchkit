@@ -47,6 +47,9 @@ infrastructure. The test suite never treats a timeout against an external addres
   evidence.
 - External processes have bounded time, output, filesystem ownership, and termination behavior.
 - Agent analysis never replaces or silently changes scanner evidence.
+- Local run processors use versioned bounded contracts. Their target, module, capability, effect,
+  and credential proposals may only narrow the host-built authorization ceiling; finding proposals
+  remain separately labeled and cannot replace normalized scanner findings.
 - Remote MCP transport requires bearer authentication, exact principal-to-engagement binding,
   loopback backend ownership, host/origin validation, bounded input and sessions, and an explicit
   TLS-termination policy before listening.
@@ -80,6 +83,11 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
   opaque pre-opened inputs; filesystem, credential, subprocess, native-library, automatic
   discovery, and direct storage access are unsupported. Trusted Rust modules and legacy command
   wrappers remain separate in-process or configured trust surfaces, not sandboxed extensions.
+- Typed local run processors are available only in the standard DAST and code runners. They execute
+  through the policy-sealed process owner with exact input, output, and wall-time ceilings. Required
+  failures abort; optional failures retain only a redacted degraded outcome. Local notification
+  processors are rejected in favor of the durable webhook queue. Legacy checkpoint/phased DAST and
+  infra/cloud runners do not gain processor support.
 - Scanner descriptors declare their strongest effect. DAST process authorization reads the same
   canonical tool-effect mapping: Hydra, Kerbrute, NetExec, onesixtyone, and SMBMap require
   `credential-test` and `credential-use`; Commix and Metasploit require `exploit`. The legacy

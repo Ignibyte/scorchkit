@@ -648,18 +648,21 @@ impl Default for ReportConfig {
 
 /// Configuration for scan lifecycle hooks.
 ///
-/// Hooks are external scripts/binaries that fire at scan lifecycle points.
-/// They receive JSON on stdin and can optionally return modified JSON on stdout.
+/// Typed processors and legacy compatibility scripts that fire at scan lifecycle points.
+/// Processor output is validated as a proposal and never replaces scanner evidence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HookConfig {
-    /// Scripts to run before scanning begins. Can modify scan configuration.
+    /// Explicit versioned typed lifecycle processors.
+    #[serde(default)]
+    pub processors: Vec<crate::run_pipeline::RunProcessorConfig>,
+    /// Legacy scripts run before scanning. They may only propose a narrower module selection.
     #[serde(default)]
     pub pre_scan: Vec<PathBuf>,
-    /// Scripts to run after each module completes. Can filter/enrich findings.
+    /// Legacy scripts run after each module. Their output becomes a non-destructive proposal.
     #[serde(default)]
     pub post_module: Vec<PathBuf>,
-    /// Scripts to run after all modules complete. Output is ignored, but completion is awaited.
+    /// Legacy scripts run after all modules. Non-empty output records completion metadata.
     #[serde(default)]
     pub post_scan: Vec<PathBuf>,
     /// Maximum time in seconds to wait for each hook script. Default: 30.
@@ -671,6 +674,7 @@ pub struct HookConfig {
 impl Default for HookConfig {
     fn default() -> Self {
         Self {
+            processors: Vec::new(),
             pre_scan: Vec::new(),
             post_module: Vec::new(),
             post_scan: Vec::new(),
@@ -684,7 +688,60 @@ impl HookConfig {
     /// Whether no lifecycle script is configured.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.pre_scan.is_empty() && self.post_module.is_empty() && self.post_scan.is_empty()
+        self.processors.is_empty()
+            && self.pre_scan.is_empty()
+            && self.post_module.is_empty()
+            && self.post_scan.is_empty()
+    }
+
+    /// Validate explicit processor uniqueness and legacy scalar bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid processor contracts, duplicate identities or phase orders,
+    /// empty legacy paths, or excessive processor/time bounds.
+    pub fn validate(&self) -> Result<(), String> {
+        use std::collections::BTreeSet;
+
+        let total = self
+            .processors
+            .len()
+            .saturating_add(self.pre_scan.len())
+            .saturating_add(self.post_module.len())
+            .saturating_add(self.post_scan.len());
+        if total > scorchkit_core::run_pipeline::MAX_RUN_PROCESSORS {
+            return Err(format!(
+                "run processor count exceeds {}",
+                scorchkit_core::run_pipeline::MAX_RUN_PROCESSORS
+            ));
+        }
+        if !(1..=300).contains(&self.timeout_seconds) {
+            return Err("legacy hook timeout_seconds must be 1-300".into());
+        }
+        if self
+            .pre_scan
+            .iter()
+            .chain(&self.post_module)
+            .chain(&self.post_scan)
+            .any(|path| path.as_os_str().is_empty())
+        {
+            return Err("legacy hook path must not be empty".into());
+        }
+        let mut ids = BTreeSet::new();
+        let mut positions = BTreeSet::new();
+        for processor in &self.processors {
+            let contract = processor.contract()?;
+            if !ids.insert(contract.id.clone()) {
+                return Err(format!("duplicate run processor id '{}'", contract.id));
+            }
+            if !positions.insert((contract.phase, contract.order)) {
+                return Err(format!(
+                    "duplicate run processor order {} in phase {:?}",
+                    contract.order, contract.phase
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -796,6 +853,68 @@ fn select_config_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RunProcessorConfig;
+    use scorchkit_core::run_pipeline::{
+        ProcessorBudget, ProcessorFailureMode, RunPhase, PREPROCESS_INPUT_SCHEMA_V1,
+        PREPROCESS_PROPOSAL_SCHEMA_V1, PROCESSOR_CONTRACT_SCHEMA_V1,
+    };
+    use scorchkit_policy::policy::Capability;
+
+    fn processor_config() -> RunProcessorConfig {
+        RunProcessorConfig {
+            schema: PROCESSOR_CONTRACT_SCHEMA_V1.into(),
+            id: "preprocess.modules".into(),
+            path: PathBuf::from("/stub/preprocess"),
+            phase: RunPhase::Preprocessing,
+            input_schema: PREPROCESS_INPUT_SCHEMA_V1.into(),
+            output_schema: PREPROCESS_PROPOSAL_SCHEMA_V1.into(),
+            capabilities: vec![Capability::DastScan],
+            failure_mode: ProcessorFailureMode::Required,
+            order: 10,
+            budget: ProcessorBudget {
+                timeout_millis: 1_000,
+                max_input_bytes: 4_096,
+                max_output_bytes: 4_096,
+            },
+        }
+    }
+
+    #[test]
+    fn hook_config_enforces_global_count_timeout_path_and_uniqueness_boundaries() {
+        let mut hooks =
+            HookConfig { processors: vec![processor_config()], ..HookConfig::default() };
+        assert!(hooks.validate().is_ok());
+
+        hooks.processors.push(processor_config());
+        assert!(hooks.validate().unwrap_err().contains("duplicate run processor id"));
+
+        hooks.processors[1].id = "preprocess.second".into();
+        assert!(hooks.validate().unwrap_err().contains("duplicate run processor order"));
+
+        hooks.processors.truncate(1);
+        for timeout_seconds in [1, 300] {
+            hooks.timeout_seconds = timeout_seconds;
+            assert!(hooks.validate().is_ok());
+        }
+        for timeout_seconds in [0, 301] {
+            hooks.timeout_seconds = timeout_seconds;
+            assert!(hooks.validate().unwrap_err().contains("timeout_seconds"));
+        }
+
+        hooks.timeout_seconds = 30;
+        hooks.pre_scan.push(PathBuf::new());
+        assert!(hooks.validate().unwrap_err().contains("path must not be empty"));
+
+        hooks.processors.clear();
+        hooks.pre_scan = std::iter::repeat_n(
+            PathBuf::from("/stub/legacy"),
+            scorchkit_core::run_pipeline::MAX_RUN_PROCESSORS,
+        )
+        .collect();
+        assert!(hooks.validate().is_ok());
+        hooks.pre_scan.push(PathBuf::from("/stub/over-limit"));
+        assert!(hooks.validate().unwrap_err().contains("processor count exceeds"));
+    }
 
     #[test]
     fn config_discovery_prefers_safe_init_output_and_rejects_missing_explicit_path() {

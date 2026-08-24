@@ -439,6 +439,7 @@ mod tests {
             application_dast: None,
             application_pentest: None,
             adapter_executions: vec![],
+            pipeline_outcomes: vec![],
         }
     }
 

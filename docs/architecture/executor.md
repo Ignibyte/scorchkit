@@ -32,7 +32,7 @@ runners therefore assemble module IDs and equal-severity findings in submission 
 existing run method creates a fresh token and delegates. Cancelling before or during a batch returns
 `ScorchError::Cancelled` and drops queued and active futures.
 
-DAST and SAST lifecycle hooks are raced against the same token. A cancellation that arrives after
+DAST and SAST typed lifecycle processors are raced against the same token. A cancellation that arrives after
 the final module or hook is also checked before any family publishes `ScanCompleted`, so a cancelled
 scan cannot be reported as successful.
 
@@ -59,7 +59,7 @@ Bounded concurrency must not race a consumer against data it needs:
 - SAST and cloud use one batch because their current production registries have no declared
   producer/consumer dependency.
 
-Post-module hooks, finding events, completion/error events, and result assembly consume the stable
+Post-module processors, finding events, completion/error events, and result assembly consume the stable
 outcome list after a phase. `ModuleStarted` is published when a module future begins polling, so it
 continues to describe real execution rather than queue admission.
 
@@ -74,9 +74,9 @@ records the module as skipped, and processes independent outcomes. Caller cancel
 deadline are executor failures and abort the family run. Policy denials and effect failures remain
 typed module errors unless they occur in a fatal pre-scan or hook boundary.
 
-A fail-closed post-module hook still aborts result assembly, but concurrent siblings in the same
-phase may already have completed before that ordered hook is evaluated. Those sibling effects remain
-independently policy-authorized; hooks do not replace the policy boundary.
+A required post-module processor still aborts result assembly, but concurrent siblings in the same
+phase may already have completed before that ordered processor is evaluated. Those sibling effects
+remain independently policy-authorized; processors do not replace the policy boundary.
 
 ## Tests
 

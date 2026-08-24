@@ -16,6 +16,7 @@ pub mod evidence;
 pub mod finding;
 pub mod observation;
 pub mod risk_score;
+pub mod run_pipeline;
 pub mod scan_result;
 pub mod service_fingerprint;
 pub mod severity;
@@ -28,8 +29,8 @@ pub mod engine {
     pub use crate::{
         adapter, adapter_execution, application_dast, application_pentest, appsec_workflow,
         attack_path, compliance, compliance_framework, correlation, cve, error, events, evidence,
-        finding, observation, risk_score, scan_result, service_fingerprint, severity, shared_data,
-        supply_chain, target,
+        finding, observation, risk_score, run_pipeline, scan_result, service_fingerprint, severity,
+        shared_data, supply_chain, target,
     };
     pub use scorchkit_policy::{policy, scope};
 }
@@ -112,6 +113,18 @@ pub use observation::{
     EvidencePayload, EvidenceRecord, FindingIdentity, FindingRecordV2, HttpParameterIdentity,
     ObservationLocation, RedactionMetadata, ScannerProvenance, SourceRegion, ThreadFlow,
     AGENT_ANALYSIS_SCHEMA_V1, EVIDENCE_SCHEMA_V2, FINDING_IDENTITY_SCHEMA_V1, FINDING_SCHEMA_V2,
+};
+pub use run_pipeline::{
+    normalize_run_outcomes, AcceptedPreprocess, FindingProposal, FindingProposalKind,
+    FindingSnapshot, PreprocessProposal, ProcessorBudget, ProcessorDisposition,
+    ProcessorFailureMode, RunAuthority, RunPhase, RunPipelineValidationError, RunProcessorContract,
+    RunProcessorInput, RunProcessorOutcome, RunProcessorRequest, RunProcessorResponse, RunProposal,
+    FINDING_INPUT_SCHEMA_V1, FINDING_PROPOSAL_SCHEMA_V1, MAX_RUN_ANNOTATIONS, MAX_RUN_FINDINGS,
+    MAX_RUN_INPUT_BYTES, MAX_RUN_MODULES, MAX_RUN_OUTCOMES, MAX_RUN_OUTPUT_BYTES,
+    MAX_RUN_PROCESSORS, MAX_RUN_PROCESSOR_ID_BYTES, MAX_RUN_PROPOSALS, MAX_RUN_TEXT_BYTES,
+    MAX_RUN_TIMEOUT_MILLIS, PREPROCESS_INPUT_SCHEMA_V1, PREPROCESS_PROPOSAL_SCHEMA_V1,
+    PROCESSOR_CONTRACT_SCHEMA_V1, PROCESSOR_OUTCOME_SCHEMA_V1, PROCESSOR_REQUEST_SCHEMA_V1,
+    PROCESSOR_RESPONSE_SCHEMA_V1, REPORT_INPUT_SCHEMA_V1, REPORT_PROPOSAL_SCHEMA_V1,
 };
 pub use scan_result::{
     ModuleOutcome, ModuleOutcomeReason, ModuleOutcomeStatus, ScanExecutionStatus, ScanResult,

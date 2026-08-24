@@ -16,13 +16,14 @@ const DEFAULT_BACKOFF_SECONDS: u64 = 5;
 const DEFAULT_MAX_BACKOFF_SECONDS: u64 = 300;
 const DEFAULT_MAX_REDIRECTS: usize = 3;
 const DEFAULT_BATCH_SIZE: usize = 25;
-const SUPPORTED_EVENT_KINDS: [&str; 8] = [
+const SUPPORTED_EVENT_KINDS: [&str; 9] = [
     "scan_started",
     "module_started",
     "module_completed",
     "module_skipped",
     "module_error",
     "finding_produced",
+    "pipeline_processor_outcome",
     "scan_completed",
     "custom",
 ];

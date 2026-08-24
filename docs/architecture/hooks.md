@@ -1,46 +1,75 @@
-# Lifecycle hooks
+# Typed run processors and legacy lifecycle hooks
 
-Lifecycle hooks are configured local executables. They receive one JSON value on standard input and
-may return one JSON value on standard output. They run through the policy-sealed, bounded process
-executor and therefore require `ExternalTool` authorization for the DAST target and profile effect.
+ScorchKit's run pipeline is a versioned, provider-neutral contract. Configured local processors
+receive one typed JSON request on standard input and return one typed proposal on standard output.
+The engine validates the contract and response, clamps proposals to the policy-sealed run ceiling,
+and stores a separate processor outcome. A processor never receives an engagement, store, network
+client, or executable handle and never replaces scanner evidence.
+
+Local execution uses the shared bounded process owner and therefore still requires the host's
+`ExternalTool` authorization. Processor declarations and output are context, not grants.
 
 ## Hook points
 
-| Setting | Runs | Input | Output behavior |
+| Phase / compatibility setting | Runs | Typed input | Accepted proposal |
 |---|---|---|---|
-| `pre_scan` | before modules start | target, profile, runnable module IDs | parsed but not applied in the current runner |
-| `post_module` | after each successful module | module identity and findings | a valid `findings` array replaces that module's findings |
-| `post_scan` | after findings are collected | scan identity, target, count, critical/high summary | ignored after completion |
+| `preprocessing` / `pre_scan` | before modules start | authorized target, runnable IDs, capabilities, maximum effect, credential-use flag | an equal target plus a subset of modules/capabilities and no-higher effect/credential use |
+| `enrichment` / `post_module` | after each successful module | immutable finding identities and bounded snapshots | retain, filter, duplicate, enrich, or correlate dispositions keyed to source identities |
+| `reporting` / `post_scan` | after findings are collected | scan identity, target, count, and five severity counts | bounded redacted annotations |
 
-Scripts at one hook point run sequentially. Valid JSON output from one script becomes the next
-script's input. Empty output is a passthrough. Invalid JSON is a hook failure.
+Processors at one phase run sequentially by `(order, id)`. An accepted preprocessing proposal
+becomes the ceiling and input for the next processor. Empty output is a passthrough. Every explicit
+response must repeat the registered processor identity and phase under
+`scorchkit.run-processor-response/v1`.
 
 ## Configuration
 
 ```toml
 [hooks]
-pre_scan = ["/opt/scorchkit/hooks/check-window"]
-post_module = ["/opt/scorchkit/hooks/enrich-findings"]
-post_scan = ["/opt/scorchkit/hooks/export-summary"]
 timeout_seconds = 30
 fail_open = false
+
+[[hooks.processors]]
+schema = "scorchkit.run-processor/v1"
+id = "select.modules"
+path = "/opt/scorchkit/processors/select-modules"
+phase = "preprocessing"
+input_schema = "scorchkit.run-preprocess-input/v1"
+output_schema = "scorchkit.run-preprocess-proposal/v1"
+capabilities = ["dast-scan", "external-tool"]
+failure_mode = "required"
+order = 10
+
+[hooks.processors.budget]
+timeout_millis = 1000
+max_input_bytes = 65536
+max_output_bytes = 65536
 ```
 
-`fail_open = true` logs a terminal-escaped warning and continues. `false` returns a typed hook error
-and aborts the scan. Use fail-closed behavior when a hook represents an authorization, maintenance
-window, or evidence-handling requirement.
+Each explicit processor requires its complete version, identity, phase/schema pair, capability set,
+failure mode, deterministic order, and nonzero bounded budgets. `required` failures abort the scan;
+`optional` failures record a redacted `degraded` outcome and continue without a proposal.
+
+The original `pre_scan`, `post_module`, and `post_scan` arrays remain readable. They run after
+explicit processors in stable list order under reserved `legacy.*` identities. Their global
+`timeout_seconds` and `fail_open` settings map to typed budgets and required/optional behavior.
+Legacy pre-scan output may narrow modules, legacy finding arrays become retain/filter proposals,
+and non-empty legacy post-scan output records only a completion annotation. Arbitrary legacy JSON
+cannot add authority or delete or modify scanner findings.
 
 ## Process controls
 
-Each invocation has a timeout, bounded stdout and stderr, canonical executable resolution, no shell
-interpolation, and whole-tree cleanup through a Unix process group or Windows Job Object. Hook
-output is untrusted until JSON parsing succeeds. Secrets should not be written to stdout or stderr
-because hook output can enter logs and reports.
+Each invocation has an exact input ceiling, output-stream ceiling, and wall-time budget; canonical
+executable resolution; no shell interpolation; and whole-tree cleanup through a Unix process group
+or Windows Job Object. Inputs, responses, proposals, annotations, diagnostics, and result outcome
+collections also have protocol bounds. Public and durable boundaries revalidate outcomes and redact
+diagnostics. Processor output remains untrusted until all checks succeed.
 
 ## Webhooks
 
-Webhooks are output-only durable notifications and do not replace lifecycle hooks. Durable CLI and
-MCP job hosts redact matching events before enqueueing them in PostgreSQL. Records hold a stable
+Webhooks are output-only durable notifications and do not run as local notification processors.
+DAST awaits durable publication of each typed processor outcome before best-effort broadcast.
+Durable CLI and MCP job hosts redact matching events before enqueueing them in PostgreSQL. Records hold a stable
 destination ID and an engagement snapshot but never the configured URL or authorization value.
 
 The delivery worker uses revision compare-and-swap, a bounded ownership lease, recovery, batches,

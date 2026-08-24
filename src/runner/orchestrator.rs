@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{path::Path, path::PathBuf};
@@ -24,7 +25,7 @@ use crate::runner::progress;
 use crate::runner::subprocess::is_tool_available;
 use scorchkit_core::{
     AdapterExecutionAssessment, AdapterExecutionGap, AdapterExecutionGapKind,
-    AdapterExecutionStatus,
+    AdapterExecutionStatus, FindingSnapshot, RunProcessorInput, RunProcessorOutcome,
 };
 
 /// Returns all available modules (recon + scanner + external tools).
@@ -390,6 +391,7 @@ impl Orchestrator {
                 "extension registration failed: {error}"
             )));
         }
+        self.hook_runner.validate()?;
         let started_at = Utc::now();
         let scan_started = Instant::now();
         let scan_id = Uuid::new_v4().to_string();
@@ -458,26 +460,55 @@ impl Orchestrator {
             runnable.push(module.as_ref());
         }
 
-        // Fire pre-scan hooks
+        let module_ids: Vec<String> =
+            runnable.iter().map(|module| module.id().to_string()).collect();
+        let mut pipeline_authority = self.ctx.run_pipeline_authority(module_ids.clone());
+        let mut pipeline_outcomes: Vec<RunProcessorOutcome> = Vec::new();
+
+        // Run typed preprocessing and apply only an authorized module subset.
         if self.hook_runner.has_hooks(crate::engine::hook_runner::HookPoint::PreScan) {
-            let module_ids: Vec<&str> = runnable.iter().map(|m| m.id()).collect();
             let pre_scan_data = serde_json::json!({
                 "target": self.ctx.target.url.as_str(),
                 "profile": self.ctx.config.scan.profile,
                 "modules": module_ids,
             });
-            // Pre-scan hooks can modify data but we don't apply changes in v1
-            // (future: parse modified modules list)
-            let _ = cancel_on_token(
+            let execution = cancel_on_token(
                 cancellation,
                 self.hook_runner.execute(
                     crate::engine::hook_runner::HookPoint::PreScan,
+                    RunProcessorInput::Preprocess {
+                        target: pipeline_authority.target.clone(),
+                        modules: module_ids.clone(),
+                        capabilities: pipeline_authority.capabilities.clone(),
+                        max_effect: pipeline_authority.max_effect,
+                        credential_use: pipeline_authority.credential_use,
+                    },
                     &pre_scan_data,
+                    &pipeline_authority,
                     &self.ctx,
                 ),
             )
             .await?;
+            for outcome in &execution.outcomes {
+                self.ctx
+                    .events
+                    .publish_durable(ScanEvent::PipelineProcessorOutcome {
+                        scan_id: scan_id.clone(),
+                        outcome: Box::new(outcome.clone()),
+                    })
+                    .await;
+            }
+            pipeline_outcomes.extend(execution.outcomes);
+            if let Some(accepted) = execution.accepted_preprocess {
+                runnable.retain(|module| web_module_within_preprocess(*module, &accepted));
+                pipeline_authority.target = accepted.target;
+                pipeline_authority.capabilities = accepted.capabilities;
+                pipeline_authority.max_effect = accepted.effect;
+                pipeline_authority.credential_use = accepted.credential_use;
+            }
         }
+        pipeline_authority.modules =
+            runnable.iter().map(|module| module.id().to_string()).collect();
 
         let mut all_findings: Vec<Finding> = Vec::new();
         let mut modules_run: Vec<String> = Vec::new();
@@ -501,43 +532,6 @@ impl Orchestrator {
                 let ModuleExecution { module_id, module_name, result } = outcome.into_output()?;
                 match result {
                     Ok(findings) => {
-                        // Fire post-module hooks in deterministic executor order.
-                        let findings = if self
-                            .hook_runner
-                            .has_hooks(crate::engine::hook_runner::HookPoint::PostModule)
-                        {
-                            let module_data = serde_json::json!({
-                                "module_id": &module_id,
-                                "module_name": &module_name,
-                                "findings": &findings,
-                                "finding_count": findings.len(),
-                            });
-                            if let Some(modified) = cancel_on_token(
-                                cancellation,
-                                self.hook_runner.execute(
-                                    crate::engine::hook_runner::HookPoint::PostModule,
-                                    &module_data,
-                                    &self.ctx,
-                                ),
-                            )
-                            .await?
-                            {
-                                modified["findings"]
-                                    .as_array()
-                                    .and_then(|array| {
-                                        serde_json::from_value::<Vec<Finding>>(
-                                            serde_json::Value::Array(array.clone()),
-                                        )
-                                        .ok()
-                                    })
-                                    .unwrap_or(findings)
-                            } else {
-                                findings
-                            }
-                        } else {
-                            findings
-                        };
-
                         for finding in &findings {
                             self.ctx
                                 .events
@@ -548,6 +542,44 @@ impl Orchestrator {
                                 })
                                 .await;
                         }
+                        // Process immutable finding snapshots in deterministic executor order.
+                        if self
+                            .hook_runner
+                            .has_hooks(crate::engine::hook_runner::HookPoint::PostModule)
+                        {
+                            let module_data = serde_json::json!({
+                                "module_id": &module_id,
+                                "module_name": &module_name,
+                                "findings": &findings,
+                                "finding_count": findings.len(),
+                            });
+                            let execution = cancel_on_token(
+                                cancellation,
+                                self.hook_runner.execute(
+                                    crate::engine::hook_runner::HookPoint::PostModule,
+                                    RunProcessorInput::Findings {
+                                        module_id: module_id.clone(),
+                                        module_name: module_name.clone(),
+                                        findings: finding_snapshots(&findings),
+                                    },
+                                    &module_data,
+                                    &pipeline_authority,
+                                    &self.ctx,
+                                ),
+                            )
+                            .await?;
+                            for outcome in &execution.outcomes {
+                                self.ctx
+                                    .events
+                                    .publish_durable(ScanEvent::PipelineProcessorOutcome {
+                                        scan_id: scan_id.clone(),
+                                        outcome: Box::new(outcome.clone()),
+                                    })
+                                    .await;
+                            }
+                            pipeline_outcomes.extend(execution.outcomes);
+                        }
+
                         self.ctx
                             .events
                             .publish_durable(ScanEvent::ModuleCompleted {
@@ -608,29 +640,49 @@ impl Orchestrator {
 
         all_findings.sort_by_key(|finding| std::cmp::Reverse(finding.severity));
 
-        // Fire post-scan hooks
+        // Run reporting processors without changing the scanner result.
         if self.hook_runner.has_hooks(crate::engine::hook_runner::HookPoint::PostScan) {
+            let severity_counts = severity_counts(&all_findings);
             let post_scan_data = serde_json::json!({
                 "scan_id": &scan_id,
                 "target": self.ctx.target.url.as_str(),
                 "total_findings": all_findings.len(),
                 "summary": {
-                    "critical": all_findings.iter().filter(|f| f.severity == crate::engine::severity::Severity::Critical).count(),
-                    "high": all_findings.iter().filter(|f| f.severity == crate::engine::severity::Severity::High).count(),
+                    "critical": severity_counts["critical"],
+                    "high": severity_counts["high"],
                 },
             });
-            let _ = cancel_on_token(
+            let execution = cancel_on_token(
                 cancellation,
                 self.hook_runner.execute(
                     crate::engine::hook_runner::HookPoint::PostScan,
+                    RunProcessorInput::Report {
+                        scan_id: scan_id.clone(),
+                        target: pipeline_authority.target.clone(),
+                        total_findings: all_findings.len(),
+                        severity_counts,
+                    },
                     &post_scan_data,
+                    &pipeline_authority,
                     &self.ctx,
                 ),
             )
             .await?;
+            for outcome in &execution.outcomes {
+                self.ctx
+                    .events
+                    .publish_durable(ScanEvent::PipelineProcessorOutcome {
+                        scan_id: scan_id.clone(),
+                        outcome: Box::new(outcome.clone()),
+                    })
+                    .await;
+            }
+            pipeline_outcomes.extend(execution.outcomes);
         }
 
         ensure_not_cancelled(cancellation)?;
+        let pipeline_outcomes = scorchkit_core::normalize_run_outcomes(pipeline_outcomes)
+            .map_err(|error| crate::engine::error::ScorchError::Hook(error.to_string()))?;
         let total_duration_ms =
             u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.ctx
@@ -651,6 +703,7 @@ impl Orchestrator {
             modules_skipped,
         )
         .with_module_outcomes(module_outcomes)
+        .with_pipeline_outcomes(pipeline_outcomes)
         .with_adapter_executions(self.ctx.shared_data.adapter_assessments()))
     }
 
@@ -996,6 +1049,73 @@ impl Orchestrator {
     }
 }
 
+fn finding_snapshots(findings: &[Finding]) -> Vec<FindingSnapshot> {
+    findings
+        .iter()
+        .map(|finding| FindingSnapshot {
+            finding_id: finding.canonical_appsec().identity.value,
+            module_id: finding.module_id.clone(),
+            severity: finding.severity,
+            title: crate::engine::observation::redact_text(&finding.title),
+            affected_target: crate::engine::observation::redact_text(&finding.affected_target),
+        })
+        .collect()
+}
+
+fn severity_counts(findings: &[Finding]) -> BTreeMap<String, usize> {
+    use crate::engine::severity::Severity;
+
+    [
+        (
+            "critical".to_string(),
+            findings.iter().filter(|finding| finding.severity == Severity::Critical).count(),
+        ),
+        (
+            "high".to_string(),
+            findings.iter().filter(|finding| finding.severity == Severity::High).count(),
+        ),
+        (
+            "medium".to_string(),
+            findings.iter().filter(|finding| finding.severity == Severity::Medium).count(),
+        ),
+        (
+            "low".to_string(),
+            findings.iter().filter(|finding| finding.severity == Severity::Low).count(),
+        ),
+        (
+            "info".to_string(),
+            findings.iter().filter(|finding| finding.severity == Severity::Info).count(),
+        ),
+    ]
+    .into()
+}
+
+fn web_module_within_preprocess(
+    module: &dyn ScanModule,
+    accepted: &scorchkit_core::AcceptedPreprocess,
+) -> bool {
+    use crate::engine::policy::{Capability, EffectClass};
+
+    if !accepted.modules.contains(module.id())
+        || !accepted.capabilities.contains(&Capability::DastScan)
+        || (module.requires_external_tool()
+            && !accepted.capabilities.contains(&Capability::ExternalTool))
+    {
+        return false;
+    }
+    let effect = module.descriptor().adapter.strongest_effect;
+    if effect > accepted.effect {
+        return false;
+    }
+    match effect {
+        EffectClass::CredentialTest => {
+            accepted.credential_use && accepted.capabilities.contains(&Capability::CredentialUse)
+        }
+        EffectClass::Exploit => accepted.capabilities.contains(&Capability::Exploit),
+        EffectClass::Passive | EffectClass::ActiveSafe | EffectClass::Intrusive => true,
+    }
+}
+
 fn missing_configured_tool(context: &ScanContext, module: &dyn ScanModule) -> Option<String> {
     if !module.requires_external_tool() {
         return None;
@@ -1237,12 +1357,22 @@ async fn run_module_batch(
 mod tests {
     use super::*;
     use crate::config::AppConfig;
-    use crate::engine::events::{subscribe_handler, EventBus, EventHandler, ScanEvent};
+    use crate::engine::events::{
+        subscribe_handler, DurableEventSink, EventBus, EventHandler, ScanEvent,
+    };
     use crate::engine::finding::Finding;
     use crate::engine::module_trait::{ModuleCategory, ScanModule};
+    use crate::engine::policy::{Capability, EffectClass};
     use crate::engine::severity::Severity;
     use crate::engine::target::Target;
+    use crate::runner::subprocess::{ToolExecutor, ToolInvocation, ToolOutput};
     use async_trait::async_trait;
+    use scorchkit_core::run_pipeline::{
+        FindingProposalKind, ProcessorBudget, ProcessorDisposition, ProcessorFailureMode, RunPhase,
+        RunProposal, PREPROCESS_INPUT_SCHEMA_V1, PREPROCESS_PROPOSAL_SCHEMA_V1,
+        PROCESSOR_CONTRACT_SCHEMA_V1, PROCESSOR_REQUEST_SCHEMA_V1, PROCESSOR_RESPONSE_SCHEMA_V1,
+        REPORT_INPUT_SCHEMA_V1, REPORT_PROPOSAL_SCHEMA_V1,
+    };
     use std::sync::Mutex;
 
     #[test]
@@ -1470,6 +1600,190 @@ mod tests {
         ScanContext::new(target, Arc::new(AppConfig::default()), reqwest::Client::new(), Vec::new())
     }
 
+    #[derive(Debug, Default)]
+    struct PreprocessExecutor {
+        invocations: Mutex<Vec<ToolInvocation>>,
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingDurableSink {
+        events: Mutex<Vec<ScanEvent>>,
+    }
+
+    #[async_trait]
+    impl DurableEventSink for RecordingDurableSink {
+        async fn persist(&self, event: &ScanEvent) -> std::result::Result<(), String> {
+            self.events.lock().expect("durable event lock").push(event.clone());
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct LegacyFilterExecutor;
+
+    #[async_trait]
+    impl ToolExecutor for LegacyFilterExecutor {
+        async fn execute(&self, _invocation: ToolInvocation) -> Result<ToolOutput> {
+            Ok(ToolOutput {
+                stdout: serde_json::json!({ "findings": [] }).to_string(),
+                stderr: String::new(),
+                exit_code: 0,
+                duration: std::time::Duration::ZERO,
+                resolved_program: PathBuf::from("/stub/legacy-filter"),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ToolExecutor for PreprocessExecutor {
+        async fn execute(&self, invocation: ToolInvocation) -> Result<ToolOutput> {
+            self.invocations.lock().expect("invocation lock").push(invocation);
+            Ok(ToolOutput {
+                stdout: serde_json::json!({
+                    "schema": PROCESSOR_RESPONSE_SCHEMA_V1,
+                    "processor_id": "select.ok",
+                    "phase": "preprocessing",
+                    "proposal": {
+                        "kind": "preprocess",
+                        "value": {
+                            "schema": PREPROCESS_PROPOSAL_SCHEMA_V1,
+                            "modules": ["ok"],
+                            "capabilities": ["dast-scan"],
+                            "effect": "active-safe",
+                            "credential_use": false
+                        }
+                    }
+                })
+                .to_string(),
+                stderr: String::new(),
+                exit_code: 0,
+                duration: std::time::Duration::ZERO,
+                resolved_program: PathBuf::from("/stub/preprocessor"),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn typed_preprocessor_narrows_modules_and_publishes_a_durable_outcome() {
+        let executor = Arc::new(PreprocessExecutor::default());
+        let mut config = AppConfig::default();
+        config.hooks.processors.push(scorchkit_config::RunProcessorConfig {
+            schema: PROCESSOR_CONTRACT_SCHEMA_V1.into(),
+            id: "select.ok".into(),
+            path: PathBuf::from("/stub/preprocessor"),
+            phase: RunPhase::Preprocessing,
+            input_schema: PREPROCESS_INPUT_SCHEMA_V1.into(),
+            output_schema: PREPROCESS_PROPOSAL_SCHEMA_V1.into(),
+            capabilities: vec![
+                crate::engine::policy::Capability::DastScan,
+                crate::engine::policy::Capability::ExternalTool,
+            ],
+            failure_mode: ProcessorFailureMode::Required,
+            order: 10,
+            budget: ProcessorBudget {
+                timeout_millis: 1_000,
+                max_input_bytes: 4_096,
+                max_output_bytes: 4_096,
+            },
+        });
+        config.hooks.processors.push(scorchkit_config::RunProcessorConfig {
+            schema: PROCESSOR_CONTRACT_SCHEMA_V1.into(),
+            id: "report.external".into(),
+            path: PathBuf::from("/stub/report-processor"),
+            phase: RunPhase::Reporting,
+            input_schema: REPORT_INPUT_SCHEMA_V1.into(),
+            output_schema: REPORT_PROPOSAL_SCHEMA_V1.into(),
+            capabilities: vec![crate::engine::policy::Capability::ExternalTool],
+            failure_mode: ProcessorFailureMode::Optional,
+            order: 10,
+            budget: ProcessorBudget {
+                timeout_millis: 1_000,
+                max_input_bytes: 4_096,
+                max_output_bytes: 4_096,
+            },
+        });
+        let target = Target::parse("https://example.com").expect("parse target");
+        let context =
+            ScanContext::new(target, Arc::new(config), reqwest::Client::new(), Vec::new())
+                .with_tool_executor(executor.clone());
+        let durable_sink = Arc::new(RecordingDurableSink::default());
+        context.events.add_durable_sink(durable_sink.clone());
+        let mut events = context.events.subscribe();
+        let mut orchestrator = Orchestrator::new(context);
+        for module_id in ["ok", "drop"] {
+            orchestrator.add_module(Box::new(FixtureModule {
+                module_id,
+                category: ModuleCategory::Recon,
+                required_tool: None,
+                findings: 1,
+            }));
+        }
+
+        let result = orchestrator.run(true).await.expect("typed pipeline scan");
+        assert_eq!(result.modules_run, ["ok"]);
+        assert_eq!(result.findings.len(), 1);
+        assert_eq!(result.pipeline_outcomes.len(), 2);
+        assert_eq!(result.pipeline_outcomes[0].disposition, ProcessorDisposition::Applied);
+        assert_eq!(result.pipeline_outcomes[1].disposition, ProcessorDisposition::Rejected);
+        let invocations = executor.invocations.lock().expect("invocation lock");
+        assert_eq!(invocations.len(), 1);
+        let invocation = invocations.first().cloned().expect("processor invocation");
+        drop(invocations);
+        assert_eq!(invocation.timeout, std::time::Duration::from_secs(1));
+        assert_eq!(invocation.output_limit_bytes, 4_096);
+        let input: serde_json::Value =
+            serde_json::from_slice(invocation.stdin.as_deref().expect("processor stdin"))
+                .expect("typed processor request");
+        assert_eq!(input["schema"], PROCESSOR_REQUEST_SCHEMA_V1);
+        assert!(std::iter::from_fn(|| events.try_recv().ok())
+            .any(|event| matches!(event, ScanEvent::PipelineProcessorOutcome { .. })));
+        assert!(durable_sink
+            .events
+            .lock()
+            .expect("durable event lock")
+            .iter()
+            .any(|event| matches!(event, ScanEvent::PipelineProcessorOutcome { .. })));
+    }
+
+    #[tokio::test]
+    async fn legacy_post_module_filter_is_recorded_without_deleting_source_findings() {
+        let mut config = AppConfig::default();
+        config.hooks.post_module.push(PathBuf::from("/stub/legacy-filter"));
+        config.hooks.fail_open = false;
+        let target = Target::parse("https://example.com").expect("parse target");
+        let context =
+            ScanContext::new(target, Arc::new(config), reqwest::Client::new(), Vec::new())
+                .with_tool_executor(Arc::new(LegacyFilterExecutor));
+        let durable_sink = Arc::new(RecordingDurableSink::default());
+        context.events.add_durable_sink(durable_sink.clone());
+        let mut orchestrator = Orchestrator::new(context);
+        orchestrator.add_module(Box::new(OkModule));
+
+        let result = orchestrator.run(true).await.expect("legacy processor scan");
+
+        assert_eq!(result.findings.len(), 1);
+        assert_eq!(result.findings[0].module_id, "ok");
+        assert_eq!(result.pipeline_outcomes.len(), 1);
+        let proposal =
+            result.pipeline_outcomes[0].proposal.as_ref().expect("legacy filter proposal");
+        let RunProposal::Findings(proposals) = proposal else {
+            panic!("legacy post-module output must be a finding proposal");
+        };
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].kind, FindingProposalKind::Filter);
+        let events = durable_sink.events.lock().expect("durable event lock");
+        let finding_index = events
+            .iter()
+            .position(|event| matches!(event, ScanEvent::FindingProduced { .. }))
+            .expect("durable source finding event");
+        let proposal_index = events
+            .iter()
+            .position(|event| matches!(event, ScanEvent::PipelineProcessorOutcome { .. }))
+            .expect("durable processor outcome event");
+        drop(events);
+        assert!(finding_index < proposal_index);
+    }
+
     fn profile_fixture() -> Orchestrator {
         let mut orchestrator = Orchestrator::new(fixture_context());
         for (module_id, required_tool) in [
@@ -1486,6 +1800,93 @@ mod tests {
             }));
         }
         orchestrator
+    }
+
+    #[test]
+    fn web_preprocess_module_eligibility_pins_every_authority_operand() {
+        let target = crate::engine::policy::PolicyTarget::web("https://example.test")
+            .expect("policy target");
+        let module = |module_id, required_tool| FixtureModule {
+            module_id,
+            category: ModuleCategory::Scanner,
+            required_tool,
+            findings: 0,
+        };
+        let accepted = |modules: &[&str],
+                        capabilities: &[Capability],
+                        effect: crate::engine::policy::EffectClass,
+                        credential_use| {
+            scorchkit_core::AcceptedPreprocess {
+                target: target.clone(),
+                modules: modules.iter().map(|value| (*value).to_string()).collect(),
+                capabilities: capabilities.iter().copied().collect(),
+                effect,
+                credential_use,
+            }
+        };
+        let headers = FixtureModule {
+            module_id: "headers",
+            category: ModuleCategory::Recon,
+            required_tool: None,
+            findings: 0,
+        };
+        assert!(web_module_within_preprocess(
+            &headers,
+            &accepted(&["headers"], &[Capability::DastScan], EffectClass::ActiveSafe, false)
+        ));
+        assert!(!web_module_within_preprocess(
+            &headers,
+            &accepted(&["other"], &[Capability::DastScan], EffectClass::ActiveSafe, false)
+        ));
+        assert!(!web_module_within_preprocess(
+            &headers,
+            &accepted(&["headers"], &[], EffectClass::ActiveSafe, false)
+        ));
+
+        let nuclei = module("nuclei", Some("nuclei"));
+        assert!(!web_module_within_preprocess(
+            &nuclei,
+            &accepted(&["nuclei"], &[Capability::DastScan], EffectClass::ActiveSafe, false)
+        ));
+        let commix = module("commix", Some("commix"));
+        assert!(!web_module_within_preprocess(
+            &commix,
+            &accepted(
+                &["commix"],
+                &[Capability::DastScan, Capability::ExternalTool, Capability::Exploit],
+                EffectClass::Intrusive,
+                false,
+            )
+        ));
+
+        let hydra = module("hydra", Some("hydra"));
+        assert!(!web_module_within_preprocess(
+            &hydra,
+            &accepted(
+                &["hydra"],
+                &[Capability::DastScan, Capability::ExternalTool, Capability::CredentialUse],
+                EffectClass::CredentialTest,
+                false,
+            )
+        ));
+        assert!(!web_module_within_preprocess(
+            &hydra,
+            &accepted(
+                &["hydra"],
+                &[Capability::DastScan, Capability::ExternalTool],
+                EffectClass::CredentialTest,
+                true,
+            )
+        ));
+        assert!(web_module_within_preprocess(
+            &hydra,
+            &accepted(
+                &["hydra"],
+                &[Capability::DastScan, Capability::ExternalTool, Capability::CredentialUse],
+                EffectClass::CredentialTest,
+                true,
+            )
+        ));
     }
 
     fn module_ids(orchestrator: &Orchestrator) -> Vec<&str> {
@@ -1767,6 +2168,7 @@ mod tests {
             ScanEvent::ModuleSkipped { .. } => "ModuleSkipped",
             ScanEvent::ModuleError { .. } => "ModuleError",
             ScanEvent::FindingProduced { .. } => "FindingProduced",
+            ScanEvent::PipelineProcessorOutcome { .. } => "PipelineProcessorOutcome",
             ScanEvent::ScanCompleted { .. } => "ScanCompleted",
             ScanEvent::Custom { .. } => "Custom",
         }

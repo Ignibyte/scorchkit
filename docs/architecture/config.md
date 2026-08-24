@@ -47,7 +47,7 @@ engagement and therefore authorizes no scan.
 | `mcp` | optional authenticated remote transport, bounds, and principal bindings |
 | `control_api` | opt-in authenticated loopback control listener, binding, and resource bounds |
 | `wordlists` | optional discovery and enumeration files |
-| `hooks` | bounded local lifecycle processes |
+| `hooks` | typed bounded local run processors and legacy hook compatibility |
 | `audit_log` | local JSONL event sink |
 | `cve` | disabled, mock, NVD, OSV, or composite lookup |
 | `network_credentials` | SSH, SMB, SNMP, and Kerberos inputs |
@@ -56,6 +56,43 @@ engagement and therefore authorizes no scan.
 
 Secret-bearing structs use redacted `Debug` implementations. TOML serialization is not redaction and
 must be protected like any other credentials file.
+
+## Typed local run processors
+
+`[[hooks.processors]]` requires a complete versioned contract: unique ID, executable path,
+supported phase and matching schemas, declared capabilities, required/optional failure behavior,
+order below 50000, and exact nonzero time/input/output budgets. The supported local phases are
+`preprocessing`, `enrichment`, and `reporting`; notification uses durable webhooks rather than a
+foreground executable.
+
+```toml
+[hooks]
+timeout_seconds = 30
+fail_open = true
+
+[[hooks.processors]]
+schema = "scorchkit.run-processor/v1"
+id = "select.modules"
+path = "/opt/scorchkit/processors/select-modules"
+phase = "preprocessing"
+input_schema = "scorchkit.run-preprocess-input/v1"
+output_schema = "scorchkit.run-preprocess-proposal/v1"
+capabilities = ["dast-scan", "external-tool"]
+failure_mode = "required"
+order = 10
+
+[hooks.processors.budget]
+timeout_millis = 1000
+max_input_bytes = 65536
+max_output_bytes = 65536
+```
+
+Explicit processor IDs cannot use the reserved `legacy.` prefix, IDs and `(phase, order)` slots
+must be unique, and at most 64 explicit plus legacy processors may be configured. The legacy
+`pre_scan`, `post_module`, and `post_scan` arrays remain readable. Their global `timeout_seconds`
+must be 1–300 and `fail_open` maps to optional rather than required failure behavior. Legacy output
+is adapted to a validated proposal and cannot expand authority or replace scanner findings. See
+[Typed run processors and legacy lifecycle hooks](hooks.md).
 
 ## Generated quick engagement
 

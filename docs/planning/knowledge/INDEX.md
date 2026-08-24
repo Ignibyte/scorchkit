@@ -142,6 +142,9 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-wasm-resource-dimensions-001` | Bound both the count and capacity of every independently limited WebAssembly resource and test oversized instantiation. | `AAR-028-extension-runtime` |
 | `PR-scorchkit-extension-host-reachability-001` | Every advertised extension capability needs a bounded authorized host seam plus allowed and denied end-to-end tests. | `AAR-028-extension-runtime` |
 | `PR-scorchkit-multitoken-secret-redaction-001` | Treat scheme plus credential as one sensitive range in assignment-shaped and header-shaped redaction fixtures. | `AAR-028-extension-runtime` |
+| `PR-scorchkit-lifecycle-authority-monotonic-001` | Carry one sealed mutable authority ceiling through a lifecycle; accepted narrowing constrains every later phase. | `AAR-029-typed-run-pipeline` |
+| `PR-scorchkit-source-before-derived-publication-001` | Durably publish canonical source records before processor outcomes or derived proposals that reference them. | `AAR-029-typed-run-pipeline` |
+| `PR-scorchkit-database-auth-preflight-001` | Authenticate an exact database URL before a long delivery gate; readiness and container initialization metadata are insufficient. | `AAR-029-typed-run-pipeline` |
 
 ## Register
 
@@ -261,3 +264,6 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-wasm-table-capacity-gap-001` | resource-budget bug | `AAR-028-extension-runtime` |
 | `BF-scorchkit-extension-capability-unreachable-001` | contract-reachability bug | `AAR-028-extension-runtime` |
 | `BF-scorchkit-bearer-assignment-redaction-tail-001` | secret-handling bug | `AAR-028-extension-runtime` |
+| `BF-scorchkit-lifecycle-authority-reconstruction-001` | authorization bug | `AAR-029-typed-run-pipeline` |
+| `BF-scorchkit-derived-event-before-source-001` | provenance-order bug | `AAR-029-typed-run-pipeline` |
+| `BF-scorchkit-postgres-init-env-auth-drift-001` | delivery-environment failure | `AAR-029-typed-run-pipeline` |

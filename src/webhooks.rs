@@ -483,6 +483,7 @@ const fn event_kind(event: &ScanEvent) -> &'static str {
         ScanEvent::ModuleSkipped { .. } => "module_skipped",
         ScanEvent::ModuleError { .. } => "module_error",
         ScanEvent::FindingProduced { .. } => "finding_produced",
+        ScanEvent::PipelineProcessorOutcome { .. } => "pipeline_processor_outcome",
         ScanEvent::ScanCompleted { .. } => "scan_completed",
         ScanEvent::Custom { .. } => "custom",
     }
@@ -507,6 +508,9 @@ impl DurableEventSink for WebhookEventSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use scorchkit_core::run_pipeline::{
+        ProcessorDisposition, RunPhase, RunProcessorOutcome, PROCESSOR_OUTCOME_SCHEMA_V1,
+    };
     use scorchkit_executor::webhook::InMemoryWebhookStore;
     use scorchkit_policy::{EngagementPolicy, ScopeRule};
 
@@ -549,6 +553,23 @@ mod tests {
         assert!(debug.contains("primary"));
         assert!(!debug.contains("hooks.example.test"));
         assert!(!debug.contains("private-path"));
+    }
+
+    #[test]
+    fn typed_processor_outcome_has_a_stable_webhook_event_kind() {
+        let event = ScanEvent::PipelineProcessorOutcome {
+            scan_id: "scan-pipeline".to_string(),
+            outcome: Box::new(RunProcessorOutcome {
+                schema: PROCESSOR_OUTCOME_SCHEMA_V1.to_string(),
+                processor_id: "report.fixture".to_string(),
+                phase: RunPhase::Reporting,
+                disposition: ProcessorDisposition::Degraded,
+                proposal: None,
+                diagnostic: Some("fixture diagnostic".to_string()),
+            }),
+        };
+
+        assert_eq!(event_kind(&event), "pipeline_processor_outcome");
     }
 
     #[tokio::test]

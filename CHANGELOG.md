@@ -41,6 +41,14 @@ All notable changes to ScorchKit will be documented in this file.
   89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
 
 ### Added
+- **Typed run preprocessors and lifecycle hooks (TICKET-029 / SK-051)** — Promoted DAST and code
+  lifecycle hooks into versioned provider-neutral processor contracts with unique identities,
+  deterministic phase ordering, declared capabilities, required/optional failure behavior, and
+  exact input/output/time budgets. Preprocessing proposals are clamped to host-built target,
+  module, capability, effect, and credential ceilings; finding processors consume immutable
+  snapshots and emit separately labeled dispositions rather than replacing scanner evidence.
+  Bounded redacted outcomes now survive `ScanResult`, merge, reports, control/MCP, jobs, audit, and
+  durable webhook handoff. Existing hook arrays remain readable through safe legacy adapters.
 - **Capability-declared isolated extension runtime (TICKET-028 / SK-050)** — Added a versioned
   provider-neutral manifest, protocol, portable WebAssembly SDK, and explicit digest-bound
   registration for third-party application-security modules. Extensions run without WASI or

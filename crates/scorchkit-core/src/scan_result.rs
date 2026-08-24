@@ -8,6 +8,7 @@ use super::application_pentest::{
     ApplicationPentestValidationError,
 };
 use super::finding::Finding;
+use super::run_pipeline::RunProcessorOutcome;
 use super::severity::Severity;
 use super::supply_chain::{SupplyChainAssessment, SupplyChainCoverageStatus};
 use super::target::Target;
@@ -226,6 +227,14 @@ pub struct ScanResult {
     /// Reproducible external-adapter execution and coverage evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub adapter_executions: Vec<AdapterExecutionAssessment>,
+    /// Validated, bounded lifecycle processor proposals and dispositions.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_pipeline_outcomes",
+        deserialize_with = "deserialize_pipeline_outcomes"
+    )]
+    pub pipeline_outcomes: Vec<RunProcessorOutcome>,
     /// Summary statistics.
     pub summary: ScanSummary,
 }
@@ -239,6 +248,28 @@ pub struct ScanSummary {
     pub medium: usize,
     pub low: usize,
     pub info: usize,
+}
+
+fn serialize_pipeline_outcomes<S>(
+    outcomes: &[RunProcessorOutcome],
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    super::run_pipeline::normalize_run_outcomes(outcomes.to_vec())
+        .map_err(serde::ser::Error::custom)?
+        .serialize(serializer)
+}
+
+fn deserialize_pipeline_outcomes<'de, D>(
+    deserializer: D,
+) -> Result<Vec<RunProcessorOutcome>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let outcomes = Vec::<RunProcessorOutcome>::deserialize(deserializer)?;
+    super::run_pipeline::normalize_run_outcomes(outcomes).map_err(serde::de::Error::custom)
 }
 
 impl ScanSummary {
@@ -292,6 +323,7 @@ impl ScanResult {
             application_dast: None,
             application_pentest: None,
             adapter_executions: Vec::new(),
+            pipeline_outcomes: Vec::new(),
             summary,
         }
     }
@@ -301,6 +333,16 @@ impl ScanResult {
     pub fn with_module_outcomes(mut self, module_outcomes: Vec<ModuleOutcome>) -> Self {
         self.module_outcomes = module_outcomes;
         self.refresh_execution_status();
+        self
+    }
+
+    /// Attach lifecycle processor outcomes without changing scanner findings.
+    ///
+    /// Runners normalize these before attachment; serialization and deserialization revalidate the
+    /// complete collection again at public boundaries.
+    #[must_use]
+    pub fn with_pipeline_outcomes(mut self, outcomes: Vec<RunProcessorOutcome>) -> Self {
+        self.pipeline_outcomes = outcomes;
         self
     }
 
@@ -462,6 +504,7 @@ impl ScanResult {
         self.modules_skipped.extend(other.modules_skipped);
         self.module_outcomes.extend(other.module_outcomes);
         self.adapter_executions.extend(other.adapter_executions);
+        self.pipeline_outcomes.extend(other.pipeline_outcomes);
         if application_pentest_conflict {
             let detail =
                 "cannot merge distinct application-pentest assessments into one scan result";
@@ -485,6 +528,7 @@ mod tests {
         ApplicationDastProfile,
     };
     use crate::engine::target::Target;
+    use crate::run_pipeline::{ProcessorDisposition, RunPhase, PROCESSOR_OUTCOME_SCHEMA_V1};
 
     /// Helper to build a test `ScanResult` with findings at varying confidence levels.
     fn test_result_with_confidences(confidences: &[(Severity, f64)]) -> ScanResult {
@@ -511,6 +555,7 @@ mod tests {
             application_dast: None,
             application_pentest: None,
             adapter_executions: Vec::new(),
+            pipeline_outcomes: Vec::new(),
             summary: ScanSummary::from_findings(&findings),
             findings,
         }
@@ -649,6 +694,33 @@ mod tests {
         result.merge(empty);
         assert_eq!(result.findings.len(), original_count);
         assert_eq!(result.modules_run.len(), original_modules);
+    }
+
+    #[test]
+    fn pipeline_outcomes_survive_merge_and_redact_at_result_boundaries() {
+        let outcome = RunProcessorOutcome {
+            schema: PROCESSOR_OUTCOME_SCHEMA_V1.to_string(),
+            processor_id: "report.fixture".to_string(),
+            phase: RunPhase::Reporting,
+            disposition: ProcessorDisposition::Degraded,
+            proposal: None,
+            diagnostic: Some("api_key=pipeline-secret".to_string()),
+        };
+        let mut result = test_result_with_confidences(&[]);
+        result.merge(test_result_with_confidences(&[]).with_pipeline_outcomes(vec![outcome]));
+
+        assert_eq!(result.pipeline_outcomes.len(), 1);
+        let encoded = serde_json::to_string(&result).expect("serialize pipeline outcome");
+        assert!(!encoded.contains("pipeline-secret"));
+        assert!(encoded.contains("REDACTED"));
+        let restored: ScanResult =
+            serde_json::from_str(&encoded).expect("restore pipeline outcome");
+        assert_eq!(restored.pipeline_outcomes.len(), 1);
+        assert!(!restored.pipeline_outcomes[0]
+            .diagnostic
+            .as_deref()
+            .unwrap_or_default()
+            .contains("pipeline-secret"));
     }
 
     #[test]

@@ -289,6 +289,7 @@ impl InfraOrchestrator {
             application_dast: None,
             application_pentest: None,
             adapter_executions: Vec::new(),
+            pipeline_outcomes: Vec::new(),
             summary,
         })
     }
@@ -474,6 +475,7 @@ mod tests {
             ScanEvent::ModuleSkipped { .. } => "ModuleSkipped",
             ScanEvent::ModuleError { .. } => "ModuleError",
             ScanEvent::FindingProduced { .. } => "FindingProduced",
+            ScanEvent::PipelineProcessorOutcome { .. } => "PipelineProcessorOutcome",
             ScanEvent::ScanCompleted { .. } => "ScanCompleted",
             ScanEvent::Custom { .. } => "Custom",
         }

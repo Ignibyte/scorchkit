@@ -565,6 +565,7 @@ mod tests {
             application_dast: None,
             application_pentest: None,
             adapter_executions: Vec::new(),
+            pipeline_outcomes: Vec::new(),
             findings,
             summary: ScanSummary {
                 total_findings: 2,

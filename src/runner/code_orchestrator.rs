@@ -3,6 +3,7 @@
 //! Mirrors the DAST `Orchestrator` but operates on `CodeModule` trait objects
 //! with `CodeContext` instead of `ScanModule` with `ScanContext`.
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use chrono::Utc;
@@ -24,6 +25,7 @@ use crate::runner::job_executor::{
 };
 use crate::runner::progress;
 use crate::runner::subprocess::missing_required_tool;
+use scorchkit_core::{FindingSnapshot, RunProcessorInput, RunProcessorOutcome};
 
 /// Returns all registered code analysis modules.
 #[must_use]
@@ -197,6 +199,7 @@ impl CodeOrchestrator {
         quiet: bool,
         cancellation: &CancellationToken,
     ) -> Result<ScanResult> {
+        self.hook_runner.validate()?;
         let started_at = Utc::now();
         let scan_started = Instant::now();
         let scan_id = Uuid::new_v4().to_string();
@@ -276,22 +279,45 @@ impl CodeOrchestrator {
             println!();
         }
 
+        let module_ids: Vec<String> =
+            runnable.iter().map(|module| module.id().to_string()).collect();
+        let mut pipeline_authority = self.ctx.run_pipeline_authority(module_ids.clone());
+        let mut pipeline_outcomes: Vec<RunProcessorOutcome> = Vec::new();
+
         if self.hook_runner.has_hooks(crate::engine::hook_runner::HookPoint::PreScan) {
-            let module_ids: Vec<&str> = runnable.iter().map(|module| module.id()).collect();
             let pre_scan_data = serde_json::json!({
                 "target": self.ctx.path.display().to_string(),
                 "modules": module_ids,
             });
-            let _ = cancel_on_token(
+            let execution = cancel_on_token(
                 cancellation,
                 self.hook_runner.execute(
                     crate::engine::hook_runner::HookPoint::PreScan,
+                    RunProcessorInput::Preprocess {
+                        target: pipeline_authority.target.clone(),
+                        modules: module_ids.clone(),
+                        capabilities: pipeline_authority.capabilities.clone(),
+                        max_effect: pipeline_authority.max_effect,
+                        credential_use: pipeline_authority.credential_use,
+                    },
                     &pre_scan_data,
+                    &pipeline_authority,
                     &self.ctx,
                 ),
             )
             .await?;
+            publish_pipeline_outcomes(&self.ctx, &scan_id, &execution.outcomes);
+            pipeline_outcomes.extend(execution.outcomes);
+            if let Some(accepted) = execution.accepted_preprocess {
+                runnable.retain(|module| code_module_within_preprocess(*module, &accepted));
+                pipeline_authority.target = accepted.target;
+                pipeline_authority.capabilities = accepted.capabilities;
+                pipeline_authority.max_effect = accepted.effect;
+                pipeline_authority.credential_use = accepted.credential_use;
+            }
         }
+        pipeline_authority.modules =
+            runnable.iter().map(|module| module.id().to_string()).collect();
 
         let ctx = &self.ctx;
         let mut jobs = Vec::with_capacity(runnable.len());
@@ -337,9 +363,14 @@ impl CodeOrchestrator {
             let (module_id, module_name, result) = outcome.into_output();
             match result {
                 Ok(findings) => {
-                    let findings = if self
-                        .hook_runner
-                        .has_hooks(crate::engine::hook_runner::HookPoint::PostModule)
+                    for finding in &findings {
+                        self.ctx.events.publish(ScanEvent::FindingProduced {
+                            scan_id: scan_id.clone(),
+                            module_id: module_id.clone(),
+                            finding: Box::new(finding.clone()),
+                        });
+                    }
+                    if self.hook_runner.has_hooks(crate::engine::hook_runner::HookPoint::PostModule)
                     {
                         let module_data = serde_json::json!({
                             "module_id": &module_id,
@@ -347,37 +378,23 @@ impl CodeOrchestrator {
                             "findings": &findings,
                             "finding_count": findings.len(),
                         });
-                        if let Some(modified) = cancel_on_token(
+                        let execution = cancel_on_token(
                             cancellation,
                             self.hook_runner.execute(
                                 crate::engine::hook_runner::HookPoint::PostModule,
+                                RunProcessorInput::Findings {
+                                    module_id: module_id.clone(),
+                                    module_name: module_name.clone(),
+                                    findings: finding_snapshots(&findings),
+                                },
                                 &module_data,
+                                &pipeline_authority,
                                 &self.ctx,
                             ),
                         )
-                        .await?
-                        {
-                            modified["findings"]
-                                .as_array()
-                                .and_then(|array| {
-                                    serde_json::from_value::<Vec<Finding>>(
-                                        serde_json::Value::Array(array.clone()),
-                                    )
-                                    .ok()
-                                })
-                                .unwrap_or(findings)
-                        } else {
-                            findings
-                        }
-                    } else {
-                        findings
-                    };
-                    for finding in &findings {
-                        self.ctx.events.publish(ScanEvent::FindingProduced {
-                            scan_id: scan_id.clone(),
-                            module_id: module_id.clone(),
-                            finding: Box::new(finding.clone()),
-                        });
+                        .await?;
+                        publish_pipeline_outcomes(&self.ctx, &scan_id, &execution.outcomes);
+                        pipeline_outcomes.extend(execution.outcomes);
                     }
                     self.ctx.events.publish(ScanEvent::ModuleCompleted {
                         scan_id: scan_id.clone(),
@@ -412,24 +429,36 @@ impl CodeOrchestrator {
         let summary = ScanSummary::from_findings(&all_findings);
 
         if self.hook_runner.has_hooks(crate::engine::hook_runner::HookPoint::PostScan) {
+            let severity_counts = severity_counts(&all_findings);
             let post_scan_data = serde_json::json!({
                 "scan_id": &scan_id,
                 "target": self.ctx.path.display().to_string(),
                 "total_findings": all_findings.len(),
                 "summary": &summary,
             });
-            let _ = cancel_on_token(
+            let execution = cancel_on_token(
                 cancellation,
                 self.hook_runner.execute(
                     crate::engine::hook_runner::HookPoint::PostScan,
+                    RunProcessorInput::Report {
+                        scan_id: scan_id.clone(),
+                        target: pipeline_authority.target.clone(),
+                        total_findings: all_findings.len(),
+                        severity_counts,
+                    },
                     &post_scan_data,
+                    &pipeline_authority,
                     &self.ctx,
                 ),
             )
             .await?;
+            publish_pipeline_outcomes(&self.ctx, &scan_id, &execution.outcomes);
+            pipeline_outcomes.extend(execution.outcomes);
         }
 
         ensure_not_cancelled(cancellation)?;
+        let pipeline_outcomes = scorchkit_core::normalize_run_outcomes(pipeline_outcomes)
+            .map_err(|error| crate::engine::error::ScorchError::Hook(error.to_string()))?;
         let total_duration_ms =
             u64::try_from(scan_started.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.ctx.events.publish(ScanEvent::ScanCompleted {
@@ -452,10 +481,78 @@ impl CodeOrchestrator {
             application_dast: None,
             application_pentest: None,
             adapter_executions: Vec::new(),
+            pipeline_outcomes,
             summary,
         };
         result.refresh_execution_status();
         Ok(result)
+    }
+}
+
+fn finding_snapshots(findings: &[Finding]) -> Vec<FindingSnapshot> {
+    findings
+        .iter()
+        .map(|finding| FindingSnapshot {
+            finding_id: finding.canonical_appsec().identity.value,
+            module_id: finding.module_id.clone(),
+            severity: finding.severity,
+            title: redact_text(&finding.title),
+            affected_target: redact_text(&finding.affected_target),
+        })
+        .collect()
+}
+
+fn severity_counts(findings: &[Finding]) -> BTreeMap<String, usize> {
+    use crate::engine::severity::Severity;
+
+    [
+        (
+            "critical".to_string(),
+            findings.iter().filter(|finding| finding.severity == Severity::Critical).count(),
+        ),
+        (
+            "high".to_string(),
+            findings.iter().filter(|finding| finding.severity == Severity::High).count(),
+        ),
+        (
+            "medium".to_string(),
+            findings.iter().filter(|finding| finding.severity == Severity::Medium).count(),
+        ),
+        (
+            "low".to_string(),
+            findings.iter().filter(|finding| finding.severity == Severity::Low).count(),
+        ),
+        (
+            "info".to_string(),
+            findings.iter().filter(|finding| finding.severity == Severity::Info).count(),
+        ),
+    ]
+    .into()
+}
+
+fn code_module_within_preprocess(
+    module: &dyn CodeModule,
+    accepted: &scorchkit_core::AcceptedPreprocess,
+) -> bool {
+    use crate::engine::policy::Capability;
+
+    accepted.modules.contains(module.id())
+        && accepted.capabilities.contains(&Capability::CodeScan)
+        && (!module.requires_external_tool()
+            || accepted.capabilities.contains(&Capability::ExternalTool))
+        && module.descriptor().adapter.strongest_effect <= accepted.effect
+}
+
+fn publish_pipeline_outcomes(
+    context: &CodeContext,
+    scan_id: &str,
+    outcomes: &[RunProcessorOutcome],
+) {
+    for outcome in outcomes {
+        context.events.publish(ScanEvent::PipelineProcessorOutcome {
+            scan_id: scan_id.to_string(),
+            outcome: Box::new(outcome.clone()),
+        });
     }
 }
 
@@ -508,10 +605,52 @@ fn language_not_applicable(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::config::AppConfig;
+    use crate::runner::subprocess::{ToolExecutor, ToolInvocation, ToolOutput};
+    use scorchkit_core::run_pipeline::{
+        ProcessorBudget, ProcessorDisposition, ProcessorFailureMode, RunPhase,
+        PREPROCESS_INPUT_SCHEMA_V1, PREPROCESS_PROPOSAL_SCHEMA_V1, PROCESSOR_CONTRACT_SCHEMA_V1,
+        PROCESSOR_OUTCOME_SCHEMA_V1, PROCESSOR_REQUEST_SCHEMA_V1, PROCESSOR_RESPONSE_SCHEMA_V1,
+    };
+    use scorchkit_policy::policy::Capability;
+
+    #[derive(Debug, Default)]
+    struct CodePreprocessExecutor {
+        invocations: Mutex<Vec<ToolInvocation>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolExecutor for CodePreprocessExecutor {
+        async fn execute(&self, invocation: ToolInvocation) -> Result<ToolOutput> {
+            self.invocations.lock().expect("invocation lock").push(invocation);
+            Ok(ToolOutput {
+                stdout: serde_json::json!({
+                    "schema": PROCESSOR_RESPONSE_SCHEMA_V1,
+                    "processor_id": "select.code",
+                    "phase": "preprocessing",
+                    "proposal": {
+                        "kind": "preprocess",
+                        "value": {
+                            "schema": PREPROCESS_PROPOSAL_SCHEMA_V1,
+                            "modules": ["selected"],
+                            "capabilities": ["code-scan", "external-tool"],
+                            "effect": "passive",
+                            "credential_use": false
+                        }
+                    }
+                })
+                .to_string(),
+                stderr: String::new(),
+                exit_code: 0,
+                duration: std::time::Duration::ZERO,
+                resolved_program: PathBuf::from("/stub/code-preprocessor"),
+            })
+        }
+    }
 
     struct StubModule {
         module_id: &'static str,
@@ -633,6 +772,65 @@ mod tests {
             findings: 0,
         }));
         orchestrator
+    }
+
+    #[tokio::test]
+    async fn typed_code_preprocessor_narrows_modules_before_execution() {
+        let root = tempfile::tempdir().expect("code fixture root");
+        let executor = Arc::new(CodePreprocessExecutor::default());
+        let mut config = AppConfig::default();
+        config.hooks.processors.push(scorchkit_config::RunProcessorConfig {
+            schema: PROCESSOR_CONTRACT_SCHEMA_V1.into(),
+            id: "select.code".into(),
+            path: PathBuf::from("/stub/code-preprocessor"),
+            phase: RunPhase::Preprocessing,
+            input_schema: PREPROCESS_INPUT_SCHEMA_V1.into(),
+            output_schema: PREPROCESS_PROPOSAL_SCHEMA_V1.into(),
+            capabilities: vec![Capability::CodeScan, Capability::ExternalTool],
+            failure_mode: ProcessorFailureMode::Required,
+            order: 10,
+            budget: ProcessorBudget {
+                timeout_millis: 1_000,
+                max_input_bytes: 4_096,
+                max_output_bytes: 4_096,
+            },
+        });
+        let context = CodeContext::new(
+            root.path().to_path_buf(),
+            Some("rust".to_string()),
+            Arc::new(config),
+            Vec::new(),
+        )
+        .with_tool_executor(executor.clone());
+        let mut orchestrator = CodeOrchestrator::new(context);
+        for module_id in ["selected", "dropped"] {
+            orchestrator.add_module(Box::new(StubModule {
+                module_id,
+                category: CodeCategory::Sast,
+                depth: CodeAnalysisDepth::Fast,
+                languages: &[],
+                required_tool: None,
+                findings: 1,
+            }));
+        }
+
+        let result = orchestrator.run().await.expect("typed code pipeline");
+
+        assert_eq!(result.modules_run, ["selected"]);
+        assert_eq!(result.findings.len(), 1);
+        assert_eq!(result.pipeline_outcomes.len(), 1);
+        assert_eq!(result.pipeline_outcomes[0].disposition, ProcessorDisposition::Applied);
+        let invocation = executor
+            .invocations
+            .lock()
+            .expect("invocation lock")
+            .first()
+            .cloned()
+            .expect("code processor invocation");
+        let input: serde_json::Value =
+            serde_json::from_slice(invocation.stdin.as_deref().expect("processor stdin"))
+                .expect("typed code processor request");
+        assert_eq!(input["schema"], PROCESSOR_REQUEST_SCHEMA_V1);
     }
 
     #[test]
@@ -821,5 +1019,123 @@ mod tests {
 
         assert_eq!(orchestrator.ctx.language.as_deref(), Some("python"));
         assert_eq!(orchestrator.ctx.languages, ["python"]);
+    }
+
+    #[test]
+    fn code_pipeline_finding_and_severity_projections_are_exact() {
+        let findings: Vec<_> = [
+            crate::engine::severity::Severity::Critical,
+            crate::engine::severity::Severity::High,
+            crate::engine::severity::Severity::Medium,
+            crate::engine::severity::Severity::Low,
+            crate::engine::severity::Severity::Info,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, severity)| {
+            Finding::new(
+                "sast",
+                severity,
+                format!("finding {index}"),
+                "description",
+                "code://fixture",
+            )
+        })
+        .collect();
+        let expected_identity = findings[0].canonical_appsec().identity.value;
+
+        let snapshots = finding_snapshots(&findings);
+        assert_eq!(snapshots.len(), 5);
+        assert_eq!(snapshots[0].finding_id, expected_identity);
+        assert_eq!(snapshots[0].module_id, "sast");
+        assert_eq!(snapshots[0].severity, crate::engine::severity::Severity::Critical);
+        assert_eq!(snapshots[0].title, "finding 0");
+        assert_eq!(snapshots[0].affected_target, "code://fixture");
+        assert_eq!(
+            severity_counts(&findings),
+            [
+                ("critical".into(), 1),
+                ("high".into(), 1),
+                ("medium".into(), 1),
+                ("low".into(), 1),
+                ("info".into(), 1),
+            ]
+            .into()
+        );
+    }
+
+    #[test]
+    fn code_preprocess_module_eligibility_pins_each_operand() {
+        let root = tempfile::tempdir().expect("code fixture root");
+        let plain = StubModule {
+            module_id: "plain",
+            category: CodeCategory::Sast,
+            depth: CodeAnalysisDepth::Fast,
+            languages: &[],
+            required_tool: None,
+            findings: 0,
+        };
+        let external = StubModule {
+            module_id: "external",
+            category: CodeCategory::Sast,
+            depth: CodeAnalysisDepth::Fast,
+            languages: &[],
+            required_tool: Some("fixture-tool"),
+            findings: 0,
+        };
+        let accepted =
+            |modules: &[&str], capabilities: &[Capability]| scorchkit_core::AcceptedPreprocess {
+                target: crate::engine::policy::PolicyTarget::Code(root.path().to_path_buf()),
+                modules: modules.iter().map(|value| (*value).to_string()).collect(),
+                capabilities: capabilities.iter().copied().collect(),
+                effect: crate::engine::policy::EffectClass::Passive,
+                credential_use: false,
+            };
+
+        assert!(code_module_within_preprocess(
+            &plain,
+            &accepted(&["plain"], &[Capability::CodeScan])
+        ));
+        assert!(!code_module_within_preprocess(
+            &plain,
+            &accepted(&["other"], &[Capability::CodeScan])
+        ));
+        assert!(!code_module_within_preprocess(&plain, &accepted(&["plain"], &[])));
+        assert!(!code_module_within_preprocess(
+            &external,
+            &accepted(&["external"], &[Capability::CodeScan])
+        ));
+        assert!(code_module_within_preprocess(
+            &external,
+            &accepted(&["external"], &[Capability::CodeScan, Capability::ExternalTool])
+        ));
+    }
+
+    #[test]
+    fn code_pipeline_outcome_event_is_published() {
+        let root = tempfile::tempdir().expect("code fixture root");
+        let context = CodeContext::new(
+            root.path().to_path_buf(),
+            Some("rust".into()),
+            Arc::new(AppConfig::default()),
+            Vec::new(),
+        );
+        let mut events = context.events.subscribe();
+        let outcome = RunProcessorOutcome {
+            schema: PROCESSOR_OUTCOME_SCHEMA_V1.into(),
+            processor_id: "processor.one".into(),
+            phase: RunPhase::Reporting,
+            disposition: ProcessorDisposition::NoChange,
+            proposal: None,
+            diagnostic: None,
+        };
+
+        publish_pipeline_outcomes(&context, "scan-one", std::slice::from_ref(&outcome));
+
+        assert!(matches!(
+            events.try_recv().expect("pipeline outcome event"),
+            ScanEvent::PipelineProcessorOutcome { scan_id, outcome: published }
+                if scan_id == "scan-one" && *published == outcome
+        ));
     }
 }

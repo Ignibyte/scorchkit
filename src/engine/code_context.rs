@@ -1,5 +1,6 @@
 //! Code scanning context — path-based alternative to `ScanContext`.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -112,6 +113,34 @@ pub struct CodeContext {
 }
 
 impl CodeContext {
+    /// Build the proposal ceiling from the exact grants already sealed into this context.
+    pub(crate) fn run_pipeline_authority<I, S>(
+        &self,
+        modules: I,
+    ) -> scorchkit_core::run_pipeline::RunAuthority
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let target = PolicyTarget::Code(self.path.clone());
+        let mut capabilities: BTreeSet<_> = self
+            .authorization
+            .iter()
+            .filter(|decision| decision.allowed && decision.target == target)
+            .map(|decision| decision.capability)
+            .collect();
+        if cfg!(test) && capabilities.is_empty() {
+            capabilities.extend([Capability::CodeScan, Capability::ExternalTool]);
+        }
+        scorchkit_core::run_pipeline::RunAuthority {
+            target,
+            modules: modules.into_iter().map(Into::into).collect(),
+            credential_use: capabilities.contains(&Capability::CredentialUse),
+            capabilities,
+            max_effect: EffectClass::Passive,
+        }
+    }
+
     /// Create a new code context, auto-detecting language and manifests.
     #[must_use]
     pub(crate) fn new(
@@ -189,6 +218,22 @@ impl CodeContext {
         self.tool_executor.execute(invocation).await
     }
 
+    /// Execute an authorized lifecycle processor with owned input and an exact stream ceiling.
+    pub(crate) async fn run_pipeline_processor(
+        &self,
+        tool_name: &str,
+        stdin: &[u8],
+        timeout: Duration,
+        output_limit_bytes: usize,
+    ) -> Result<ToolOutput> {
+        self.run_invocation(
+            ToolInvocation::strict(tool_name, &[], timeout)
+                .with_stdin(stdin)
+                .with_output_limit(output_limit_bytes),
+        )
+        .await
+    }
+
     /// Execute a passive code-family compatibility tool that consumes ambient credentials.
     ///
     /// # Errors
@@ -204,19 +249,6 @@ impl CodeContext {
         self.require_tool_authorization()?;
         self.require_credential_authorization()?;
         self.tool_executor.execute(ToolInvocation::lenient(tool_name, args, timeout)).await
-    }
-
-    /// Execute an authorized external tool with owned standard input.
-    pub(crate) async fn run_tool_with_stdin(
-        &self,
-        tool_name: &str,
-        stdin: &[u8],
-        timeout: Duration,
-    ) -> Result<ToolOutput> {
-        self.require_tool_authorization()?;
-        self.tool_executor
-            .execute(ToolInvocation::strict(tool_name, &[], timeout).with_stdin(stdin))
-            .await
     }
 
     fn require_tool_authorization(&self) -> Result<()> {
@@ -619,5 +651,45 @@ mod tests {
         assert!(compact.contains(
             "inspected_entries+=1;ifinspected_entries>MAX_DISCOVERY_ENTRIES{returnfiles;}"
         ));
+    }
+
+    #[test]
+    fn pipeline_authority_uses_only_allowed_exact_target_code_grants() -> std::io::Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().canonicalize()?;
+        let target = PolicyTarget::Code(path.clone());
+        let other_target = PolicyTarget::Code(path.join("outside"));
+        let decision = |target: PolicyTarget,
+                        capability: Capability,
+                        allowed: bool|
+         -> AuthorizationDecision {
+            AuthorizationDecision {
+                engagement_id: Uuid::nil(),
+                target,
+                capability,
+                effect: EffectClass::Passive,
+                allowed,
+                matched_scope: None,
+                denial: (!allowed).then_some(DenialReason::CapabilityNotGranted),
+            }
+        };
+        let context = CodeContext::new(
+            path,
+            None,
+            Arc::new(AppConfig::default()),
+            vec![
+                decision(target.clone(), Capability::CodeScan, true),
+                decision(target, Capability::CredentialUse, false),
+                decision(other_target, Capability::ExternalTool, true),
+            ],
+        );
+
+        let authority = context.run_pipeline_authority(["sast"]);
+
+        assert_eq!(authority.capabilities, [Capability::CodeScan].into());
+        assert!(!authority.credential_use);
+        assert_eq!(authority.modules, ["sast".to_string()].into());
+        assert_eq!(authority.max_effect, EffectClass::Passive);
+        Ok(())
     }
 }

@@ -129,6 +129,10 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use scorchkit_core::run_pipeline::{
+        ProcessorDisposition, RunPhase, RunProcessorOutcome, PROCESSOR_OUTCOME_SCHEMA_V1,
+    };
+
     fn read_file(path: &Path) -> String {
         let mut buf = String::new();
         File::open(path).expect("open").read_to_string(&mut buf).expect("read");
@@ -266,6 +270,17 @@ mod tests {
                 module_id: "headers".to_string(),
                 finding: Box::new(finding),
             },
+            ScanEvent::PipelineProcessorOutcome {
+                scan_id: "s".to_string(),
+                outcome: Box::new(RunProcessorOutcome {
+                    schema: PROCESSOR_OUTCOME_SCHEMA_V1.to_string(),
+                    processor_id: "report.fixture".to_string(),
+                    phase: RunPhase::Reporting,
+                    disposition: ProcessorDisposition::Degraded,
+                    proposal: None,
+                    diagnostic: Some("fixture diagnostic".to_string()),
+                }),
+            },
             ScanEvent::ScanCompleted {
                 scan_id: "s".to_string(),
                 total_findings: 1,
@@ -288,7 +303,7 @@ mod tests {
 
         let contents = read_file(&path);
         let lines: Vec<&str> = contents.lines().collect();
-        assert_eq!(lines.len(), 8, "all 8 variants must produce a line");
+        assert_eq!(lines.len(), 9, "all 9 variants must produce a line");
         for line in &lines {
             serde_json::from_str::<serde_json::Value>(line).expect("valid json");
         }

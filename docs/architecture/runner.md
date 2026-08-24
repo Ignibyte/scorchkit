@@ -18,24 +18,26 @@ external-tool declarations, and declared invocations.
 
 All four runners submit module futures through the [shared job executor](executor.md). The executor
 owns bounded polling, cancellation, the batch wall-time budget, timing, and stable outcome order.
-The family runner still owns tool availability, hooks, events, findings, and result assembly.
+The family runner still owns tool availability, processors, events, findings, and result assembly.
 
 ## DAST execution sequence
 
 1. Apply the selected profile and explicit module filters.
 2. Check required external binaries and record unavailable modules as skipped.
-3. Run configured pre-scan hooks.
+3. Run typed preprocessing processors and retain only modules within the accepted target,
+   capability, credential, and effect ceiling.
 4. Run recon producers through one bounded executor batch.
 5. Run scanner consumers through a second bounded executor batch.
-6. Consume each batch's submission-ordered outcomes, run post-module hooks, and accept a valid
-   replacement `findings` array.
+6. Consume each batch's submission-ordered outcomes, pass immutable finding snapshots to enrichment
+   processors, and record their proposals without changing source findings.
 7. Sort findings by severity while preserving producer order for equal severities.
-8. Run post-scan hooks and publish completion.
-9. Return one `ScanResult` with modules run and skipped.
+8. Run reporting processors, durably publish their typed outcomes, and publish completion.
+9. Return one `ScanResult` with modules run/skipped and bounded processor outcomes.
 
-Pre-scan hook output is currently informational and is not applied to module selection. Post-scan
-output is ignored after the hook completes. These limitations are explicit so a hook cannot appear
-to change behavior that the runner does not consume.
+The code runner uses the same preprocessing, immutable enrichment, reporting, cancellation, and
+outcome contracts with `CodeScan` authority and its existing best-effort event semantics. Legacy
+checkpoint and explicit phased DAST modes keep their pre-existing no-hook behavior; typed processor
+support is not added to infra or cloud runners.
 
 ## External-tool boundary
 
@@ -66,13 +68,14 @@ before DNS, every answer is authorized before connection, and sockets use concre
 addresses. Raw TLS retains the approved original hostname for SNI. HTTP modules use policy-bound
 clients that add redirect authorization.
 
-## Events and hooks
+## Events and processors
 
-The in-process event bus publishes scan, module, and finding lifecycle events. Its broadcast channel
-remains bounded best-effort telemetry. Durable job orchestrators additionally await registered
+The in-process event bus publishes scan, module, finding, and typed processor-outcome lifecycle
+events. Its broadcast channel remains bounded best-effort telemetry. Durable DAST job orchestrators
+additionally await registered
 `DurableEventSink` persistence before broadcast, so a lagging subscriber cannot lose a webhook
 enqueue. Sink failures are sanitized diagnostics and never change scanner evidence or the scan's
-terminal result. Local hooks are awaited and run sequentially within a hook point through the same
+terminal result. Local processors are awaited and run sequentially within a phase through the same
 bounded executor used for tools.
 
 The webhook sink redacts serialized events and enforces payload and pending-record bounds before its
@@ -84,8 +87,9 @@ scan execution.
 
 A module error emits `ModuleError`, records the module as skipped, and lets independent modules
 continue. Caller cancellation or exhaustion of the batch wall-time budget drops queued and active
-module futures and aborts the family run with `ScorchError::Cancelled`. A fail-closed hook error
-aborts the scan. A fail-open hook error is terminal-escaped, logged, and ignored. The runner never
+module futures and aborts the family run with `ScorchError::Cancelled`. A required processor error
+aborts the scan. An optional processor error becomes a redacted degraded outcome and its proposal
+is ignored. The runner never
 converts a timeout, connection failure, parser failure, or missing tool into a positive security
 finding unless the module contract explicitly defines that observation.
 

@@ -238,6 +238,10 @@ capability, and effect authorization source.
   authentication and service requests use ScorchKit's policy-owned transport.
 - External processes have bounded time and output and are owned as Unix process groups or Windows
   Job Objects so timeout, cancellation, error, success, and drop clean up descendants.
+- Standard DAST and code runs can use versioned local lifecycle processors for preprocessing,
+  immutable finding proposals, and reporting. Processor output may only narrow the policy-sealed
+  run, never grants authority or replaces scanner evidence, and crosses reports/control/MCP/jobs as
+  bounded redacted outcomes. Legacy hook arrays remain compatible through the same proposal model.
 - Durable CLI and MCP job hosts can enqueue redacted lifecycle events in PostgreSQL and deliver
   them through the same policy-owned hostname, DNS-answer, connection, and redirect boundary.
   Delivery requires a separate `webhook-delivery`/`active-safe` grant and cannot change scan

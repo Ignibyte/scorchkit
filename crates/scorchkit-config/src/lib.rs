@@ -9,6 +9,7 @@ pub mod cve;
 pub mod extension;
 pub mod mcp;
 pub mod network_credentials;
+pub mod run_pipeline;
 pub mod webhook;
 
 #[cfg(feature = "cloud")]
@@ -18,6 +19,7 @@ pub use cve::{CompositeConfig, CompositeSource, CveBackendKind, CveConfig, NvdCo
 pub use extension::ExtensionConfig;
 pub use mcp::{McpConfig, RemoteMcpConfig, RemoteMcpPrincipalBinding, RemoteMcpTlsTermination};
 pub use network_credentials::NetworkCredentials;
+pub use run_pipeline::RunProcessorConfig;
 pub use types::*;
 pub use webhook::WebhookConfig;
 
