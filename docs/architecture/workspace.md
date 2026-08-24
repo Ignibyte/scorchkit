@@ -77,3 +77,12 @@ The canonical gate runs formatting, Clippy, tests, Rustdoc, coverage, Nextest, S
 and mutation inventory across the workspace. Direct development checks should also use
 `--workspace` when the command supports it. PostgreSQL and CLI/MCP integration lanes remain rooted
 in the `scorchkit` package because they exercise the composed application.
+
+## Optional application outside the workspace
+
+`apps/scorchkit-console` is an independently locked Rustal binary and deliberately declares its own
+empty `[workspace]`. It depends only on the stable `scorchkit-control` package plus frontend/client
+utilities and the exact reviewed sibling Rustal source. Root `cargo metadata`, builds, tests,
+coverage, and mutation inventory contain neither `scorchkit-console` nor Rustal. Its own preflight,
+Clippy/tests, browser/render, asset, audit, and dependency-direction contracts provide separate
+delivery evidence. See [Rustal local console](rustal-console.md).

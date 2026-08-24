@@ -41,6 +41,14 @@ All notable changes to ScorchKit will be documented in this file.
   89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
 
 ### Added
+- **Optional Rustal local operator console (TICKET-033 / SK-055)** — Added a separately locked,
+  loopback-only Rustal app over the authenticated v1 control API for engagement posture, projects,
+  registered targets, jobs, canonical findings/evidence, append-only triage, correlations,
+  suppressions, degraded coverage, and bounded live job updates. The browser receives no control
+  bearer or database handle; exact Host/Origin/CSRF and resource limits guard forms, the active
+  engagement remains read-only, and all mutations use ordinary reauthorized control commands. The
+  root workspace remains Rustal-free. Delivery gates now exercise the real server through Chrome,
+  responsive/accessibility renders, and reviewed asset/source policy.
 - **Conversation-native application-security workbench (TICKET-032 / SK-054)** — Added an optional
   provider-neutral MCP Apps resource for project posture, finding evidence/model analysis/triage,
   and canonical attack paths/gaps. Exact extension and MIME negotiation withholds UI metadata from

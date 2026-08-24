@@ -1,0 +1,64 @@
+[package]
+name = "scorchkit-console"
+version = "0.1.0"
+edition = "2024"
+description = "Optional local Rustal operator console for ScorchKit"
+license = "MIT"
+publish = false
+
+[package.metadata.scorchkit]
+rustal_revision = "8b741c4c0e4c87542dea575aea9be9acfa3bf728"
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+askama = "0.16"
+futures-util = "0.3"
+hex = "0.4"
+http-body-util = "0.1"
+hyper = "1"
+rand = "0.10"
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  "rustls",
+  "stream",
+] }
+rustal = { path = "../../../rustal/crates/rustal" }
+scorchkit-control = { path = "../../crates/scorchkit-control" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+subtle = "2"
+tokio = { version = "1", features = [
+  "macros",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+] }
+tower = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+uuid = { version = "1", features = ["serde", "v4"] }
+zeroize = "1"
+
+[dev-dependencies]
+axum = "0.8"
+chrono = "0.4"
+rustal = { path = "../../../rustal/crates/rustal", features = ["test-utils"] }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+todo = "deny"
+unimplemented = "deny"
+module_name_repetitions = "allow"

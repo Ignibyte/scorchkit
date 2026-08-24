@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>{% block title %}ScorchKit Console{% endblock %}</title>
+  <link rel="stylesheet" href="/assets/console.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="topbar">
+    <a class="brand" href="/">ScorchKit <span>Console</span></a>
+    <div class="stream" data-stream-state aria-live="polite">Live updates connecting</div>
+  </header>
+  <main id="content" data-event-after="{{ chrome.event_after }}">
+    {% if !chrome.message.is_empty() %}<p class="notice" role="status">{{ chrome.message }}</p>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <script src="/assets/console.js" defer></script>
+</body>
+</html>

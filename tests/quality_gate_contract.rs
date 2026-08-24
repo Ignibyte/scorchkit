@@ -53,6 +53,7 @@ fn local_and_ci_gates_share_the_canonical_helpers() {
     let mutants = read(".cargo/mutants.toml");
     let mutation_runner = read("bin/mutants.sh");
     let manifest = read("Cargo.toml");
+    let gitleaks = read(".gitleaks.toml");
 
     assert!(runner.contains("bash bin/feature-states.sh"));
     assert!(runner.contains("bash bin/release.sh --selftest"));
@@ -73,6 +74,15 @@ fn local_and_ci_gates_share_the_canonical_helpers() {
     assert!(runner.contains("node tests/conversation_workbench_ui.mjs browser"));
     assert!(runner.contains("node tests/conversation_workbench_ui.mjs render"));
     assert!(runner.contains("node tests/conversation_workbench_ui.mjs css"));
+    assert!(runner.contains("bash bin/console.sh check"));
+    assert!(runner.contains("bash bin/console.sh build"));
+    assert!(runner.contains("node tests/rustal_console_ui.mjs browser"));
+    assert!(runner.contains("node tests/rustal_console_ui.mjs render"));
+    assert!(runner.contains("node tests/rustal_console_ui.mjs css"));
+    assert!(runner.contains("cargo audit --no-fetch --file apps/scorchkit-console/Cargo.lock"));
+    assert!(runner.contains("cargo sort --check --no-format apps/scorchkit-console"));
+    assert!(runner.contains("cargo machete apps/scorchkit-console"));
+    assert!(gitleaks.contains("^apps/scorchkit-console/target/"));
     assert!(runner.contains("git ls-files --cached --others --exclude-standard -- '*.toml'"));
     assert!(mutation_runner.contains("FLOOR=\"${SCORCHKIT_MUTATION_MSI_MIN:-95}\""));
     assert!(mutation_runner.contains("RUN_COMPLETED=0"));

@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.id }} · ScorchKit Console{% endblock %}
+{% block content %}
+<nav class="crumb"><a href="/">Dashboard</a><span>/</span><span>Job</span></nav>
+<section class="hero" data-job-id="{{ job.id }}"><div><p class="eyebrow">Durable attempt {{ attempt }} · revision {{ revision }}</p><h1 class="break">{{ job.target }}</h1><p>{{ job.profile }} profile · {{ job.progress }}</p></div><span class="pill" data-job-state>{{ job.state }}</span></section>
+<section class="grid two"><article class="panel"><h2>Coverage</h2><dl><dt>Active</dt><dd>{{ active_modules }}</dd><dt>Completed</dt><dd>{{ completed_modules }}</dd><dt>Skipped</dt><dd>{{ skipped_modules }}</dd><dt>Failed</dt><dd>{{ failed_modules }}</dd><dt>Findings</dt><dd>{{ finding_count }}</dd></dl><p class="warn">{{ job.degraded }}</p></article><article class="panel"><h2>Lifecycle</h2><p>{{ error }}</p>{% if !job.terminal %}<form method="post" action="/jobs/{{ job.id }}/cancel"><input type="hidden" name="csrf" value="{{ chrome.csrf }}"><button class="danger" type="submit">Request cancellation</button></form>{% endif %}</article></section>
+{% endblock %}

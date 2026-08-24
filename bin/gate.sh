@@ -144,6 +144,11 @@ clippy_matrix() {
     [ "$count" -gt 1 ] || { echo "feature-state matrix is unexpectedly empty" >&2; return 1; }
 }
 
+all_tests_gate() {
+    cargo test --workspace --all-features || return 1
+    bash bin/console.sh check
+}
+
 doc_gate() {
     local output
     output="$(RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps 2>&1)"
@@ -158,7 +163,8 @@ doc_gate() {
 
 audit_gate() {
     need cargo-audit "cargo install cargo-audit --locked" || return 1
-    cargo audit
+    cargo audit || return 1
+    cargo audit --no-fetch --file apps/scorchkit-console/Cargo.lock
 }
 
 deny_gate() {
@@ -168,7 +174,8 @@ deny_gate() {
 
 machete_gate() {
     need cargo-machete "cargo install cargo-machete --locked" || return 1
-    cargo machete
+    cargo machete || return 1
+    cargo machete apps/scorchkit-console
 }
 
 gitleaks_gate() {
@@ -193,7 +200,8 @@ no_suppressions_gate() {
     local hits ignored blanket
     # The awk program is literal; awk expands its own fields.
     # shellcheck disable=SC2016
-    hits="$(find src crates -type f -name '*.rs' -print0 | xargs -0 awk '
+    hits="$(find src crates apps/scorchkit-console/src apps/scorchkit-console/tests \
+        -type f -name '*.rs' -print0 | xargs -0 awk '
         FNR == 1 { justified = 0 }
         /^[[:space:]]*\/\// {
             if ($0 ~ /JUSTIFICATION:/) justified = 1
@@ -217,7 +225,8 @@ no_suppressions_gate() {
     # Attribute checks are anchored so prose that merely documents `#[ignore]`
     # does not become a false positive.
     # shellcheck disable=SC2016
-    ignored="$(find src crates tests examples -type f -name '*.rs' -print0 | xargs -0 awk '
+    ignored="$(find src crates tests examples apps/scorchkit-console/src \
+        apps/scorchkit-console/tests -type f -name '*.rs' -print0 | xargs -0 awk '
         /^[[:space:]]*#\[ignore([[:space:]]|\])/ &&
         $0 !~ /^[[:space:]]*#\[ignore[[:space:]]*=[[:space:]]*"[^"[:space:]][^"]*"\][[:space:]]*$/ {
             printf "%s:%d: %s\n", FILENAME, FNR, $0
@@ -229,7 +238,8 @@ no_suppressions_gate() {
         return 1
     fi
     # shellcheck disable=SC2016
-    blanket="$(find src crates tests examples -type f -name '*.rs' -print0 | xargs -0 awk '
+    blanket="$(find src crates tests examples apps/scorchkit-console/src \
+        apps/scorchkit-console/tests -type f -name '*.rs' -print0 | xargs -0 awk '
         /^[[:space:]]*#!?\[(allow|expect)\([^]]*(clippy::(all|cargo|nursery|pedantic)|warnings|unused|dead_code)([[:space:],)]|$)/ {
             printf "%s:%d: %s\n", FILENAME, FNR, $0
         }
@@ -243,9 +253,12 @@ no_suppressions_gate() {
 
 source_bans_gate() {
     local unsafe_hits exit_hits transmute_hits
-    unsafe_hits="$(find src crates -type f -name '*.rs' -print0 | xargs -0 grep -nE '(^|[^[:alnum:]_])unsafe[[:space:]]*\{' 2>/dev/null || true)"
-    exit_hits="$(find src crates -type f -name '*.rs' ! -name 'main.rs' -print0 | xargs -0 grep -nE '(std::)?process::exit[[:space:]]*\(' 2>/dev/null || true)"
-    transmute_hits="$(find src crates -type f -name '*.rs' -print0 | xargs -0 grep -nE '(^|[^[:alnum:]_])(std::)?(mem::)?transmute([_:]|[[:space:]]*\()' 2>/dev/null || true)"
+    unsafe_hits="$(find src crates apps/scorchkit-console/src apps/scorchkit-console/tests \
+        -type f -name '*.rs' -print0 | xargs -0 grep -nE '(^|[^[:alnum:]_])unsafe[[:space:]]*\{' 2>/dev/null || true)"
+    exit_hits="$(find src crates apps/scorchkit-console/src apps/scorchkit-console/tests \
+        -type f -name '*.rs' ! -name 'main.rs' -print0 | xargs -0 grep -nE '(std::)?process::exit[[:space:]]*\(' 2>/dev/null || true)"
+    transmute_hits="$(find src crates apps/scorchkit-console/src apps/scorchkit-console/tests \
+        -type f -name '*.rs' -print0 | xargs -0 grep -nE '(^|[^[:alnum:]_])(std::)?(mem::)?transmute([_:]|[[:space:]]*\()' 2>/dev/null || true)"
     if [ -n "$unsafe_hits$exit_hits$transmute_hits" ]; then
         [ -z "$unsafe_hits" ] || { echo "unsafe blocks are banned:" >&2; printf '%s\n' "$unsafe_hits" >&2; }
         [ -z "$exit_hits" ] || { echo "library process exits are banned:" >&2; printf '%s\n' "$exit_hits" >&2; }
@@ -275,6 +288,7 @@ metadata_format_gate() {
     need taplo "cargo install taplo-cli --locked" || return 1
     need typos "cargo install typos-cli --locked" || return 1
     cargo sort --check --no-format || return 1
+    cargo sort --check --no-format apps/scorchkit-console || return 1
     while IFS= read -r toml_file; do
         [ -f "$toml_file" ] || continue
         taplo fmt --check "$toml_file" || return 1
@@ -285,7 +299,7 @@ metadata_format_gate() {
 
 semgrep_gate() {
     need semgrep "pipx install semgrep" || return 1
-    semgrep --config .semgrep.yml --error --quiet src crates tests
+    semgrep --config .semgrep.yml --error --quiet src crates tests apps/scorchkit-console
 }
 
 coverage_gate() {
@@ -365,17 +379,22 @@ mutation_gate() {
 
 browser_e2e_gate() {
     need node "install Node.js 22 or newer" || return 1
-    node tests/conversation_workbench_ui.mjs browser
+    need chromedriver "install the ChromeDriver matching the delivery browser" || return 1
+    bash bin/console.sh build || return 1
+    node tests/conversation_workbench_ui.mjs browser || return 1
+    node tests/rustal_console_ui.mjs browser
 }
 
 dogfood_render_gate() {
     need node "install Node.js 22 or newer" || return 1
-    node tests/conversation_workbench_ui.mjs render
+    node tests/conversation_workbench_ui.mjs render || return 1
+    node tests/rustal_console_ui.mjs render
 }
 
 built_css_gate() {
     need node "install Node.js 22 or newer" || return 1
-    node tests/conversation_workbench_ui.mjs css
+    node tests/conversation_workbench_ui.mjs css || return 1
+    node tests/rustal_console_ui.mjs css
 }
 
 database_gate() {
@@ -446,8 +465,12 @@ gate_selftest() {
     }
     if ! grep -q 'node tests/conversation_workbench_ui.mjs browser' bin/gate.sh \
         || ! grep -q 'node tests/conversation_workbench_ui.mjs render' bin/gate.sh \
-        || ! grep -q 'node tests/conversation_workbench_ui.mjs css' bin/gate.sh; then
-        echo "gate selftest failed: conversation workbench evidence is not wired" >&2
+        || ! grep -q 'node tests/conversation_workbench_ui.mjs css' bin/gate.sh \
+        || ! grep -q 'node tests/rustal_console_ui.mjs browser' bin/gate.sh \
+        || ! grep -q 'node tests/rustal_console_ui.mjs render' bin/gate.sh \
+        || ! grep -q 'node tests/rustal_console_ui.mjs css' bin/gate.sh \
+        || ! grep -q 'bash bin/console.sh check' bin/gate.sh; then
+        echo "gate selftest failed: delivery UI evidence is not wired" >&2
         return 1
     fi
     if ! grep -q -- '--focused-repair' bin/gate.sh \
@@ -472,7 +495,7 @@ fi
 
 run_gate "gate:1 rustfmt" cargo fmt --all -- --check
 run_gate "gate:2 clippy feature matrix" clippy_matrix
-run_gate "gate:3 all-feature tests" cargo test --workspace --all-features
+run_gate "gate:3 all-feature tests" all_tests_gate
 run_gate "gate:4 rustdoc" doc_gate
 run_gate "gate:5 cargo-audit" audit_gate
 run_gate "gate:6 cargo-deny" deny_gate

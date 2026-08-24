@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::process::Command;
 
 const PACKAGES: &[(&str, &[&str])] = &[
     ("scorchkit-agent", &[]),
@@ -37,6 +38,55 @@ fn workspace_dependencies(manifest: &toml::Value) -> BTreeSet<String> {
         .filter(|name| name.starts_with("scorchkit"))
         .cloned()
         .collect()
+}
+
+#[test]
+fn optional_rustal_console_stays_outside_the_core_workspace_graph() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = Command::new(env!("CARGO"))
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(root)
+        .output()
+        .expect("root cargo metadata must execute");
+    assert!(output.status.success(), "root cargo metadata failed");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("root cargo metadata must be JSON");
+    let package_names: BTreeSet<_> = metadata["packages"]
+        .as_array()
+        .expect("metadata packages")
+        .iter()
+        .filter_map(|package| package["name"].as_str())
+        .collect();
+    assert!(!package_names.contains("scorchkit-console"));
+    assert!(!package_names.contains("rustal"));
+
+    let console = manifest(&root.join("apps/scorchkit-console/Cargo.toml"));
+    assert!(console.get("workspace").and_then(toml::Value::as_table).is_some());
+    assert_eq!(
+        console["dependencies"]["scorchkit-control"]["path"].as_str(),
+        Some("../../crates/scorchkit-control")
+    );
+    assert_eq!(
+        console["dependencies"]["rustal"]["path"].as_str(),
+        Some("../../../rustal/crates/rustal")
+    );
+    let console_client = std::fs::read_to_string(root.join("apps/scorchkit-console/src/client.rs"))
+        .expect("console client source");
+    assert!(
+        console_client.contains(".no_proxy()"),
+        "loopback control bearer must not follow ambient proxy configuration"
+    );
+
+    for path in std::iter::once(root.join("Cargo.toml"))
+        .chain(PACKAGES.iter().map(|(name, _)| root.join("crates").join(name).join("Cargo.toml")))
+    {
+        let core_manifest = manifest(&path);
+        assert!(
+            core_manifest["dependencies"].get("rustal").is_none(),
+            "core manifest acquired a Rustal dependency: {}",
+            path.display()
+        );
+    }
 }
 
 #[test]

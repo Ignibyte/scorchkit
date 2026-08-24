@@ -11,4 +11,10 @@ keywords = ["sk-ant-"]
 
 [allowlist]
 description = "Generated build, mutation, and report output"
-paths = ['''^\.git/''', '''^target/''', '''^mutants\.out/''', '''^reports/''']
+paths = [
+  '''^\.git/''',
+  '''^target/''',
+  '''^apps/scorchkit-console/target/''',
+  '''^mutants\.out/''',
+  '''^reports/''',
+]

@@ -66,6 +66,11 @@ infrastructure. The test suite never treats a timeout against an external addres
 - Optional MCP Apps views are presentation only. They render validated canonical tool envelopes
   with text-only DOM construction, have no external domains or browser permissions, and route every
   mutation through an existing authorized MCP tool; capability and client metadata grant nothing.
+- The optional Rustal console is a separate loopback-only control client. Its browser never receives
+  the control bearer; exact Host, same-origin Origin, CSRF, body, page, response, render, event, and
+  replay bounds apply before its server sends an ordinary authenticated control command. Ambient
+  HTTP proxies and redirects are disabled for that literal-loopback client. The engagement is
+  read-only, and local page membership grants nothing.
 - The local control API is absent by default and requires an environment-backed bearer, exact
   principal-to-engagement binding, loopback bind and Host, constant-time credential verification,
   credential scrubbing, and bounded bodies, responses, concurrency, journals, and subscribers.

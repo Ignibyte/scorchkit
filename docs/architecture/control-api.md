@@ -117,3 +117,16 @@ authenticates in constant time before routing or body parsing, removes authoriza
 identity headers, rechecks engagement eligibility, and applies hard resource bounds. Non-loopback
 control hosting, direct TLS, OAuth/OIDC, tenants, RBAC, and multiple selectable engagements remain
 unsupported; authenticated remote MCP is the supported remote automation profile.
+
+## Optional local console client
+
+The separately locked `apps/scorchkit-console` Rustal app consumes these public HTTP contracts; it
+does not call `ControlService`, storage, or execution internals directly. The server holds one
+environment-backed bearer and exact engagement binding while the browser talks only to the
+console's distinct same-origin loopback listener. Pages validate response schema, request identity,
+principal kind, and engagement before rendering. Mutations add Host, Origin, CSRF, body, and route
+guards, then send the same v1 commands used by other adapters.
+
+The console mirrors canonical job SSE into a fixed monotonic window and gives browsers finite
+same-origin replay responses. It owns no event truth, grant, or durable state. See
+[Rustal local console](rustal-console.md).

@@ -257,6 +257,21 @@ host-name branch. Clients without the extension continue receiving the complete 
 `scorchkit.mcp.tool-result/v1` structured response. See the
 [MCP architecture](docs/architecture/mcp.md#conversation-native-workbench).
 
+## Optional local console
+
+`apps/scorchkit-console` is a separately locked Rustal application for local browser navigation of
+engagement posture, projects, registered targets, jobs, canonical findings/evidence, triage, and
+bounded live job updates. It talks only to the bearer-authenticated loopback v1 control API. The
+browser receives neither that bearer nor a database handle, and every target, job, cancellation, or
+triage action is reauthorized by the control service. Engagement authority is intentionally
+read-only.
+
+The console is not part of the root Cargo workspace. Its helper verifies the exact reviewed sibling
+Rustal revision before building or running it. Start with the environment described in
+[the console guide](apps/scorchkit-console/README.md), then use `bash bin/console.sh run`. Headless
+CLI and MCP operation remain complete without Rustal. See the
+[console architecture](docs/architecture/rustal-console.md).
+
 ## Network and integration boundaries
 
 - HTTP requests use one policy-bound client that checks the requested URL, every redirect,
@@ -291,6 +306,9 @@ host-name branch. Clients without the extension continue receiving the complete 
 - The optional conversation workbench is a capability-negotiated, self-contained MCP Apps
   resource. It consumes the same canonical tool envelopes, makes lifecycle changes only through
   the existing MCP tool path, loads no remote assets, and is never required for headless operation.
+- The optional Rustal console uses a distinct loopback listener and a server-held control bearer.
+  Exact Host, Origin, CSRF, engagement, response-envelope, body, page, render, event, and reconnect
+  bounds apply; public hosting and multi-user identity remain unsupported.
 
 See [SECURITY.md](SECURITY.md) for the enforced boundary and current limitations.
 

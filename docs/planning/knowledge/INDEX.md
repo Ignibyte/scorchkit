@@ -153,6 +153,16 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-history-not-latest-reconstruction-001` | Reconstruct append-only decisions from their preserved inputs and cited provenance, never from a mutable latest snapshot. | `AAR-031-finding-triage` |
 | `PR-scorchkit-append-bound-lock-order-001` | Give every bounded append-only child the same read and write ceiling, and document one global lock order across aggregate, project, and member rows. | `AAR-031-finding-triage` |
 | `PR-scorchkit-selector-invariant-test-seam-001` | Keep selector-guaranteed defensive projection checks independently falsifiable through test-only row injection or an equivalent pure validation seam. | `AAR-031-finding-triage` |
+| `PR-scorchkit-optional-uri-component-extractor-001` | When a URI component is optional, test its complete absence and do not use an extractor that requires it merely because decoded fields are optional. | `AAR-033-rustal-console` |
+| `PR-scorchkit-framework-form-roundtrip-001` | Round-trip every generated scalar and collection form through the exact production framework decoder; use one bounded structured field when repeated keys are unsupported. | `AAR-033-rustal-console` |
+| `PR-scorchkit-browser-header-guard-composition-001` | Prove the complete response-header and request-guard set with a successful real-browser mutation as well as rejection cases. | `AAR-033-rustal-console` |
+| `PR-scorchkit-adversarial-responsive-content-001` | Render long canonical untrusted strings across mobile, forced-color, and reduced-motion profiles and assert overflow and active-markup absence. | `AAR-033-rustal-console` |
+| `PR-scorchkit-typed-sse-cursor-reset-001` | Recover event continuity only from an authenticated typed expired/future cursor response with validated bounds, clearing the mirror before adopting the new baseline. | `AAR-033-rustal-console` |
+| `PR-scorchkit-sse-frame-streaming-bound-001` | Enforce SSE limits per decoded frame across arbitrary chunk boundaries and test aggregate chunks larger than one valid frame. | `AAR-033-rustal-console` |
+| `PR-scorchkit-loopback-credential-no-proxy-001` | Disable ambient proxy discovery on every literal-loopback client that carries credentials, in addition to denying redirects and DNS names. | `AAR-033-rustal-console` |
+| `PR-scorchkit-closed-presentation-token-001` | Map untrusted display values through a closed vocabulary before using them as CSS classes, IDs, selectors, or token lists. | `AAR-033-rustal-console` |
+| `PR-scorchkit-adapter-error-provenance-001` | Preserve local validation, transport/integrity, and authenticated-service error classes through adapters and prove whether rejection reached the next boundary. | `AAR-033-rustal-console` |
+| `PR-scorchkit-optional-app-gate-parity-001` | Wire out-of-workspace app format, lint, tests, audit, dependency hygiene, generated-tree exclusions, and UI evidence into appropriately ordered root lanes. | `AAR-033-rustal-console` |
 
 ## Register
 
@@ -287,3 +297,13 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-loopback-harness-event-loop-starvation-001` | test harness failure | `AAR-032-conversation-workbench` |
 | `PR-scorchkit-ui-fixture-canonical-shape-001` | Derive interactive-view fixtures from the exact serialized public DTO and pin every consumed path against the canonical producer contract. | `AAR-032-conversation-workbench` |
 | `PR-scorchkit-loopback-harness-nonblocking-driver-001` | Drive clients asynchronously when the test process owns the loopback fixture server they consume. | `AAR-032-conversation-workbench` |
+| `BF-scorchkit-rustal-optional-query-extractor-001` | framework integration bug | `AAR-033-rustal-console` |
+| `BF-scorchkit-form-sequence-decoder-001` | framework integration bug | `AAR-033-rustal-console` |
+| `BF-scorchkit-referrer-origin-guard-conflict-001` | browser security integration bug | `AAR-033-rustal-console` |
+| `BF-scorchkit-flex-min-content-overflow-001` | responsive layout bug | `AAR-033-rustal-console` |
+| `BF-scorchkit-sse-cursor-retention-loop-001` | event continuity bug | `AAR-033-rustal-console` |
+| `BF-scorchkit-sse-chunk-frame-bound-conflation-001` | resource-bound bug | `AAR-033-rustal-console` |
+| `BF-scorchkit-loopback-bearer-ambient-proxy-001` | credential-boundary bug | `AAR-033-rustal-console` |
+| `BF-scorchkit-untrusted-css-class-token-001` | presentation-integrity bug | `AAR-033-rustal-console` |
+| `BF-scorchkit-local-upstream-error-erasure-001` | error-semantics bug | `AAR-033-rustal-console` |
+| `BF-scorchkit-nested-app-generated-scan-scope-001` | gate-scope failure | `AAR-033-rustal-console` |

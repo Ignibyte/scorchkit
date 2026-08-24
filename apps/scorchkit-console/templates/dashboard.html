@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · ScorchKit Console{% endblock %}
+{% block content %}
+<section class="hero">
+  <div><p class="eyebrow">Local operator workbench</p><h1>Application security posture</h1></div>
+  <span class="pill {% if engagement_enabled %}ok{% else %}danger{% endif %}">{% if engagement_enabled %}eligible{% else %}disabled{% endif %}</span>
+</section>
+<section class="grid two">
+  <article class="panel"><h2>Engagement authority</h2><p><strong>{{ engagement_name }}</strong></p><dl><dt>ID</dt><dd class="mono">{{ engagement_id }}</dd><dt>Expiry</dt><dd>{{ engagement_expiry }}</dd><dt>Capabilities</dt><dd>{{ capabilities }}</dd><dt>Effects</dt><dd>{{ effects }}</dd></dl><p class="hint">Read-only authority. Registered targets and run choices can narrow it; they cannot widen it.</p></article>
+  <article class="panel"><h2>Start a bounded run</h2><form method="post" action="/jobs/start"><input type="hidden" name="csrf" value="{{ chrome.csrf }}"><label>Authorized target URL<input name="target" required maxlength="4096" placeholder="https://app.example.test/"></label><label>Profile<select name="profile"><option>quick</option><option>standard</option><option>thorough</option><option>pentest</option></select></label><label>Only modules <span>(optional, comma-separated)</span><input name="modules" maxlength="4096"></label><label>Skip modules <span>(optional, comma-separated)</span><input name="skip" maxlength="4096"></label><button type="submit">Start through control API</button></form></article>
+</section>
+<section><div class="section-head"><h2>Projects</h2><span>{{ projects_page }}</span></div><div class="cards">{% for project in projects %}<a class="card" href="/projects/{{ project.id }}"><strong>{{ project.name }}</strong><span>{{ project.description }}</span><small class="mono">{{ project.id }}</small></a>{% endfor %}{% if projects.is_empty() %}<p class="empty">No projects in this bounded page.</p>{% endif %}</div></section>
+<section><div class="section-head"><h2>Live jobs</h2><span>{{ jobs_page }}</span></div><div class="job-list">{% for job in jobs %}<a class="job" href="/jobs/{{ job.id }}" data-job-id="{{ job.id }}"><span class="pill" data-job-state>{{ job.state }}</span><span><strong>{{ job.target }}</strong><small>{{ job.profile }} · {{ job.progress }}</small><small class="warn">{{ job.degraded }}</small></span></a>{% endfor %}{% if jobs.is_empty() %}<p class="empty">No durable jobs in this bounded page.</p>{% endif %}</div></section>
+{% endblock %}
