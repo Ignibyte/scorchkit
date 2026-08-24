@@ -492,6 +492,7 @@ fn legacy_finding_projection(finding: FindingViewV1) -> Result<serde_json::Value
         "seen_count": finding.seen_count,
         "status": finding.status,
         "status_note": finding.status_note,
+        "triage": finding.triage,
         "found_at": finding.found_at,
     }))
 }
@@ -1327,18 +1328,27 @@ impl ScorchKitServer {
                 )
             })?;
 
-        let updated = findings::update_finding_status(self.require_pool()?, id, status, None)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        if updated {
-            Ok(format!(
-                "{{\"updated\": true, \"id\": \"{id}\", \"status\": \"{}\"}}",
-                params.status
-            ))
-        } else {
-            Err(format!("finding '{id}' not found"))
-        }
+        let state = scorchkit_core::triage_state_from_legacy(status.as_db_str())
+            .ok_or_else(|| "legacy finding status has no triage mapping".to_string())?;
+        let result = self
+            .control_command(ControlCommandV1::TransitionFinding {
+                finding_id: id,
+                state: state.as_str().to_string(),
+                reason: format!("Legacy MCP status update to {}", status.as_db_str()),
+                evidence_ids: Vec::new(),
+                model_analysis_identity: None,
+            })
+            .await?;
+        let ControlResultV1::Finding(finding) = result else {
+            return Err("control service returned an unexpected finding transition result".into());
+        };
+        serde_json::to_string_pretty(&serde_json::json!({
+            "updated": true,
+            "id": finding.id,
+            "status": finding.status,
+            "triage": finding.triage,
+        }))
+        .map_err(|error| error.to_string())
     }
 
     /// Add a target to a project.
@@ -2644,6 +2654,7 @@ mod tests {
             last_seen: now,
             seen_count: 1,
             status: "new".to_string(),
+            triage_state: "needs_context".to_string(),
             status_note: None,
             found_at: now,
         };
@@ -2702,7 +2713,7 @@ mod tests {
             scan_id: tracked.scan_id,
             fingerprint: tracked.fingerprint,
             identity_schema: tracked.identity_schema,
-            stable_identity: tracked.stable_identity,
+            stable_identity: tracked.stable_identity.clone(),
             correlation_keys: tracked.correlation_keys,
             status: tracked.status,
             status_note: tracked.status_note,
@@ -2711,6 +2722,20 @@ mod tests {
             last_seen: tracked.last_seen,
             found_at: tracked.found_at,
             canonical,
+            triage: Box::new(scorchkit_control::FindingTriageViewV1 {
+                schema: scorchkit_core::FINDING_TRIAGE_SCHEMA_V1.to_string(),
+                current_state: "needs_context".to_string(),
+                subject: scorchkit_control::FindingTriageSubjectViewV1 {
+                    project_identity: tracked.project_id.to_string(),
+                    finding_identity: tracked.stable_identity,
+                    rule_identity: None,
+                    target_identity: "a".repeat(64),
+                },
+                transitions: Vec::new(),
+                correlations: Vec::new(),
+                suppressions: Vec::new(),
+                active_suppression_ids: Vec::new(),
+            }),
         })
         .expect("projection");
         let model = &projected["raw_finding"]["appsec"]["agent_analysis"][0];

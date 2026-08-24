@@ -707,7 +707,9 @@ async fn test_finding_status_lifecycle() {
     // Transition through lifecycle
     for (status, expected_str) in [
         (VulnStatus::Acknowledged, "acknowledged"),
-        (VulnStatus::Remediated, "remediated"),
+        // The canonical `fixed` state has one compatibility projection; both legacy
+        // remediated and verified inputs therefore read back as verified.
+        (VulnStatus::Remediated, "verified"),
         (VulnStatus::Verified, "verified"),
     ] {
         let ok = storage::findings::update_finding_status(&pool, finding_id, status, None)

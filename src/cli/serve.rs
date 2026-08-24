@@ -21,6 +21,6 @@ pub async fn run_serve(config: &Arc<AppConfig>, remote: bool) -> Result<()> {
     if remote {
         crate::mcp::server::serve_remote(Arc::clone(config)).await
     } else {
-        crate::mcp::server::serve(Arc::clone(config)).await
+        Box::pin(crate::mcp::server::serve(Arc::clone(config))).await
     }
 }

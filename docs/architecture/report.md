@@ -153,6 +153,12 @@ evidence references, proof gaps, focused selection, and transition conditions. T
 neutralizes control characters and includes the canonical record. Mermaid uses generated node IDs
 and escaped labels so scanner-controlled text cannot become diagram syntax.
 
+Durable project reports are produced through `ControlQueryV1::GetProjectReport`, not from a raw
+`ScanResult`. They reconstruct every finding's canonical append-only triage projection before
+counting current states or active exact suppressions. Scan-time terminal, JSON, HTML, PDF, and SARIF
+formats intentionally do not invent triage state for findings that have not entered durable
+storage. See [finding triage](finding-triage.md).
+
 ## SARIF report (`sarif.rs`)
 
 SARIF uses typed source/runtime/package/artifact locations and writes the stable finding identity to

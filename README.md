@@ -202,6 +202,14 @@ using the `reproduced` state. Focused verification output is inert selector data
 request or runs a test. Legacy title/module chains are compatibility-only and labeled unverified.
 See [source/runtime correlation](docs/architecture/source-runtime-correlation.md).
 
+Durable findings use an append-only validation and triage lifecycle. Human and deterministic system
+transitions preserve the prior state, actor, reason, evidence references, time, and optional
+same-finding model-analysis provenance without changing scanner output. Correlation decisions keep
+every contributing finding/scanner/evidence identity, and suppressions are exact, project-scoped,
+time-bounded visibility metadata rather than deletion. Fixed rediscovery becomes `regressed`;
+materially changed proof returns the finding to `needs_context`. Control, CLI, MCP, and project
+reports consume the same validated projection. See [finding triage](docs/architecture/finding-triage.md).
+
 ```bash
 scorchkit run https://owned.example --profile quick --analyze
 scorchkit analyze report.json --focus prioritize
@@ -263,6 +271,9 @@ capability, and effect authorization source.
   environment-backed bearer and exact engagement binding, accepts only a loopback bind and Host,
   and exposes bounded v1 description, command/query, and replayable SSE event routes. Remote or
   public control hosting is not supported.
+- Finding triage mutations require `local-state`/`active-safe` grants for the exact canonical
+  runtime, source, artifact, network, or cloud target before append-only storage changes. A project,
+  model recommendation, or stored compatibility status is never sufficient authority.
 
 See [SECURITY.md](SECURITY.md) for the enforced boundary and current limitations.
 
@@ -301,6 +312,7 @@ Read [CONSTITUTION.md](CONSTITUTION.md), [AGENTS.md](AGENTS.md), and the
 - [Codex plugin](docs/guide/codex-plugin.md)
 - [AI adapters](docs/architecture/ai.md)
 - [Model analysis](docs/architecture/model-analysis.md)
+- [Finding triage lifecycle](docs/architecture/finding-triage.md)
 - [Module development](docs/architecture/modules.md)
 - [External tool inventory](docs/tools-checklist.md)
 - [Tutorials](docs/tutorials/README.md)

@@ -298,7 +298,9 @@ pub async fn execute(cli: Cli) -> Result<()> {
         Commands::Schedule { command } => run_schedule_command(&config, command).await,
 
         #[cfg(feature = "storage")]
-        Commands::Job { command } => crate::cli::job::run_job_command(&config, command).await,
+        Commands::Job { command } => {
+            Box::pin(crate::cli::job::run_job_command(&config, command)).await
+        }
 
         #[cfg(feature = "storage")]
         Commands::Webhook { command } => {
@@ -306,7 +308,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
         }
 
         #[cfg(feature = "mcp")]
-        Commands::Serve { remote } => crate::cli::serve::run_serve(&config, remote).await,
+        Commands::Serve { remote } => Box::pin(crate::cli::serve::run_serve(&config, remote)).await,
 
         #[cfg(feature = "control-api")]
         Commands::ControlApi { database_url } => {
@@ -724,7 +726,7 @@ async fn run_finding_command(
             crate::cli::finding::control_show(&control, &id).await
         }
         args::FindingCommands::Status { id, status, note } => {
-            crate::cli::finding::update_status(&pool, &id, &status, note.as_deref()).await
+            crate::cli::finding::update_status(&control, &id, &status, note.as_deref()).await
         }
     }
 }
@@ -1437,13 +1439,13 @@ mod tests {
 
     use chrono::Utc;
 
-    #[cfg(feature = "storage")]
-    use super::persist_scan_results;
     use super::{
         claim_extension_catalog_identity, effective_quiet, emit_scan_report,
         empty_plan_fallback_message, run_ai_analysis, run_application_dast,
         run_supply_chain_command, should_run_ai,
     };
+    #[cfg(feature = "storage")]
+    use super::{persist_scan_results, run_finding_command};
     #[cfg(feature = "infra")]
     use super::{run_assess, AssessmentTargets};
     #[cfg(all(feature = "infra", feature = "cloud"))]
@@ -1657,6 +1659,17 @@ mod tests {
             include_str!("runner.rs").split("#[cfg(test)]").next().expect("production source");
         let compact: String = production.split_whitespace().collect();
         assert!(compact.contains("result.merge(code_result);if!quiet{ifcode_degraded{"));
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn finding_dispatch_propagates_handler_or_storage_errors() {
+        let result = run_finding_command(
+            &Arc::new(AppConfig::default()),
+            crate::cli::args::FindingCommands::Show { id: "not-a-uuid".to_string() },
+        )
+        .await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]

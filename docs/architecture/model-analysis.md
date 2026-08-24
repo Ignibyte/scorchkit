@@ -6,7 +6,10 @@ separate from the legacy `scorchkit.ai/v1` compatibility adapters.
 
 Model output is interpretation. It cannot create scanner evidence, authorize an effect, modify an
 engagement, or transition a finding. A successful production response becomes a labeled
-`scorchkit.model-analysis/v1` child record with complete provenance.
+`scorchkit.model-analysis/v1` child record with complete provenance. An independently authorized
+triage transition may cite the identity of a model-analysis child belonging to the same finding,
+but the human or deterministic system actor remains the transition authority and disagreement is
+preserved in the append-only history.
 
 ## Exact role resolution
 
@@ -109,4 +112,5 @@ crates/scorchkit-config/src/model_analysis.rs   exact bindings and service data 
 src/model_analysis.rs                           resolution, readiness, and adapters
 src/storage/findings.rs                         durable child parity and public projection
 crates/scorchkit-control                        credential-safe readiness DTO and query
+crates/scorchkit-core/src/triage.rs             non-authoritative analysis reference boundary
 ```

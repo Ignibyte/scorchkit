@@ -561,7 +561,8 @@ async fn stateless_job_runs_through_mcp_transport_without_database() {
     let server = test_server_without_database();
     let (server_transport, client_transport) = tokio::io::duplex(1_048_576);
     let server_task = tokio::spawn(async move {
-        let running = server.serve(server_transport).await.map_err(|error| error.to_string())?;
+        let running =
+            Box::pin(server.serve(server_transport)).await.map_err(|error| error.to_string())?;
         running.waiting().await.map_err(|error| error.to_string())
     });
     let client = ().serve(client_transport).await.expect("initialize MCP client");
@@ -662,7 +663,8 @@ async fn spoofed_client_attribution_cannot_authorize_an_effect() {
     let server = unconfigured_test_server();
     let (server_transport, client_transport) = tokio::io::duplex(1_048_576);
     let server_task = tokio::spawn(async move {
-        let running = server.serve(server_transport).await.map_err(|error| error.to_string())?;
+        let running =
+            Box::pin(server.serve(server_transport)).await.map_err(|error| error.to_string())?;
         running.waiting().await.map_err(|error| error.to_string())
     });
     let client_info = rmcp::model::ClientInfo::new(
@@ -1418,7 +1420,8 @@ async fn test_resource_read_finding() {
     let read = result.unwrap();
     let text = resource_text(&read);
     let json: serde_json::Value = serde_json::from_str(text).unwrap();
-    assert_eq!(json["title"], "Weak TLS");
+    assert_eq!(json["canonical"]["title"], "Weak TLS");
+    assert_eq!(json["triage"]["currentState"], "needs_context");
 
     // Cleanup
     storage::projects::delete_project(&pool, project.id).await.unwrap();
@@ -1437,11 +1440,21 @@ async fn test_resource_read_invalid_uri() {
 #[tokio::test]
 async fn test_resource_read_not_found() {
     let Some(pool) = get_pool_or_skip().await else { return };
-    let server = test_server(pool);
+    let server = test_server(pool.clone());
     let fake_id = uuid::Uuid::new_v4();
     let uri = format!("scorchkit://projects/{fake_id}");
     let result = server.do_read_resource(&uri).await;
     assert!(result.is_err(), "non-existent project should return an error");
+
+    let project = storage::projects::create_project(&pool, &unique_name("missing-finding"), "")
+        .await
+        .unwrap();
+    let uri = format!("scorchkit://projects/{}/findings/{fake_id}", project.id);
+    assert!(
+        server.do_read_resource(&uri).await.is_err(),
+        "non-existent finding in an existing project should return an error"
+    );
+    storage::projects::delete_project(&pool, project.id).await.unwrap();
 }
 
 /// Verify `get_info()` capabilities include resources.

@@ -3,6 +3,8 @@
 #[cfg(feature = "storage")]
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+#[cfg(feature = "storage")]
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,6 +13,8 @@ use chrono::Utc;
 use futures_util::TryStreamExt;
 #[cfg(feature = "storage")]
 use sqlx::PgPool;
+#[cfg(feature = "storage")]
+use url::Url;
 use uuid::Uuid;
 
 use super::journal::{ControlEventJournal, JournaledJobStore};
@@ -36,12 +40,40 @@ use scorchkit_control::{
 const MAX_CONTROL_RECOVERY_CANDIDATES: usize = 1_000;
 #[cfg(feature = "storage")]
 use scorchkit_control::{
-    EvidenceViewV1, FindingViewV1, ProjectReportViewV1, ProjectViewV1, TargetViewV1,
+    EvidenceViewV1, FindingCorrelationFacetV1, FindingTriageSubjectViewV1, FindingTriageViewV1,
+    FindingViewV1, ProjectReportViewV1, ProjectViewV1, TargetViewV1,
 };
 
 #[derive(Clone)]
 struct VerifiedControlPrincipal {
     projection: ControlPrincipalV1,
+}
+
+#[cfg(feature = "storage")]
+struct TransitionFindingInput {
+    finding_id: Uuid,
+    state: String,
+    reason: String,
+    evidence_ids: Vec<String>,
+    model_analysis_identity: Option<String>,
+}
+
+#[cfg(feature = "storage")]
+struct FindingSuppressionInput {
+    finding_id: Uuid,
+    scope: String,
+    reason: String,
+    expires_at: Option<chrono::DateTime<Utc>>,
+    review_at: Option<chrono::DateTime<Utc>>,
+}
+
+#[cfg(feature = "storage")]
+struct FindingCorrelationInput {
+    finding_id: Uuid,
+    contributing_finding_ids: Vec<Uuid>,
+    evidence_ids: Vec<String>,
+    facets: Vec<FindingCorrelationFacetV1>,
+    explanation: String,
 }
 
 impl VerifiedControlPrincipal {
@@ -301,6 +333,15 @@ impl ControlService {
         command: ControlCommandV1,
     ) -> Result<ControlResultV1, ControlErrorV1> {
         let engagement = self.require_bound_engagement(principal)?;
+        #[cfg(feature = "storage")]
+        let command = match command {
+            command @ (ControlCommandV1::TransitionFinding { .. }
+            | ControlCommandV1::CreateFindingSuppression { .. }
+            | ControlCommandV1::RecordFindingCorrelation { .. }) => {
+                return self.finding_triage_command(principal, engagement, command).await;
+            }
+            command => command,
+        };
         match command {
             ControlCommandV1::StartJob { target, profile, modules, skip } => {
                 let target = canonical_new_control_web_target(&target)?;
@@ -349,6 +390,10 @@ impl ControlService {
             }
             ControlCommandV1::RecoverJobs => self.recover_jobs(engagement).await,
             #[cfg(feature = "storage")]
+            ControlCommandV1::TransitionFinding { .. }
+            | ControlCommandV1::CreateFindingSuppression { .. }
+            | ControlCommandV1::RecordFindingCorrelation { .. } => unreachable!(),
+            #[cfg(feature = "storage")]
             ControlCommandV1::CreateProject { name, description } => self
                 .create_project(engagement, &name, &description)
                 .await
@@ -374,8 +419,78 @@ impl ControlService {
             ControlCommandV1::CreateProject { .. }
             | ControlCommandV1::DeleteProject { .. }
             | ControlCommandV1::AddTarget { .. }
-            | ControlCommandV1::RemoveTarget { .. } => Err(storage_unavailable()),
+            | ControlCommandV1::RemoveTarget { .. }
+            | ControlCommandV1::TransitionFinding { .. }
+            | ControlCommandV1::CreateFindingSuppression { .. }
+            | ControlCommandV1::RecordFindingCorrelation { .. } => Err(storage_unavailable()),
         }
+    }
+
+    #[cfg(feature = "storage")]
+    async fn finding_triage_command(
+        &self,
+        principal: &VerifiedControlPrincipal,
+        engagement: &Engagement,
+        command: ControlCommandV1,
+    ) -> Result<ControlResultV1, ControlErrorV1> {
+        let finding = match command {
+            ControlCommandV1::TransitionFinding {
+                finding_id,
+                state,
+                reason,
+                evidence_ids,
+                model_analysis_identity,
+            } => {
+                self.transition_finding(
+                    principal,
+                    engagement,
+                    TransitionFindingInput {
+                        finding_id,
+                        state,
+                        reason,
+                        evidence_ids,
+                        model_analysis_identity,
+                    },
+                )
+                .await?
+            }
+            ControlCommandV1::CreateFindingSuppression {
+                finding_id,
+                scope,
+                reason,
+                expires_at,
+                review_at,
+            } => {
+                self.create_finding_suppression(
+                    principal,
+                    engagement,
+                    FindingSuppressionInput { finding_id, scope, reason, expires_at, review_at },
+                )
+                .await?
+            }
+            ControlCommandV1::RecordFindingCorrelation {
+                finding_id,
+                contributing_finding_ids,
+                evidence_ids,
+                facets,
+                explanation,
+            } => {
+                self.record_finding_correlation(
+                    principal,
+                    engagement,
+                    FindingCorrelationInput {
+                        finding_id,
+                        contributing_finding_ids,
+                        evidence_ids,
+                        facets,
+                        explanation,
+                    },
+                )
+                .await?
+            }
+            _ => unreachable!(),
+        };
+        Ok(ControlResultV1::Finding(finding))
     }
 
     fn verify_principal_binding(
@@ -669,6 +784,9 @@ impl ControlService {
                 .await
                 .map_err(control_error)?;
         let mut severity_counts = BTreeMap::new();
+        let mut triage_state_counts = BTreeMap::new();
+        let mut active_suppressed_count = 0_u32;
+        let generated_at = Utc::now();
         for finding in &findings {
             let severity =
                 finding.canonical.get("severity").and_then(serde_json::Value::as_str).ok_or_else(
@@ -680,6 +798,30 @@ impl ControlService {
                     },
                 )?;
             *severity_counts.entry(severity.to_string()).or_insert(0_u32) += 1;
+            let triage = finding.triage.as_ref().ok_or_else(|| {
+                ControlErrorV1::new(
+                    ControlErrorCodeV1::CanonicalProjectionMismatch,
+                    "validated report finding has no triage projection",
+                )
+            })?;
+            let subject = finding.triage_subject.as_ref().ok_or_else(|| {
+                ControlErrorV1::new(
+                    ControlErrorCodeV1::CanonicalProjectionMismatch,
+                    "validated report finding has no triage subject",
+                )
+            })?;
+            *triage_state_counts
+                .entry(triage.history.current_state.as_str().to_string())
+                .or_insert(0_u32) += 1;
+            if !triage.active_suppression_ids(subject, generated_at).is_empty() {
+                active_suppressed_count =
+                    active_suppressed_count.checked_add(1).ok_or_else(|| {
+                        ControlErrorV1::new(
+                            ControlErrorCodeV1::LimitExceeded,
+                            "active suppressed finding count exceeds v1",
+                        )
+                    })?;
+            }
         }
         Ok(ProjectReportViewV1 {
             schema_version: "scorchkit.control.project-report/v1".to_string(),
@@ -693,7 +835,9 @@ impl ControlService {
                 )
             })?,
             severity_counts,
-            generated_at: Utc::now(),
+            triage_state_counts,
+            active_suppressed_count,
+            generated_at,
         })
     }
 
@@ -800,6 +944,149 @@ impl ControlService {
         crate::storage::projects::remove_target(pool, project_id, target_id)
             .await
             .map_err(control_error)
+    }
+
+    #[cfg(feature = "storage")]
+    async fn transition_finding(
+        &self,
+        principal: &VerifiedControlPrincipal,
+        engagement: &Engagement,
+        input: TransitionFindingInput,
+    ) -> Result<FindingViewV1, ControlErrorV1> {
+        self.authorize_finding_mutation(engagement, input.finding_id).await?;
+        let next = input.state.parse::<scorchkit_core::FindingTriageState>().map_err(|_| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::InvalidRequest,
+                "finding triage state is not in the closed v1 vocabulary",
+            )
+        })?;
+        crate::storage::triage::transition_finding(
+            self.require_pool()?,
+            crate::storage::triage::FindingTransitionWrite {
+                finding_id: input.finding_id,
+                next,
+                actor: triage_actor(principal),
+                reason: input.reason,
+                evidence_ids: input.evidence_ids,
+                model_analysis_identity: input.model_analysis_identity,
+                observed_at: Utc::now(),
+            },
+        )
+        .await
+        .map_err(control_error)?;
+        self.get_finding(input.finding_id).await
+    }
+
+    #[cfg(feature = "storage")]
+    async fn create_finding_suppression(
+        &self,
+        principal: &VerifiedControlPrincipal,
+        engagement: &Engagement,
+        input: FindingSuppressionInput,
+    ) -> Result<FindingViewV1, ControlErrorV1> {
+        let finding = self.authorize_finding_mutation(engagement, input.finding_id).await?;
+        let kind =
+            input.scope.parse::<scorchkit_core::FindingSuppressionScopeKind>().map_err(|_| {
+                ControlErrorV1::new(
+                    ControlErrorCodeV1::InvalidRequest,
+                    "finding suppression scope is not in the closed v1 vocabulary",
+                )
+            })?;
+        let subject = finding.triage_subject.as_ref().ok_or_else(|| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::CanonicalProjectionMismatch,
+                "validated finding has no triage subject",
+            )
+        })?;
+        crate::storage::triage::create_suppression(
+            self.require_pool()?,
+            crate::storage::triage::FindingSuppressionWrite {
+                finding_id: input.finding_id,
+                subject: subject.clone(),
+                kind,
+                actor: triage_actor(principal),
+                reason: input.reason,
+                created_at: Utc::now(),
+                expires_at: input.expires_at,
+                review_at: input.review_at,
+            },
+        )
+        .await
+        .map_err(control_error)?;
+        self.get_finding(input.finding_id).await
+    }
+
+    #[cfg(feature = "storage")]
+    async fn record_finding_correlation(
+        &self,
+        principal: &VerifiedControlPrincipal,
+        engagement: &Engagement,
+        input: FindingCorrelationInput,
+    ) -> Result<FindingViewV1, ControlErrorV1> {
+        let parent = self.authorize_finding_mutation(engagement, input.finding_id).await?;
+        for contributor_id in &input.contributing_finding_ids {
+            let contributor = self.authorize_finding_mutation(engagement, *contributor_id).await?;
+            if contributor.row.project_id != parent.row.project_id {
+                return Err(ControlErrorV1::new(
+                    ControlErrorCodeV1::InvalidRequest,
+                    "finding correlation contributors must belong to the parent project",
+                ));
+            }
+        }
+        let facets = input
+            .facets
+            .into_iter()
+            .map(|facet| scorchkit_core::CorrelationKey::new(facet.namespace, facet.value))
+            .collect();
+        crate::storage::triage::record_correlation(
+            self.require_pool()?,
+            crate::storage::triage::FindingCorrelationWrite {
+                finding_id: input.finding_id,
+                contributing_finding_ids: input.contributing_finding_ids,
+                evidence_ids: input.evidence_ids,
+                facets,
+                explanation: input.explanation,
+                actor: triage_actor(principal),
+                created_at: Utc::now(),
+            },
+        )
+        .await
+        .map_err(control_error)?;
+        self.get_finding(input.finding_id).await
+    }
+
+    #[cfg(feature = "storage")]
+    async fn authorize_finding_mutation(
+        &self,
+        engagement: &Engagement,
+        finding_id: Uuid,
+    ) -> Result<crate::storage::findings::ValidatedFinding, ControlErrorV1> {
+        authorize_control_state(engagement)?;
+        let finding =
+            crate::storage::findings::get_validated_finding(self.require_pool()?, finding_id)
+                .await
+                .map_err(control_error)?
+                .ok_or_else(|| not_found("finding"))?;
+        let scan_target = sqlx::query_scalar::<_, String>(
+            "SELECT target_url FROM scan_records WHERE id = $1 AND project_id = $2",
+        )
+        .bind(finding.row.scan_id)
+        .bind(finding.row.project_id)
+        .fetch_optional(self.require_pool()?)
+        .await
+        .map_err(|error| {
+            control_error(ScorchError::Database(format!(
+                "load finding authorization target: {error}"
+            )))
+        })?
+        .ok_or_else(|| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::CanonicalProjectionMismatch,
+                "validated finding has no originating scan target",
+            )
+        })?;
+        authorize_finding_target(engagement, &finding, &scan_target)?;
+        Ok(finding)
     }
 
     #[cfg(feature = "storage")]
@@ -965,6 +1252,140 @@ fn authorize_control_state(engagement: &Engagement) -> Result<(), ControlErrorV1
         ));
     }
     Ok(())
+}
+
+#[cfg(feature = "storage")]
+fn triage_actor(principal: &VerifiedControlPrincipal) -> scorchkit_core::TriageActor {
+    scorchkit_core::TriageActor::new(
+        scorchkit_core::TriageActorKind::Human,
+        principal.projection.subject.clone(),
+    )
+}
+
+#[cfg(feature = "storage")]
+fn authorize_finding_target(
+    engagement: &Engagement,
+    finding: &crate::storage::findings::ValidatedFinding,
+    scan_target: &str,
+) -> Result<(), ControlErrorV1> {
+    let record = finding
+        .canonical
+        .get("appsec")
+        .cloned()
+        .map(serde_json::from_value::<scorchkit_core::FindingRecordV2>)
+        .transpose()
+        .map_err(|_| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::CanonicalProjectionMismatch,
+                "validated finding has an invalid canonical application-security record",
+            )
+        })?
+        .ok_or_else(|| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::CanonicalProjectionMismatch,
+                "validated finding has no canonical application-security record",
+            )
+        })?;
+    let target = finding_location_policy_target(&record.location, scan_target)
+        .or_else(|| policy_target_from_stored_value(scan_target))
+        .ok_or_else(|| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::InvalidRequest,
+                "finding has no policy-addressable canonical target",
+            )
+        })?;
+    engagement
+        .authorize(target, Capability::LocalState, EffectClass::ActiveSafe)
+        .require()
+        .map(|_| ())
+        .map_err(|_| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::PolicyDenied,
+                "active engagement does not authorize the finding target",
+            )
+        })
+}
+
+#[cfg(feature = "storage")]
+fn finding_location_policy_target(
+    location: &scorchkit_core::ObservationLocation,
+    scan_target: &str,
+) -> Option<PolicyTarget> {
+    match location {
+        scorchkit_core::ObservationLocation::Runtime { uri, .. } => PolicyTarget::web(uri).ok(),
+        scorchkit_core::ObservationLocation::Source { path, .. } => {
+            code_policy_target(path, scan_target)
+        }
+        scorchkit_core::ObservationLocation::Artifact { uri, .. } => {
+            policy_target_from_stored_value(uri)
+        }
+        scorchkit_core::ObservationLocation::Legacy { value } => {
+            policy_target_from_stored_value(value)
+        }
+        scorchkit_core::ObservationLocation::Package { .. } => None,
+    }
+}
+
+#[cfg(feature = "storage")]
+fn code_policy_target(path: &str, scan_target: &str) -> Option<PolicyTarget> {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        return PolicyTarget::code(&path).ok();
+    }
+    let root = stored_code_path(scan_target)?;
+    let candidate = if root.is_dir() { root.join(path) } else { root.parent()?.join(path) };
+    PolicyTarget::code(&candidate).ok()
+}
+
+#[cfg(feature = "storage")]
+fn policy_target_from_stored_value(value: &str) -> Option<PolicyTarget> {
+    let value = value.trim();
+    if let Ok(target) = PolicyTarget::web(value) {
+        return Some(target);
+    }
+    if let Some(cloud) = value.strip_prefix("cloud://") {
+        return (!cloud.is_empty()).then(|| PolicyTarget::cloud(cloud));
+    }
+    if ["aws:", "gcp:", "azure:", "k8s:"].iter().any(|prefix| value.starts_with(prefix)) {
+        return Some(PolicyTarget::cloud(value));
+    }
+    if let Some(network) =
+        value.strip_prefix("infra://").or_else(|| value.strip_prefix("network://"))
+    {
+        return (!network.is_empty()).then(|| PolicyTarget::network(network));
+    }
+    if let Some(path) = stored_code_path(value) {
+        return PolicyTarget::code(&path).ok();
+    }
+    is_network_literal(value).then(|| PolicyTarget::network(value))
+}
+
+#[cfg(feature = "storage")]
+fn stored_code_path(value: &str) -> Option<PathBuf> {
+    let path = if value.starts_with("file://") {
+        Url::parse(value).ok()?.to_file_path().ok()?
+    } else {
+        PathBuf::from(value)
+    };
+    path.is_absolute().then_some(path)
+}
+
+#[cfg(feature = "storage")]
+fn is_network_literal(value: &str) -> bool {
+    value.parse::<IpAddr>().is_ok()
+        || value.parse::<SocketAddr>().is_ok()
+        || value.split_once('/').is_some_and(|(address, prefix)| {
+            let Ok(address) = address.parse::<IpAddr>() else {
+                return false;
+            };
+            let Ok(prefix) = prefix.parse::<u8>() else {
+                return false;
+            };
+            match address {
+                IpAddr::V4(_) => prefix <= 32,
+                IpAddr::V6(_) => prefix <= 128,
+            }
+        })
 }
 
 #[cfg(feature = "storage")]
@@ -1340,6 +1761,67 @@ fn safe_stored_web_projection(target: &str, resource: &str) -> Result<String, Co
 fn finding_view(
     finding: crate::storage::findings::ValidatedFinding,
 ) -> Result<FindingViewV1, ControlErrorV1> {
+    let projection = finding.triage.ok_or_else(|| {
+        ControlErrorV1::new(
+            ControlErrorCodeV1::CanonicalProjectionMismatch,
+            "validated finding has no triage projection",
+        )
+    })?;
+    let subject = finding.triage_subject.ok_or_else(|| {
+        ControlErrorV1::new(
+            ControlErrorCodeV1::CanonicalProjectionMismatch,
+            "validated finding has no triage subject",
+        )
+    })?;
+    let active_suppression_ids = projection.active_suppression_ids(&subject, Utc::now());
+    let transitions = projection
+        .history
+        .transitions
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::Internal,
+                "failed to serialize validated finding transitions",
+            )
+        })?;
+    let correlations = projection
+        .correlations
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::Internal,
+                "failed to serialize validated finding correlations",
+            )
+        })?;
+    let suppressions = projection
+        .suppressions
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::Internal,
+                "failed to serialize validated finding suppressions",
+            )
+        })?;
+    let triage = FindingTriageViewV1 {
+        schema: projection.schema,
+        current_state: projection.history.current_state.as_str().to_string(),
+        subject: FindingTriageSubjectViewV1 {
+            project_identity: subject.project_identity,
+            finding_identity: subject.finding_identity,
+            rule_identity: subject.rule_identity,
+            target_identity: subject.target_identity,
+        },
+        transitions,
+        correlations,
+        suppressions,
+        active_suppression_ids,
+    };
     Ok(FindingViewV1 {
         id: finding.row.id,
         project_id: finding.row.project_id,
@@ -1360,6 +1842,7 @@ fn finding_view(
         last_seen: finding.row.last_seen,
         found_at: finding.row.found_at,
         canonical: finding.canonical,
+        triage: Box::new(triage),
     })
 }
 
@@ -1431,7 +1914,10 @@ fn control_error(error: ScorchError) -> ControlErrorV1 {
             ControlErrorCodeV1::NotFound
         }
         ScorchError::Job(_) => ControlErrorCodeV1::Conflict,
-        ScorchError::Database(message) if message.starts_with("canonical projection mismatch:") => {
+        ScorchError::Database(message)
+            if message.starts_with("canonical projection mismatch:")
+                || message.starts_with("canonical triage projection mismatch:") =>
+        {
             ControlErrorCodeV1::CanonicalProjectionMismatch
         }
         ScorchError::Database(message) if message.contains("cursor was not found") => {
@@ -1450,7 +1936,10 @@ fn control_error(error: ScorchError) -> ControlErrorV1 {
         ScorchError::InvalidTarget { .. } => {
             "control request contains an invalid target".to_string()
         }
-        ScorchError::Database(message) if message.starts_with("canonical projection mismatch:") => {
+        ScorchError::Database(message)
+            if message.starts_with("canonical projection mismatch:")
+                || message.starts_with("canonical triage projection mismatch:") =>
+        {
             "control durable canonical projection failed validation".to_string()
         }
         ScorchError::Job(message) | ScorchError::Database(message)
@@ -2237,6 +2726,131 @@ mod tests {
         crate::storage::projects::delete_project(&pool, denied.id)
             .await
             .expect("delete denied-delete fixture");
+    }
+
+    #[cfg(feature = "storage")]
+    #[test]
+    fn stored_finding_targets_map_to_exact_policy_kinds() {
+        let runtime = scorchkit_core::ObservationLocation::Runtime {
+            uri: "https://example.test/path".to_string(),
+            route: Some("/path".to_string()),
+            parameter: None,
+        };
+        assert!(matches!(
+            finding_location_policy_target(&runtime, "https://example.test/"),
+            Some(PolicyTarget::Web(_))
+        ));
+        let source = scorchkit_core::ObservationLocation::Source {
+            path: "src/lib.rs".to_string(),
+            region: None,
+        };
+        assert!(matches!(
+            finding_location_policy_target(&source, env!("CARGO_MANIFEST_DIR")),
+            Some(PolicyTarget::Code(_))
+        ));
+        assert!(matches!(
+            code_policy_target("src/lib.rs", env!("CARGO_MANIFEST_DIR")),
+            Some(PolicyTarget::Code(_))
+        ));
+        let package = scorchkit_core::ObservationLocation::Package {
+            ecosystem: "cargo".to_string(),
+            name: "fixture".to_string(),
+            version: Some("1.0.0".to_string()),
+            manifest_path: None,
+        };
+        assert!(finding_location_policy_target(&package, "package@1.0.0").is_none());
+
+        assert!(matches!(
+            policy_target_from_stored_value("https://example.test/path"),
+            Some(PolicyTarget::Web(_))
+        ));
+        assert_eq!(
+            policy_target_from_stored_value("cloud://aws:123456789012"),
+            Some(PolicyTarget::cloud("aws:123456789012"))
+        );
+        assert_eq!(
+            policy_target_from_stored_value("infra://127.0.0.1:443"),
+            Some(PolicyTarget::network("127.0.0.1:443"))
+        );
+        assert_eq!(
+            policy_target_from_stored_value("2001:db8::1"),
+            Some(PolicyTarget::network("2001:db8::1"))
+        );
+        assert!(matches!(
+            policy_target_from_stored_value(env!("CARGO_MANIFEST_DIR")),
+            Some(PolicyTarget::Code(_))
+        ));
+        assert!(policy_target_from_stored_value("package@1.2.3").is_none());
+        assert!(is_network_literal("10.0.0.0/32"));
+        assert!(!is_network_literal("10.0.0.0/33"));
+        assert!(is_network_literal("2001:db8::/128"));
+        assert!(!is_network_literal("2001:db8::/129"));
+    }
+
+    #[cfg(feature = "storage")]
+    #[test]
+    fn finding_authorization_rejects_a_missing_canonical_application_record() {
+        let config = config();
+        let engagement = config.engagement.as_ref().expect("engagement");
+        let now = Utc::now();
+        let finding = crate::storage::findings::ValidatedFinding {
+            row: crate::storage::models::TrackedFinding {
+                id: Uuid::new_v4(),
+                scan_id: Uuid::new_v4(),
+                project_id: Uuid::new_v4(),
+                fingerprint: "legacy".to_string(),
+                identity_schema: "scorchkit.finding-identity/v2".to_string(),
+                stable_identity: "a".repeat(64),
+                correlation_keys: serde_json::json!([]),
+                module_id: "fixture".to_string(),
+                severity: "high".to_string(),
+                title: "Fixture".to_string(),
+                description: "Fixture".to_string(),
+                affected_target: "https://example.test/".to_string(),
+                evidence: None,
+                remediation: None,
+                owasp_category: None,
+                cwe_id: Some(79),
+                raw_finding: serde_json::json!({}),
+                confidence: 1.0,
+                first_seen: now,
+                last_seen: now,
+                seen_count: 1,
+                status: "new".to_string(),
+                triage_state: "needs_context".to_string(),
+                status_note: None,
+                found_at: now,
+            },
+            canonical: serde_json::json!({}),
+            triage: None,
+            triage_subject: None,
+        };
+        assert_eq!(
+            authorize_finding_target(engagement, &finding, "https://example.test/")
+                .expect_err("missing canonical appsec record")
+                .code,
+            ControlErrorCodeV1::CanonicalProjectionMismatch
+        );
+    }
+
+    #[test]
+    fn control_error_classification_and_safe_messages_are_exact() {
+        let conflict = control_error(ScorchError::Job("already running".to_string()));
+        assert_eq!(conflict.code, ControlErrorCodeV1::Conflict);
+        assert!(conflict.message.contains("already running"));
+
+        for prefix in [
+            "canonical projection mismatch: fixture",
+            "canonical triage projection mismatch: fixture",
+        ] {
+            let mismatch = control_error(ScorchError::Database(prefix.to_string()));
+            assert_eq!(mismatch.code, ControlErrorCodeV1::CanonicalProjectionMismatch);
+            assert_eq!(mismatch.message, "control durable canonical projection failed validation");
+        }
+
+        let internal = control_error(ScorchError::Database("driver detail".to_string()));
+        assert_eq!(internal.code, ControlErrorCodeV1::Internal);
+        assert_eq!(internal.message, "control durable storage operation failed");
     }
 
     #[test]

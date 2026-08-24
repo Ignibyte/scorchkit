@@ -41,6 +41,13 @@ All notable changes to ScorchKit will be documented in this file.
   89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
 
 ### Added
+- **Durable finding validation and triage (TICKET-031 / SK-053)** — Added a provider-neutral
+  seven-state append-only lifecycle with attributed evidence-backed transitions, multi-scanner
+  correlation decisions, exact time-bounded suppressions, accepted risk, fixes, and deterministic
+  regression/proof-drift handling. Migration 013 converts legacy statuses into canonical initial
+  history while retaining headless adapters. Control, CLI, MCP, and project reports now consume one
+  fail-closed durable projection; model recommendations remain non-authoritative provenance and
+  every mutation requires exact engagement, target, local-state, and active-safe authorization.
 - **Provider-neutral model analysis (TICKET-030 / SK-052)** — Added six exact model roles with
   disabled-by-default readiness, one provider/model binding per role, shared host/service/local
   request and response contracts, complete labeled provenance, and a deterministic five-class

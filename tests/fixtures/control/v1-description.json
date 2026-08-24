@@ -5,6 +5,7 @@
   "operations": [
     ["add_target", "command", "local_state", true],
     ["cancel_job", "command", "local_state", true],
+    ["create_finding_suppression", "command", "local_state", true],
     ["create_project", "command", "local_state", true],
     ["delete_project", "command", "local_state", true],
     ["describe", "query", "read", false],
@@ -21,11 +22,13 @@
     ["list_projects", "query", "read", false],
     ["list_targets", "query", "read", false],
     ["read_events", "query", "read", false],
+    ["record_finding_correlation", "command", "local_state", true],
     ["recover_jobs", "command", "local_state", true],
     ["remove_target", "command", "local_state", true],
     ["resolve_configuration", "query", "read", true],
     ["resume_job", "command", "external_effect", true],
-    ["start_job", "command", "external_effect", true]
+    ["start_job", "command", "external_effect", true],
+    ["transition_finding", "command", "local_state", true]
   ],
   "schemas": [
     "request",
@@ -42,5 +45,5 @@
     "module",
     "model_readiness"
   ],
-  "schemaSha256": "3ddbde98adb2fbfd38b159fd36d6f63f6b5c864e4adc8a4155632e5c93f04629"
+  "schemaSha256": "44480ee9de34a4ecd3b9a3d81d071761d0ec9958557b2d20e5e5346a3a6fbaa8"
 }

@@ -4,6 +4,7 @@
 
 use std::{error::Error, ffi::OsString, io, path::Path, process::Command};
 
+use scorchkit::engine::triage::FindingTriageTransition;
 use sha2::{Digest, Sha256};
 use sqlx::{Executor, PgPool, Row};
 
@@ -176,8 +177,8 @@ async fn verify_forward_upgrade(
     )
     .fetch_one(&pool)
     .await?;
-    if migrated_finding.try_get::<String, _>("stable_identity")?
-        != "legacy:release-fixture-fingerprint"
+    let migrated_identity = migrated_finding.try_get::<String, _>("stable_identity")?;
+    if migrated_identity != "legacy:release-fixture-fingerprint"
         || migrated_finding.try_get::<String, _>("identity_schema")?
             != "scorchkit.finding-identity/legacy-v1"
     {
@@ -185,13 +186,47 @@ async fn verify_forward_upgrade(
             other_error("legacy finding identity was not migrated deterministically").into()
         );
     }
-    let current_tables = sqlx::query_scalar::<_, i64>(
-        "SELECT count(*) FROM pg_class WHERE relname IN \
-         ('scan_jobs', 'finding_evidence', 'attack_paths', 'webhook_deliveries')",
+    let triage = sqlx::query(
+        "SELECT finding.triage_state, finding.status, transition.transition_identity, \
+                transition.transition_schema, transition.sequence, transition.from_state, \
+                transition.to_state, transition.actor_kind, transition.actor_identity, \
+                transition.observed_at, transition.raw_transition \
+         FROM tracked_findings AS finding \
+         INNER JOIN finding_triage_transitions AS transition \
+             ON transition.tracked_finding_id = finding.id AND transition.sequence = 1 \
+         WHERE finding.id = '44444444-4444-4444-8444-444444444444'",
     )
     .fetch_one(&pool)
     .await?;
-    if current_tables != 4 {
+    let raw_transition = triage.try_get::<serde_json::Value, _>("raw_transition")?;
+    let transition: FindingTriageTransition = serde_json::from_value(raw_transition.clone())?;
+    transition.validate()?;
+    if triage.try_get::<String, _>("triage_state")? != "validated"
+        || triage.try_get::<String, _>("status")? != "acknowledged"
+        || triage.try_get::<String, _>("transition_identity")? != transition.identity
+        || triage.try_get::<String, _>("transition_schema")?
+            != "scorchkit.finding-triage-transition/v1"
+        || triage.try_get::<i32, _>("sequence")? != 1
+        || triage.try_get::<Option<String>, _>("from_state")?.is_some()
+        || triage.try_get::<String, _>("to_state")? != "validated"
+        || triage.try_get::<String, _>("actor_kind")? != "system"
+        || triage.try_get::<String, _>("actor_identity")? != "migration/v1"
+        || triage.try_get::<chrono::DateTime<chrono::Utc>, _>("observed_at")?.timestamp_micros()
+            != transition.observed_at.timestamp_micros()
+        || transition.finding_identity != migrated_identity
+        || serde_json::to_value(&transition)? != raw_transition
+    {
+        return Err(other_error("legacy finding triage history was not seeded canonically").into());
+    }
+    let current_tables = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM pg_class WHERE relname IN \
+         ('scan_jobs', 'finding_evidence', 'attack_paths', 'webhook_deliveries', \
+          'finding_triage_transitions', 'finding_correlation_decisions', \
+          'finding_suppressions')",
+    )
+    .fetch_one(&pool)
+    .await?;
+    if current_tables != 7 {
         return Err(other_error("current release tables were not installed").into());
     }
     let migration_state = sqlx::query(
@@ -200,8 +235,8 @@ async fn verify_forward_upgrade(
     )
     .fetch_one(&pool)
     .await?;
-    if migration_state.try_get::<i64, _>("migration_count")? != 12
-        || migration_state.try_get::<Option<i64>, _>("latest_version")? != Some(12)
+    if migration_state.try_get::<i64, _>("migration_count")? != 13
+        || migration_state.try_get::<Option<i64>, _>("latest_version")? != Some(13)
     {
         return Err(other_error("current migration ledger is incomplete").into());
     }

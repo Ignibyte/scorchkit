@@ -28,6 +28,7 @@ pub mod models;
 pub mod projects;
 pub mod scans;
 pub mod schedules;
+pub mod triage;
 pub mod webhooks;
 
 use std::str::FromStr;

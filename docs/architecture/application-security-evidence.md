@@ -17,6 +17,8 @@ Scanner observations and agent interpretation are different data classes:
 - code flows preserve each independent thread and every ordered source, propagation, and sink
   location without becoming finding-identity input;
 - agent analyses name their provider/model and reference the finding or evidence they interpret.
+- triage transitions, correlation decisions, and suppressions record later decisions without
+  changing either scanner observations or analysis records.
 
 An agent analysis never mutates scanner evidence and is never used as a scanner fingerprint. Raw
 provider responses remain provider-layer audit material. The finding contract contains only the
@@ -65,6 +67,9 @@ boundary.
 `tracked_findings` stores the stable v2 identity, schema, correlation keys, and the latest
 compatibility snapshot. `finding_evidence` is an append-preserving child table keyed by tracked
 finding and evidence identity. Finding upsert and evidence insertion share one transaction.
+Append-only triage, correlation, and exact time-bounded suppression children remain separate from
+that detector record. Their ordered canonical projection is described in
+[finding triage](finding-triage.md).
 
 JSON serializes the canonical v2 companion alongside legacy fields. SARIF uses stable identity in
 `partialFingerprints`, converts typed locations into the closest SARIF location form, and places

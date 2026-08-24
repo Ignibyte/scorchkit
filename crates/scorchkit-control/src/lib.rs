@@ -18,12 +18,14 @@ pub use configuration::{
 pub use contract::{
     ControlCommandV1, ControlOperationV1, ControlPrincipalKindV1, ControlPrincipalV1,
     ControlQueryV1, ControlRequestV1, ControlResponseOutcomeV1, ControlResponseV1, EventCursorV1,
-    PageRequestV1, CONTROL_API_SCHEMA_V1, CONTROL_MAX_CURSOR_BYTES, CONTROL_MAX_PAGE_SIZE,
+    FindingCorrelationFacetV1, PageRequestV1, CONTROL_API_SCHEMA_V1, CONTROL_MAX_CURSOR_BYTES,
+    CONTROL_MAX_PAGE_SIZE, CONTROL_MAX_TRIAGE_REFERENCES,
 };
 pub use error::{ControlErrorCodeV1, ControlErrorV1};
 pub use event::{ControlEventBatchV1, ControlEventKindV1, ControlEventV1};
 pub use resource::{
-    ControlResultV1, EngagementViewV1, EvidenceViewV1, FindingViewV1, JobProgressViewV1, JobViewV1,
-    ModelReadinessViewV1, ModuleViewV1, PageV1, ProjectReportViewV1, ProjectViewV1, TargetViewV1,
+    ControlResultV1, EngagementViewV1, EvidenceViewV1, FindingTriageSubjectViewV1,
+    FindingTriageViewV1, FindingViewV1, JobProgressViewV1, JobViewV1, ModelReadinessViewV1,
+    ModuleViewV1, PageV1, ProjectReportViewV1, ProjectViewV1, TargetViewV1,
 };
 pub use schema::{description_v1, ControlApiDescriptionV1, ControlOperationDescriptionV1};

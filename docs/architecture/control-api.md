@@ -1,10 +1,10 @@
 # Control API
 
 ScorchKit exposes one versioned provider-neutral application-service contract for configuration,
-engagements, projects, targets, DAST jobs, canonical findings/evidence, application modules,
-model-role readiness, reports, and ordered events. The stable DTOs and generated JSON Schemas live in the
-`scorchkit-control` package; composed authorization, execution, storage validation, and transports
-remain in the root package.
+engagements, projects, targets, DAST jobs, canonical findings/evidence and triage, application
+modules, model-role readiness, reports, and ordered events. The stable DTOs and generated JSON
+Schemas live in the `scorchkit-control` package; composed authorization, execution, storage
+validation, and transports remain in the root package.
 
 ```text
 library / storage CLI / MCP / loopback HTTP
@@ -44,9 +44,10 @@ are redacted as well, so legacy rows cannot expose user information, passwords, 
 values, or fragments through the control boundary.
 
 CLI and MCP control operations translate their existing inputs and renderers around the same
-service. They do not receive canonical finding/evidence storage rows. Scan-specific orchestration,
-finding lifecycle transitions not present in v1, schedules, and intelligence remain separate
-application workflows.
+service. They do not receive canonical finding/evidence/triage storage rows. The legacy CLI and MCP
+finding-status commands map their old vocabulary into `TransitionFinding`; suppression and
+correlation writes are also first-class v1 control commands. Scan-specific orchestration,
+schedules, and intelligence remain separate application workflows.
 
 Module views include engine-assigned trust and runtime labels. Explicitly configured isolated
 extensions appear as `third_party` / `wasm_worker` only after the control service reauthorizes and
@@ -65,6 +66,16 @@ is never returned. Finding pages use immutable `(first_seen, id)` ordering, evid
 Append-preserved agent/model analysis children are bounded and independently checked against their
 raw document, schema, identity, parent, and timestamp before being reattached to the canonical
 finding returned through control and MCP.
+
+Triage commands first validate local-state grants, load the complete canonical finding, derive its
+runtime, source, artifact, network, or cloud policy target (falling back to the originating scan
+target only when the finding location is not independently addressable), and require an exact
+`local_state`/`active_safe` authorization. Writes then append one transition, suppression, or
+correlation decision transactionally. Reads reconstruct ordered history and validate every raw
+child, duplicated column, contributor/evidence owner, exact suppression selector, and current-state
+projection. The finding view exposes the whole history and active-suppression verdict; project
+reports aggregate canonical triage states and active suppressions. See
+[finding triage](finding-triage.md).
 
 ## Model readiness
 

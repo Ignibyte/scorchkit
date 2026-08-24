@@ -13,7 +13,7 @@ use crate::engine::finding::Finding;
 use crate::report::terminal::escape_terminal_text;
 use crate::storage::findings;
 use crate::storage::models::{TrackedFinding, VulnStatus};
-use scorchkit_control::{ControlQueryV1, ControlResultV1, FindingViewV1};
+use scorchkit_control::{ControlCommandV1, ControlQueryV1, ControlResultV1, FindingViewV1};
 
 #[derive(Debug, PartialEq, Eq)]
 enum FindingFilter<'a> {
@@ -98,11 +98,12 @@ pub(super) async fn control_list(
     for view in values {
         let finding = decoded_finding(&view)?;
         println!(
-            "  {} {} {} [{}] ({})",
+            "  {} {} {} [{}; triage {}] ({})",
             view.id.to_string().dimmed(),
             colorize_severity(&finding.severity.to_string()),
             escape_terminal_text(&finding.title),
             colorize_status(&view.status),
+            escape_terminal_text(&view.triage.current_state),
             format!("seen {}x", view.seen_count).dimmed(),
         );
         println!("    {}", escape_terminal_text(&finding.affected_target).dimmed());
@@ -132,6 +133,7 @@ pub(super) async fn control_show(control: &LocalControlClient, id_str: &str) -> 
     println!("       Title: {}", escape_terminal_text(&finding.title).bold());
     println!("    Severity: {}", colorize_severity(&finding.severity.to_string()));
     println!("      Status: {}", colorize_status(&view.status));
+    println!("      Triage: {}", escape_terminal_text(&view.triage.current_state));
     println!("      Module: {}", escape_terminal_text(&finding.module_id).cyan());
     println!("      Target: {}", escape_terminal_text(&finding.affected_target));
     println!("  First seen: {}", view.first_seen.format("%Y-%m-%d %H:%M UTC"));
@@ -153,6 +155,9 @@ pub(super) async fn control_show(control: &LocalControlClient, id_str: &str) -> 
     if let Some(note) = view.status_note.as_deref() {
         println!("\n  {}\n  {}", "Status Note".bold(), escape_terminal_text(note));
     }
+    println!("  Transitions: {}", view.triage.transitions.len());
+    println!(" Correlations: {}", view.triage.correlations.len());
+    println!(" Active suppressions: {}", view.triage.active_suppression_ids.len());
     println!();
     Ok(())
 }
@@ -270,8 +275,8 @@ pub async fn show(pool: &PgPool, id_str: &str) -> Result<()> {
 ///
 /// Returns an error if the finding UUID is invalid, the status string
 /// is not a valid lifecycle status, or the database query fails.
-pub async fn update_status(
-    pool: &PgPool,
+pub(super) async fn update_status(
+    control: &LocalControlClient,
     id_str: &str,
     status_str: &str,
     note: Option<&str>,
@@ -286,19 +291,31 @@ pub async fn update_status(
         ))
     })?;
 
-    let updated = findings::update_finding_status(pool, id, status, note).await?;
-
-    if updated {
-        println!(
-            "{} Finding status updated to '{}'.",
-            "success:".green().bold(),
-            colorize_status(status.as_db_str()),
-        );
-        if let Some(n) = note {
-            println!("  Note: {}", escape_terminal_text(n));
-        }
-    } else {
-        println!("{} Finding not found.", "warning:".yellow().bold());
+    let state = scorchkit_core::triage_state_from_legacy(status.as_db_str())
+        .ok_or_else(|| ScorchError::Config("legacy finding status has no triage mapping".into()))?;
+    let reason = note
+        .map_or_else(|| format!("Legacy status update to {}", status.as_db_str()), str::to_string);
+    let result = control
+        .command(ControlCommandV1::TransitionFinding {
+            finding_id: id,
+            state: state.as_str().to_string(),
+            reason,
+            evidence_ids: Vec::new(),
+            model_analysis_identity: None,
+        })
+        .await?;
+    let ControlResultV1::Finding(finding) = result else {
+        return Err(ScorchError::Config(
+            "control service returned an unexpected finding transition result".to_string(),
+        ));
+    };
+    println!(
+        "{} Finding status updated to '{}'.",
+        "success:".green().bold(),
+        colorize_status(&finding.status),
+    );
+    if let Some(n) = note {
+        println!("  Note: {}", escape_terminal_text(n));
     }
     Ok(())
 }
@@ -358,7 +375,16 @@ mod tests {
         assert!(show(&pool, "not-a-uuid")
             .await
             .is_err_and(|error| error.to_string().contains("invalid finding UUID")));
-        assert!(update_status(&pool, "not-a-uuid", "new", None)
+        let config = std::sync::Arc::new(crate::config::AppConfig::default());
+        let control = LocalControlClient::new(
+            &config,
+            crate::control::ControlService::in_memory(std::sync::Arc::clone(&config)),
+        );
+        assert!(control_show(&control, "not-a-uuid")
+            .await
+            .is_err_and(|error| error.to_string().contains("invalid finding UUID")));
+        assert!(control_list(&control, "missing-project", None, None).await.is_err());
+        assert!(update_status(&control, "not-a-uuid", "new", None)
             .await
             .is_err_and(|error| error.to_string().contains("invalid finding UUID")));
     }

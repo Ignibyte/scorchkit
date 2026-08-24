@@ -1,5 +1,6 @@
 //! Versioned request, principal, operation, and response envelope.
 
+use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -14,6 +15,18 @@ pub const CONTROL_API_SCHEMA_V1: &str = "scorchkit.control/v1";
 pub const CONTROL_MAX_PAGE_SIZE: u16 = 200;
 /// Maximum opaque cursor bytes.
 pub const CONTROL_MAX_CURSOR_BYTES: usize = 512;
+/// Maximum evidence, contributor, or facet references in one triage command.
+pub const CONTROL_MAX_TRIAGE_REFERENCES: usize = 256;
+
+/// One exact normalized correlation facet supplied to a decision command.
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FindingCorrelationFacetV1 {
+    /// Stable facet namespace.
+    pub namespace: String,
+    /// Exact facet value.
+    pub value: String,
+}
 
 const fn default_page_limit() -> u16 {
     50
@@ -144,6 +157,30 @@ pub enum ControlCommandV1 {
     ResumeJob { id: Uuid },
     /// Recover abandoned nonterminal jobs.
     RecoverJobs,
+    /// Append one canonical finding-triage transition.
+    TransitionFinding {
+        finding_id: Uuid,
+        state: String,
+        reason: String,
+        evidence_ids: Vec<String>,
+        model_analysis_identity: Option<String>,
+    },
+    /// Append one exact time-bounded finding suppression.
+    CreateFindingSuppression {
+        finding_id: Uuid,
+        scope: String,
+        reason: String,
+        expires_at: Option<DateTime<Utc>>,
+        review_at: Option<DateTime<Utc>>,
+    },
+    /// Append one evidence-owned finding correlation decision.
+    RecordFindingCorrelation {
+        finding_id: Uuid,
+        contributing_finding_ids: Vec<Uuid>,
+        evidence_ids: Vec<String>,
+        facets: Vec<FindingCorrelationFacetV1>,
+        explanation: String,
+    },
 }
 
 /// Tagged command or query.
@@ -251,6 +288,15 @@ fn validate_command(command: &ControlCommandV1) -> Result<(), ControlErrorV1> {
         ControlCommandV1::StartJob { target, profile, .. } => {
             &[("job target", target, 4_096), ("job profile", profile, 64)]
         }
+        ControlCommandV1::TransitionFinding { state, reason, .. } => {
+            &[("triage state", state, 64), ("triage reason", reason, 4_096)]
+        }
+        ControlCommandV1::CreateFindingSuppression { scope, reason, .. } => {
+            &[("suppression scope", scope, 64), ("suppression reason", reason, 4_096)]
+        }
+        ControlCommandV1::RecordFindingCorrelation { explanation, .. } => {
+            &[("correlation explanation", explanation, 4_096)]
+        }
         ControlCommandV1::DeleteProject { .. }
         | ControlCommandV1::RemoveTarget { .. }
         | ControlCommandV1::CancelJob { .. }
@@ -273,7 +319,100 @@ fn validate_command(command: &ControlCommandV1) -> Result<(), ControlErrorV1> {
     if let ControlCommandV1::StartJob { modules, skip, .. } = command {
         validate_selectors(modules.as_deref(), skip)?;
     }
+    match command {
+        ControlCommandV1::TransitionFinding { evidence_ids, model_analysis_identity, .. } => {
+            validate_digest_references(evidence_ids)?;
+            if model_analysis_identity.as_ref().is_some_and(|identity| !is_digest(identity)) {
+                return Err(invalid_triage_reference());
+            }
+        }
+        ControlCommandV1::RecordFindingCorrelation {
+            finding_id,
+            contributing_finding_ids,
+            evidence_ids,
+            facets,
+            ..
+        } => validate_correlation_command(
+            finding_id,
+            contributing_finding_ids,
+            evidence_ids,
+            facets,
+        )?,
+        ControlCommandV1::CreateFindingSuppression { expires_at, review_at, .. }
+            if expires_at.is_none() && review_at.is_none() =>
+        {
+            return Err(ControlErrorV1::new(
+                ControlErrorCodeV1::InvalidRequest,
+                "finding suppression requires an expiry or review boundary",
+            ));
+        }
+        _ => {}
+    }
     Ok(())
+}
+
+fn validate_correlation_command(
+    finding_id: &Uuid,
+    contributing_finding_ids: &[Uuid],
+    evidence_ids: &[String],
+    facets: &[FindingCorrelationFacetV1],
+) -> Result<(), ControlErrorV1> {
+    let unique_facets: std::collections::BTreeSet<_> =
+        facets.iter().map(|facet| (facet.namespace.as_str(), facet.value.as_str())).collect();
+    if contributing_finding_ids.is_empty()
+        || contributing_finding_ids.len() > CONTROL_MAX_TRIAGE_REFERENCES
+        || !contributing_finding_ids.contains(finding_id)
+        || contributing_finding_ids.iter().collect::<std::collections::BTreeSet<_>>().len()
+            != contributing_finding_ids.len()
+        || facets.len() > CONTROL_MAX_TRIAGE_REFERENCES
+        || unique_facets.len() != facets.len()
+        || evidence_ids.is_empty()
+    {
+        return Err(ControlErrorV1::new(
+            ControlErrorCodeV1::InvalidRequest,
+            "correlation contributors and facets must be unique bounded inputs",
+        ));
+    }
+    validate_digest_references(evidence_ids)?;
+    for facet in facets {
+        if facet.namespace.is_empty()
+            || facet.namespace.len() > 512
+            || facet.namespace.trim() != facet.namespace
+            || facet.namespace.chars().any(char::is_control)
+            || facet.value.is_empty()
+            || facet.value.len() > 512
+            || facet.value.trim() != facet.value
+            || facet.value.chars().any(char::is_control)
+        {
+            return Err(ControlErrorV1::new(
+                ControlErrorCodeV1::InvalidRequest,
+                "correlation facets must contain bounded canonical values",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_digest_references(values: &[String]) -> Result<(), ControlErrorV1> {
+    if values.len() > CONTROL_MAX_TRIAGE_REFERENCES
+        || values.iter().collect::<std::collections::BTreeSet<_>>().len() != values.len()
+        || values.iter().any(|value| !is_digest(value))
+    {
+        return Err(invalid_triage_reference());
+    }
+    Ok(())
+}
+
+fn is_digest(value: &str) -> bool {
+    value.len() == 64
+        && value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn invalid_triage_reference() -> ControlErrorV1 {
+    ControlErrorV1::new(
+        ControlErrorCodeV1::InvalidRequest,
+        "triage references must be unique lowercase SHA-256 identities",
+    )
 }
 
 fn validate_selectors(modules: Option<&[String]>, skip: &[String]) -> Result<(), ControlErrorV1> {
@@ -430,6 +569,186 @@ mod tests {
         );
         assert_eq!(
             duplicate.validate().expect_err("duplicates").code,
+            ControlErrorCodeV1::InvalidRequest
+        );
+    }
+
+    #[test]
+    fn triage_command_references_facets_and_time_shapes_are_exact() {
+        let engagement = Uuid::new_v4();
+        let finding = Uuid::new_v4();
+        let digest = "a".repeat(64);
+        let valid = ControlRequestV1::command(
+            ControlCommandV1::TransitionFinding {
+                finding_id: finding,
+                state: "validated".to_string(),
+                reason: "Exact evidence".to_string(),
+                evidence_ids: vec![digest.clone()],
+                model_analysis_identity: Some("b".repeat(64)),
+            },
+            engagement,
+        );
+        valid.validate().expect("valid triage command");
+
+        for references in [vec!["A".repeat(64)], vec![digest.clone(), digest.clone()]] {
+            let invalid = ControlRequestV1::command(
+                ControlCommandV1::TransitionFinding {
+                    finding_id: finding,
+                    state: "validated".to_string(),
+                    reason: "Exact evidence".to_string(),
+                    evidence_ids: references,
+                    model_analysis_identity: None,
+                },
+                engagement,
+            );
+            assert_eq!(
+                invalid.validate().expect_err("invalid reference").code,
+                ControlErrorCodeV1::InvalidRequest
+            );
+        }
+
+        let no_boundary = ControlRequestV1::command(
+            ControlCommandV1::CreateFindingSuppression {
+                finding_id: finding,
+                scope: "finding".to_string(),
+                reason: "Temporary exception".to_string(),
+                expires_at: None,
+                review_at: None,
+            },
+            engagement,
+        );
+        assert_eq!(
+            no_boundary.validate().expect_err("suppression boundary").code,
+            ControlErrorCodeV1::InvalidRequest
+        );
+
+        let duplicate_facet = FindingCorrelationFacetV1 {
+            namespace: "route".to_string(),
+            value: "/fixture".to_string(),
+        };
+        for (contributors, evidence, facets) in [
+            (Vec::new(), vec![digest.clone()], vec![duplicate_facet.clone()]),
+            (vec![Uuid::new_v4()], vec![digest.clone()], vec![duplicate_facet.clone()]),
+            (vec![finding], Vec::new(), vec![duplicate_facet.clone()]),
+            (vec![finding], vec![digest], vec![duplicate_facet.clone(), duplicate_facet]),
+        ] {
+            let invalid = ControlRequestV1::command(
+                ControlCommandV1::RecordFindingCorrelation {
+                    finding_id: finding,
+                    contributing_finding_ids: contributors,
+                    evidence_ids: evidence,
+                    facets,
+                    explanation: "Exact relation".to_string(),
+                },
+                engagement,
+            );
+            assert_eq!(
+                invalid.validate().expect_err("invalid correlation shape").code,
+                ControlErrorCodeV1::InvalidRequest
+            );
+        }
+    }
+
+    #[test]
+    fn correlation_command_shape_clauses_are_independently_enforced() {
+        let parent = Uuid::from_u128(1);
+        let other = Uuid::from_u128(2);
+        let evidence = vec!["a".repeat(64)];
+        let facet = FindingCorrelationFacetV1 {
+            namespace: "route".to_string(),
+            value: "/fixture".to_string(),
+        };
+        let invalid =
+            |contributors: &[Uuid], evidence: &[String], facets: &[FindingCorrelationFacetV1]| {
+                assert_eq!(
+                    validate_correlation_command(&parent, contributors, evidence, facets)
+                        .expect_err("invalid correlation command")
+                        .code,
+                    ControlErrorCodeV1::InvalidRequest
+                );
+            };
+
+        validate_correlation_command(
+            &parent,
+            &[parent, other],
+            &evidence,
+            std::slice::from_ref(&facet),
+        )
+        .expect("valid correlation command");
+        invalid(&[], &evidence, std::slice::from_ref(&facet));
+        invalid(&[other], &evidence, std::slice::from_ref(&facet));
+        invalid(&[parent, parent], &evidence, std::slice::from_ref(&facet));
+        invalid(&[parent, other], &[], std::slice::from_ref(&facet));
+        invalid(&[parent, other], &evidence, &[facet.clone(), facet]);
+
+        let contributors: Vec<_> = (1..=CONTROL_MAX_TRIAGE_REFERENCES)
+            .map(|value| Uuid::from_u128(u128::try_from(value).expect("reference index fits u128")))
+            .collect();
+        validate_correlation_command(&parent, &contributors, &evidence, &[])
+            .expect("exact contributor limit");
+        let mut overflow = contributors;
+        overflow.push(Uuid::from_u128(
+            u128::try_from(CONTROL_MAX_TRIAGE_REFERENCES + 1).expect("overflow index fits u128"),
+        ));
+        invalid(&overflow, &evidence, &[]);
+
+        let facets: Vec<_> = (0..CONTROL_MAX_TRIAGE_REFERENCES)
+            .map(|index| FindingCorrelationFacetV1 {
+                namespace: "fixture".to_string(),
+                value: format!("value-{index:04}"),
+            })
+            .collect();
+        validate_correlation_command(&parent, &[parent, other], &evidence, &facets)
+            .expect("exact facet limit");
+        let mut overflow = facets;
+        overflow.push(FindingCorrelationFacetV1 {
+            namespace: "fixture".to_string(),
+            value: "overflow".to_string(),
+        });
+        invalid(&[parent, other], &evidence, &overflow);
+    }
+
+    #[test]
+    fn correlation_facet_values_enforce_each_canonical_boundary() {
+        let parent = Uuid::from_u128(1);
+        let other = Uuid::from_u128(2);
+        let evidence = vec!["a".repeat(64)];
+        let validate = |namespace: String, value: String| {
+            validate_correlation_command(
+                &parent,
+                &[parent, other],
+                &evidence,
+                &[FindingCorrelationFacetV1 { namespace, value }],
+            )
+        };
+
+        validate("a".repeat(512), "b".repeat(512)).expect("exact facet string limits");
+        for (namespace, value) in [
+            (String::new(), "value".to_string()),
+            ("a".repeat(513), "value".to_string()),
+            (" padded".to_string(), "value".to_string()),
+            ("bad\nnamespace".to_string(), "value".to_string()),
+            ("namespace".to_string(), String::new()),
+            ("namespace".to_string(), "b".repeat(513)),
+            ("namespace".to_string(), "padded ".to_string()),
+            ("namespace".to_string(), "bad\nvalue".to_string()),
+        ] {
+            assert_eq!(
+                validate(namespace, value).expect_err("invalid facet value").code,
+                ControlErrorCodeV1::InvalidRequest
+            );
+        }
+    }
+
+    #[test]
+    fn digest_reference_count_accepts_the_limit_and_rejects_one_more() {
+        let exact: Vec<_> =
+            (0..CONTROL_MAX_TRIAGE_REFERENCES).map(|index| format!("{index:064x}")).collect();
+        validate_digest_references(&exact).expect("exact digest-reference limit");
+        let mut overflow = exact;
+        overflow.push(format!("{CONTROL_MAX_TRIAGE_REFERENCES:064x}"));
+        assert_eq!(
+            validate_digest_references(&overflow).expect_err("digest-reference overflow").code,
             ControlErrorCodeV1::InvalidRequest
         );
     }

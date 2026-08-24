@@ -3,6 +3,11 @@
 
 use std::sync::Arc;
 
+#[cfg(test)]
+use std::collections::VecDeque;
+#[cfg(test)]
+use std::sync::Mutex;
+
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
     GetPromptRequestParams, GetPromptResult, Implementation, ListPromptsResult,
@@ -46,6 +51,8 @@ pub struct ScorchKitServer {
     pub(crate) webhooks: Option<Arc<WebhookService>>,
     webhook_configuration_error: Option<String>,
     pub(crate) transport_principal: McpTransportPrincipal,
+    #[cfg(test)]
+    control_results: Arc<Mutex<VecDeque<Result<ControlResultV1, String>>>>,
 }
 
 /// Host-owned identity source for MCP result attribution.
@@ -84,6 +91,8 @@ impl ScorchKitServer {
             webhooks,
             webhook_configuration_error,
             transport_principal: McpTransportPrincipal::LocalProcess,
+            #[cfg(test)]
+            control_results: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
@@ -103,7 +112,21 @@ impl ScorchKitServer {
             webhooks: None,
             webhook_configuration_error,
             transport_principal: McpTransportPrincipal::LocalProcess,
+            #[cfg(test)]
+            control_results: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_control_results(
+        self,
+        results: impl IntoIterator<Item = Result<ControlResultV1, String>>,
+    ) -> Self {
+        self.control_results
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(results);
+        self
     }
 
     pub(crate) fn with_remote_principal(mut self, subject: String) -> Self {
@@ -122,6 +145,17 @@ impl ScorchKitServer {
         &self,
         request: ControlRequestV1,
     ) -> Result<ControlResultV1, String> {
+        #[cfg(test)]
+        {
+            let queued = self
+                .control_results
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .pop_front();
+            if let Some(result) = queued {
+                return result;
+            }
+        }
         let response = match &self.transport_principal {
             McpTransportPrincipal::LocalProcess => self.control.execute_local(request).await,
             McpTransportPrincipal::AuthenticatedBearer { subject } => {
@@ -231,9 +265,7 @@ pub async fn serve(config: Arc<AppConfig>) -> crate::engine::error::Result<()> {
     server.require_valid_webhook_host()?;
     server.jobs.recover_interrupted().await?;
 
-    let service = server
-        .clone()
-        .serve(stdio())
+    let service = Box::pin(server.clone().serve(stdio()))
         .await
         .map_err(|e| ScorchError::Config(format!("MCP server failed to start: {e}")))?;
     let (recovery_stop, recovery_task) = spawn_recovery(&server);

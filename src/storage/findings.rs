@@ -4,6 +4,7 @@
 //! evidence and labeled agent analysis are stored as independently identified child records so an
 //! update cannot discard prior proof.
 
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, Transaction};
 use url::Url;
@@ -36,6 +37,8 @@ struct FindingWrite<'a> {
 pub(crate) struct ValidatedFinding {
     pub(crate) row: TrackedFinding,
     pub(crate) canonical: serde_json::Value,
+    pub(crate) triage: Option<scorchkit_core::FindingTriage>,
+    pub(crate) triage_subject: Option<scorchkit_core::FindingTriageSubject>,
 }
 
 /// Canonical evidence plus its verified durable metadata.
@@ -209,11 +212,72 @@ async fn save_finding_in_transaction(
     write: &FindingWrite<'_>,
 ) -> Result<(Uuid, bool)> {
     lock_finding_identity(transaction, project_id, write).await?;
+    let scan_observed_at = scan_observed_at(transaction, project_id, scan_id).await?;
     let existing_id = find_existing_id(transaction, project_id, write).await?;
+    let previous = if let Some(id) = existing_id {
+        let (previous_scan_id, raw) = sqlx::query_as::<_, (Uuid, serde_json::Value)>(
+            "SELECT scan_id, raw_finding FROM tracked_findings WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(|error| ScorchError::Database(format!("lock prior finding: {error}")))?;
+        let finding: Finding = serde_json::from_value(raw)
+            .map_err(|error| ScorchError::Database(format!("restore prior finding: {error}")))?;
+        Some((previous_scan_id, finding.canonical_appsec()))
+    } else {
+        None
+    };
     let (tracked_finding_id, created) =
         upsert_tracked_finding(transaction, project_id, scan_id, write, existing_id).await?;
     append_observations(transaction, tracked_finding_id, scan_id, &write.appsec).await?;
+    let row = sqlx::query_as::<_, TrackedFinding>(
+        "SELECT * FROM tracked_findings WHERE id = $1 FOR UPDATE",
+    )
+    .bind(tracked_finding_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| ScorchError::Database(format!("load stored finding for triage: {error}")))?;
+    if let Some((previous_scan_id, previous)) = previous {
+        if previous_scan_id != scan_id {
+            super::triage::reconcile_rediscovery(
+                transaction,
+                &row,
+                &previous,
+                &write.appsec,
+                scan_observed_at,
+            )
+            .await?;
+        }
+    } else {
+        super::triage::append_initial_transition(
+            transaction,
+            tracked_finding_id,
+            &write.appsec.identity.value,
+            row.first_seen,
+        )
+        .await?;
+    }
     Ok((tracked_finding_id, created))
+}
+
+async fn scan_observed_at(
+    transaction: &mut Transaction<'_, Postgres>,
+    project_id: Uuid,
+    scan_id: Uuid,
+) -> Result<DateTime<Utc>> {
+    sqlx::query_scalar::<_, DateTime<Utc>>(
+        "SELECT COALESCE(completed_at, started_at) FROM scan_records \
+         WHERE id = $1 AND project_id = $2",
+    )
+    .bind(scan_id)
+    .bind(project_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| ScorchError::Database(format!("load finding scan observation time: {error}")))?
+    .ok_or_else(|| {
+        ScorchError::Config(format!("scan '{scan_id}' was not found in project '{project_id}'"))
+    })
 }
 
 /// Durable result of one atomic manual/proxy application-evidence import.
@@ -539,7 +603,9 @@ async fn update_tracked_finding(
     let finding = write.finding;
     sqlx::query(
         "UPDATE tracked_findings \
-         SET last_seen = now(), seen_count = seen_count + 1, scan_id = $2, \
+         SET last_seen = CASE WHEN scan_id = $2 THEN last_seen ELSE now() END, \
+             seen_count = CASE WHEN scan_id = $2 THEN seen_count ELSE seen_count + 1 END, \
+             scan_id = $2, \
              fingerprint = $3, identity_schema = $4, stable_identity = $5, \
              correlation_keys = $6, module_id = $7, severity = $8, title = $9, \
              description = $10, affected_target = $11, \
@@ -697,7 +763,10 @@ pub async fn list_agent_analysis(
     .map_err(|e| ScorchError::Database(format!("list agent analysis: {e}")))
 }
 
-/// Update the lifecycle status of a tracked finding with an optional note.
+/// Compatibility adapter for trusted storage callers migrating legacy status inputs.
+///
+/// User-facing adapters must use `ControlService`; this function still preserves append-only
+/// history so older internal integrations cannot mutate the compatibility projection directly.
 ///
 /// # Errors
 ///
@@ -708,16 +777,33 @@ pub async fn update_finding_status(
     status: VulnStatus,
     note: Option<&str>,
 ) -> Result<bool> {
-    let result =
-        sqlx::query("UPDATE tracked_findings SET status = $2, status_note = $3 WHERE id = $1")
-            .bind(finding_id)
-            .bind(status.as_db_str())
-            .bind(note)
-            .execute(pool)
-            .await
-            .map_err(|e| ScorchError::Database(format!("update finding status: {e}")))?;
-
-    Ok(result.rows_affected() > 0)
+    if get_finding(pool, finding_id).await?.is_none() {
+        return Ok(false);
+    }
+    let state = scorchkit_core::triage_state_from_legacy(status.as_db_str()).ok_or_else(|| {
+        ScorchError::Database("legacy finding status has no triage mapping".to_string())
+    })?;
+    let reason = note.map_or_else(
+        || format!("Legacy storage status update to {}", status.as_db_str()),
+        str::to_string,
+    );
+    super::triage::transition_finding(
+        pool,
+        super::triage::FindingTransitionWrite {
+            finding_id,
+            next: state,
+            actor: scorchkit_core::TriageActor::new(
+                scorchkit_core::TriageActorKind::System,
+                "legacy-storage-adapter/v1",
+            ),
+            reason,
+            evidence_ids: Vec::new(),
+            model_analysis_identity: None,
+            observed_at: chrono::Utc::now(),
+        },
+    )
+    .await?;
+    Ok(true)
 }
 
 /// Query findings for a project filtered by severity.
@@ -1009,7 +1095,7 @@ async fn validate_finding_row(pool: &PgPool, row: TrackedFinding) -> Result<Vali
     }
     let canonical = serde_json::to_value(&finding)
         .map_err(|error| canonical_mismatch(format!("serialize validated finding: {error}")))?;
-    let mut validated = ValidatedFinding { row, canonical };
+    let mut validated = ValidatedFinding { row, canonical, triage: None, triage_subject: None };
     for declared in &write.appsec.evidence {
         let evidence = sqlx::query_as::<_, FindingEvidence>(
             "SELECT * FROM finding_evidence \
@@ -1035,10 +1121,14 @@ async fn validate_finding_row(pool: &PgPool, row: TrackedFinding) -> Result<Vali
 
     let analyses =
         load_validated_analyses(pool, validated.row.id, &write.appsec.agent_analysis).await?;
+    let triage_record = write.appsec.clone();
     let mut projected = finding;
     projected.appsec.agent_analysis = analyses;
     validated.canonical = serde_json::to_value(projected)
         .map_err(|error| canonical_mismatch(format!("serialize projected finding: {error}")))?;
+    let triage = super::triage::load_validated_triage(pool, &validated.row, &triage_record).await?;
+    validated.triage = Some(triage.projection);
+    validated.triage_subject = Some(triage.subject);
     Ok(validated)
 }
 

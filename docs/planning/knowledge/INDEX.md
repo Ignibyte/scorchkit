@@ -149,6 +149,10 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-immutable-corpus-exact-validation-001` | Validate a versioned built-in evaluation corpus against its complete immutable case metadata, expected answers, and refusal requirements, not only schema and class coverage. | `AAR-030-model-analysis` |
 | `PR-scorchkit-serialized-envelope-budget-001` | Enforce transport input ceilings over the complete serialized envelope after field-level bounds; payload sums do not account for framing and metadata overhead. | `AAR-030-model-analysis` |
 | `PR-scorchkit-child-projection-canonical-order-001` | Load append-preserved child records in the same unique ordering used by canonical root normalization before reattaching them to a public document. | `AAR-030-model-analysis` |
+| `PR-scorchkit-validate-before-select-duplicate-001` | Validate a complete bounded canonical child ledger before duplicated columns decide relevance, filtering, or visibility. | `AAR-031-finding-triage` |
+| `PR-scorchkit-history-not-latest-reconstruction-001` | Reconstruct append-only decisions from their preserved inputs and cited provenance, never from a mutable latest snapshot. | `AAR-031-finding-triage` |
+| `PR-scorchkit-append-bound-lock-order-001` | Give every bounded append-only child the same read and write ceiling, and document one global lock order across aggregate, project, and member rows. | `AAR-031-finding-triage` |
+| `PR-scorchkit-selector-invariant-test-seam-001` | Keep selector-guaranteed defensive projection checks independently falsifiable through test-only row injection or an equivalent pure validation seam. | `AAR-031-finding-triage` |
 
 ## Register
 
@@ -275,3 +279,7 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-versioned-corpus-metadata-drift-001` | evaluation-integrity bug | `AAR-030-model-analysis` |
 | `BF-scorchkit-envelope-overhead-budget-gap-001` | resource-budget bug | `AAR-030-model-analysis` |
 | `BF-scorchkit-analysis-child-order-drift-001` | projection-integrity bug | `AAR-030-model-analysis` |
+| `BF-scorchkit-unvalidated-suppression-selector-001` | projection-integrity bug | `AAR-031-finding-triage` |
+| `BF-scorchkit-latest-state-history-revalidation-001` | historical-integrity bug | `AAR-031-finding-triage` |
+| `BF-scorchkit-append-bound-lock-order-001` | concurrency and resource-bound bug | `AAR-031-finding-triage` |
+| `BF-scorchkit-selector-invariant-mutation-gap-001` | test-gap bug | `AAR-031-finding-triage` |

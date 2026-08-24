@@ -28,7 +28,10 @@ projects (id, name, description, settings JSONB, created_at, updated_at)
     └── scan_records (id, project_id FK, target_url, profile, started_at, completed_at, modules_run TEXT[], modules_skipped TEXT[], summary JSONB, execution_evidence JSONB)
         └── tracked_findings (id, scan_id FK, project_id FK, stable_identity, identity_schema, correlation_keys JSONB, compatibility fields, raw_finding JSONB, lifecycle fields)
             ├── finding_evidence (scan_id FK, evidence_identity, evidence_schema, raw_evidence JSONB, collected_at)
-            └── finding_agent_analysis (analysis_identity, analysis_schema, raw_analysis JSONB, created_at)
+            ├── finding_agent_analysis (analysis_identity, analysis_schema, raw_analysis JSONB, created_at)
+            ├── finding_triage_transitions (sequence, transition_identity, raw_transition JSONB)
+            ├── finding_correlation_decisions (decision_identity, raw_decision JSONB)
+            └── finding_suppressions (exact scope identities, time boundaries, raw_suppression JSONB)
     └── attack_paths (path_identity, schemas, current_state, raw_path JSONB, timestamps)
         └── attack_path_transitions (transition_identity, schema, raw_transition JSONB, observed_at)
 
@@ -55,6 +58,13 @@ canonical raw finding or evidence, normalize it, compare every duplicated projec
 scan/project relationship, and fail the whole query on divergence. See
 `docs/architecture/control-api.md`.
 
+Migration 013 replaces mutable lifecycle authority with append-only canonical triage children. The
+legacy `status` and new `triage_state` columns are indexed compatibility projections that must equal
+the final ordered transition. Correlations retain exact contributor, scanner, evidence, and facet
+inventories. Suppressions retain exact project/finding/rule/target selectors and remain visible
+after expiry or review. Fixed rediscovery and material proof drift append deterministic transitions
+inside the finding upsert transaction. See `docs/architecture/finding-triage.md`.
+
 `scan_records.execution_evidence` stores the stable `scorchkit.scan-execution-evidence.v1`
 projection: exact execution status, typed module outcomes, and the optional canonical application
 supply-chain assessment. Legacy callers continue to write an empty object; production scan callers
@@ -68,12 +78,10 @@ Stored path, selector, attempt, and transition identities are revalidated before
 deletion cascades through both path tables. See
 `docs/architecture/source-runtime-correlation.md`.
 
-## Vulnerability Lifecycle
+## Legacy vulnerability lifecycle
 
-```
-New → Acknowledged → Remediated → Verified
-       ↘ FalsePositive
-```
+The old `VulnStatus` strings remain accepted compatibility inputs. They map into the seven-state
+canonical triage vocabulary and append history rather than updating lifecycle authority in place.
 
 ## Module Structure
 
@@ -85,12 +93,13 @@ src/storage/
   models.rs     — compatibility re-exports
   projects.rs   — CRUD + target management
   scans.rs      — save/get/list scan records
-  findings.rs   — stable-identity upsert, batched append-preserved evidence/analysis, lifecycle queries
+  findings.rs   — stable-identity upsert, evidence/analysis, rediscovery, legacy triage adapter
+  triage.rs     — append-only transitions/correlations/suppressions and canonical reconstruction
   attack_paths.rs — identity-locked snapshots and append-only transition history
   jobs.rs       — provider-neutral job store adapter with transactional revision audit
   migrate.rs    — run embedded migrations
 migrations/
-  001_initial.sql … 011_attack_paths.sql
+  001_initial.sql … 013_finding_triage.sql
 ```
 
 Scan job domain types, `JobStore`, and the in-memory store live in `scorchkit-executor::job`. The

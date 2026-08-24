@@ -123,6 +123,8 @@ pub struct TrackedFinding {
     pub seen_count: i32,
     /// Current lifecycle status.
     pub status: String,
+    /// Indexed canonical triage state; ordered transition history remains authoritative.
+    pub triage_state: String,
     /// Rationale for the current status (e.g., why it's `false_positive` or `wont_fix`).
     pub status_note: Option<String>,
     /// Timestamp of initial detection.
@@ -165,6 +167,95 @@ pub struct StoredAgentAnalysis {
     pub raw_analysis: serde_json::Value,
     /// Analysis production time.
     pub created_at: DateTime<Utc>,
+    /// Storage insertion time.
+    pub stored_at: DateTime<Utc>,
+}
+
+/// Append-preserved canonical finding-triage transition.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct StoredFindingTriageTransition {
+    /// Storage row identity.
+    pub id: Uuid,
+    /// Parent tracked finding.
+    pub tracked_finding_id: Uuid,
+    /// Deterministic transition identity.
+    pub transition_identity: String,
+    /// Versioned transition schema.
+    pub transition_schema: String,
+    /// One-based causal position.
+    pub sequence: i32,
+    /// Previous state, absent only for sequence one.
+    pub from_state: Option<String>,
+    /// State after the transition.
+    pub to_state: String,
+    /// Human or system actor class.
+    pub actor_kind: String,
+    /// Redacted actor identity.
+    pub actor_identity: String,
+    /// Complete canonical transition.
+    pub raw_transition: serde_json::Value,
+    /// Trusted transition observation time.
+    pub observed_at: DateTime<Utc>,
+    /// Storage insertion time.
+    pub stored_at: DateTime<Utc>,
+}
+
+/// Append-preserved canonical correlation decision.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct StoredFindingCorrelationDecision {
+    /// Storage row identity.
+    pub id: Uuid,
+    /// Parent tracked finding.
+    pub tracked_finding_id: Uuid,
+    /// Deterministic decision identity.
+    pub decision_identity: String,
+    /// Versioned decision schema.
+    pub decision_schema: String,
+    /// Human or system actor class.
+    pub actor_kind: String,
+    /// Redacted actor identity.
+    pub actor_identity: String,
+    /// Complete canonical decision.
+    pub raw_decision: serde_json::Value,
+    /// Trusted decision time.
+    pub created_at: DateTime<Utc>,
+    /// Storage insertion time.
+    pub stored_at: DateTime<Utc>,
+}
+
+/// Append-preserved project-scoped finding suppression.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct StoredFindingSuppression {
+    /// Storage row identity.
+    pub id: Uuid,
+    /// Owning project.
+    pub project_id: Uuid,
+    /// Finding from which this exact scope was created.
+    pub origin_finding_id: Uuid,
+    /// Deterministic suppression identity.
+    pub suppression_identity: String,
+    /// Versioned suppression schema.
+    pub suppression_schema: String,
+    /// Closed scope shape.
+    pub scope_kind: String,
+    /// Stable finding identity for finding scope.
+    pub finding_identity: Option<String>,
+    /// Exact scanner/rule/config identity for rule scopes.
+    pub rule_identity: Option<String>,
+    /// Exact canonical affected-location identity for target scopes.
+    pub target_identity: Option<String>,
+    /// Human or system actor class.
+    pub actor_kind: String,
+    /// Redacted actor identity.
+    pub actor_identity: String,
+    /// Complete canonical suppression.
+    pub raw_suppression: serde_json::Value,
+    /// Trusted creation time.
+    pub created_at: DateTime<Utc>,
+    /// Optional hard expiry.
+    pub expires_at: Option<DateTime<Utc>>,
+    /// Optional mandatory review boundary.
+    pub review_at: Option<DateTime<Utc>>,
     /// Storage insertion time.
     pub stored_at: DateTime<Utc>,
 }

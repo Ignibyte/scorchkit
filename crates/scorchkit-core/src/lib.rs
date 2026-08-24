@@ -24,6 +24,7 @@ pub mod severity;
 pub mod shared_data;
 pub mod supply_chain;
 pub mod target;
+pub mod triage;
 
 /// Compatibility namespace used by extracted source modules and doctests.
 pub mod engine {
@@ -31,7 +32,7 @@ pub mod engine {
         adapter, adapter_execution, application_dast, application_pentest, appsec_workflow,
         attack_path, compliance, compliance_framework, correlation, cve, error, events, evidence,
         finding, model_analysis, observation, risk_score, run_pipeline, scan_result,
-        service_fingerprint, severity, shared_data, supply_chain, target,
+        service_fingerprint, severity, shared_data, supply_chain, target, triage,
     };
     pub use scorchkit_policy::{policy, scope};
 }
@@ -150,3 +151,13 @@ pub use supply_chain::{
     SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
 };
 pub use target::Target;
+pub use triage::{
+    legacy_status_for_triage, material_finding_evidence_identity, triage_state_from_legacy,
+    FindingCorrelationContributors, FindingCorrelationDecision, FindingSuppression,
+    FindingSuppressionScope, FindingSuppressionScopeKind, FindingTriage, FindingTriageHistory,
+    FindingTriageState, FindingTriageSubject, FindingTriageTransition, TriageActor,
+    TriageActorKind, TriageValidationError, FINDING_CORRELATION_DECISION_SCHEMA_V1,
+    FINDING_SUPPRESSION_SCHEMA_V1, FINDING_TRIAGE_SCHEMA_V1, FINDING_TRIAGE_TRANSITION_SCHEMA_V1,
+    MAX_TRIAGE_ACTOR_BYTES, MAX_TRIAGE_CORRELATIONS, MAX_TRIAGE_IDENTITY_BYTES,
+    MAX_TRIAGE_REFERENCES, MAX_TRIAGE_SUPPRESSIONS, MAX_TRIAGE_TEXT_BYTES, MAX_TRIAGE_TRANSITIONS,
+};

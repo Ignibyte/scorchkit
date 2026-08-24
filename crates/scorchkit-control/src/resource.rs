@@ -157,6 +157,43 @@ pub struct FindingViewV1 {
     pub found_at: DateTime<Utc>,
     /// Canonical redacted finding document.
     pub canonical: serde_json::Value,
+    /// Complete validated triage projection, including inactive suppression history.
+    pub triage: Box<FindingTriageViewV1>,
+}
+
+/// Safe exact finding dimensions used for scoped suppression matching.
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FindingTriageSubjectViewV1 {
+    /// Owning project identity.
+    pub project_identity: String,
+    /// Stable finding identity.
+    pub finding_identity: String,
+    /// Exact scanner/rule/config identity, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_identity: Option<String>,
+    /// Exact canonical affected-location identity.
+    pub target_identity: String,
+}
+
+/// Complete provider-neutral finding-triage read model.
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FindingTriageViewV1 {
+    /// Canonical projection schema.
+    pub schema: String,
+    /// Current state reconstructed from ordered history.
+    pub current_state: String,
+    /// Exact suppression subject.
+    pub subject: FindingTriageSubjectViewV1,
+    /// Complete canonical transition history.
+    pub transitions: Vec<serde_json::Value>,
+    /// Complete canonical correlation-decision history.
+    pub correlations: Vec<serde_json::Value>,
+    /// Complete matching suppression history, including inactive decisions.
+    pub suppressions: Vec<serde_json::Value>,
+    /// Exact matching suppression identities active at projection time.
+    pub active_suppression_ids: Vec<String>,
 }
 
 /// Credential-safe readiness for one exact model-analysis role binding.
@@ -243,6 +280,10 @@ pub struct ProjectReportViewV1 {
     pub finding_count: u32,
     /// Severity counts over validated findings.
     pub severity_counts: std::collections::BTreeMap<String, u32>,
+    /// Canonical triage-state counts reconstructed from append-only history.
+    pub triage_state_counts: std::collections::BTreeMap<String, u32>,
+    /// Findings with at least one exact active suppression at report generation time.
+    pub active_suppressed_count: u32,
     /// Report generation time.
     pub generated_at: DateTime<Utc>,
 }

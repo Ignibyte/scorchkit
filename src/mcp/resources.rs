@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use super::server::ScorchKitServer;
 use crate::storage::{findings, projects, scans};
+use scorchkit_control::{ControlQueryV1, ControlRequestV1, ControlResultV1, PageRequestV1};
 
 /// URI prefix for all `ScorchKit` resources.
 const URI_PREFIX: &str = "scorchkit://";
@@ -264,29 +265,149 @@ impl ScorchKitServer {
             }
             ResourceKind::ProjectFindings(project_id) => {
                 require_project(pool, *project_id).await?;
-                let list = findings::list_findings(pool, *project_id).await.map_err(db_error)?;
+                let list = self.control_resource_findings(*project_id).await?;
                 to_json(&list)
             }
             ResourceKind::Finding(project_id, finding_id) => {
                 require_project(pool, *project_id).await?;
-                let finding = findings::get_finding(pool, *finding_id)
+                let belongs_to_project = findings::get_finding(pool, *finding_id)
                     .await
                     .map_err(db_error)?
-                    .ok_or_else(|| {
-                        rmcp::ErrorData::resource_not_found(
-                            format!("finding '{finding_id}' not found"),
-                            None,
-                        )
-                    })?;
+                    .is_some_and(|finding| finding.project_id == *project_id);
+                if !belongs_to_project {
+                    return Err(rmcp::ErrorData::resource_not_found(
+                        format!("finding '{finding_id}' not found"),
+                        None,
+                    ));
+                }
+                let result = self
+                    .execute_control(ControlRequestV1::query(
+                        ControlQueryV1::GetFinding { id: *finding_id },
+                        self.config.engagement.as_ref().map(|engagement| engagement.id),
+                    ))
+                    .await
+                    .map_err(control_resource_error)?;
+                let ControlResultV1::Finding(finding) = result else {
+                    return Err(rmcp::ErrorData::internal_error(
+                        "control service returned an unexpected finding resource",
+                        None,
+                    ));
+                };
                 to_json(&finding)
+            }
+        }
+    }
+
+    async fn control_resource_findings(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<scorchkit_control::FindingViewV1>, rmcp::ErrorData> {
+        let mut findings = Vec::new();
+        let mut cursor = None;
+        loop {
+            let result = self
+                .execute_control(ControlRequestV1::query(
+                    ControlQueryV1::ListFindings {
+                        project_id,
+                        page: PageRequestV1 {
+                            cursor,
+                            limit: self.config.control_api.default_page_size,
+                        },
+                    },
+                    self.config.engagement.as_ref().map(|engagement| engagement.id),
+                ))
+                .await
+                .map_err(control_resource_error)?;
+            let ControlResultV1::Findings(page) = result else {
+                return Err(rmcp::ErrorData::internal_error(
+                    "control service returned an unexpected finding resource page",
+                    None,
+                ));
+            };
+            findings.extend(page.items);
+            if findings.len() > 10_000 {
+                return Err(rmcp::ErrorData::internal_error(
+                    "finding resource exceeds the bounded 10000-item compatibility limit",
+                    None,
+                ));
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                return Ok(findings);
             }
         }
     }
 }
 
+fn control_resource_error(message: String) -> rmcp::ErrorData {
+    rmcp::ErrorData::internal_error(message, None)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use chrono::{TimeZone, Utc};
+    use scorchkit_control::{
+        FindingTriageSubjectViewV1, FindingTriageViewV1, FindingViewV1, PageV1,
+    };
+
     use super::*;
+
+    fn finding_view() -> FindingViewV1 {
+        let id = Uuid::from_u128(1);
+        let at = Utc.with_ymd_and_hms(2026, 8, 24, 0, 0, 0).single().unwrap_or_else(Utc::now);
+        FindingViewV1 {
+            id,
+            project_id: id,
+            scan_id: id,
+            fingerprint: "fixture".to_string(),
+            identity_schema: "scorchkit.finding-identity/v2".to_string(),
+            stable_identity: "a".repeat(64),
+            correlation_keys: serde_json::json!([]),
+            status: "new".to_string(),
+            status_note: None,
+            seen_count: 1,
+            first_seen: at,
+            last_seen: at,
+            found_at: at,
+            canonical: serde_json::json!({}),
+            triage: Box::new(FindingTriageViewV1 {
+                schema: "scorchkit.finding-triage/v1".to_string(),
+                current_state: "needs_context".to_string(),
+                subject: FindingTriageSubjectViewV1 {
+                    project_identity: id.to_string(),
+                    finding_identity: "a".repeat(64),
+                    rule_identity: None,
+                    target_identity: "b".repeat(64),
+                },
+                transitions: Vec::new(),
+                correlations: Vec::new(),
+                suppressions: Vec::new(),
+                active_suppression_ids: Vec::new(),
+            }),
+        }
+    }
+
+    fn finding_pages(page_count: usize, overflow: bool) -> Vec<Result<ControlResultV1, String>> {
+        let finding = finding_view();
+        let mut pages = (0..page_count)
+            .map(|index| {
+                Ok(ControlResultV1::Findings(PageV1 {
+                    items: vec![finding.clone(); 200],
+                    next_cursor: (index + 1 < page_count || overflow)
+                        .then(|| format!("page-{}", index + 1)),
+                }))
+            })
+            .collect::<Vec<_>>();
+        if overflow {
+            pages.push(Ok(ControlResultV1::Findings(PageV1 {
+                items: vec![finding],
+                next_cursor: None,
+            })));
+        }
+        pages
+    }
 
     // Test suite for resource URI parsing. Verifies that all supported
     // URI patterns are correctly parsed into [`ResourceKind`] variants
@@ -383,5 +504,34 @@ mod tests {
             assert!(!template.raw.name.is_empty(), "template name must not be empty");
             assert!(template.raw.description.is_some(), "template description must be set");
         }
+    }
+
+    #[test]
+    fn control_resource_errors_preserve_safe_messages() {
+        let mapped = control_resource_error("safe control failure".to_string());
+        assert!(mapped.message.contains("safe control failure"));
+    }
+
+    #[tokio::test]
+    async fn finding_resource_accepts_exactly_ten_thousand_and_rejects_one_more() {
+        let exact = ScorchKitServer::new_stateless(Arc::new(crate::config::AppConfig::default()))
+            .with_control_results(finding_pages(50, false));
+        assert_eq!(
+            exact
+                .control_resource_findings(Uuid::from_u128(1))
+                .await
+                .expect("exact finding resource bound")
+                .len(),
+            10_000
+        );
+
+        let overflow =
+            ScorchKitServer::new_stateless(Arc::new(crate::config::AppConfig::default()))
+                .with_control_results(finding_pages(50, true));
+        let error = overflow
+            .control_resource_findings(Uuid::from_u128(1))
+            .await
+            .expect_err("finding resource overflow");
+        assert!(error.message.contains("10000-item compatibility limit"));
     }
 }

@@ -101,6 +101,7 @@ fn operation_inventory() -> Vec<ControlOperationDescriptionV1> {
     const OPERATIONS: &[(&str, &str, &str, bool)] = &[
         ("add_target", "command", "local_state", true),
         ("cancel_job", "command", "local_state", true),
+        ("create_finding_suppression", "command", "local_state", true),
         ("create_project", "command", "local_state", true),
         ("delete_project", "command", "local_state", true),
         ("describe", "query", "read", false),
@@ -117,11 +118,13 @@ fn operation_inventory() -> Vec<ControlOperationDescriptionV1> {
         ("list_projects", "query", "read", false),
         ("list_targets", "query", "read", false),
         ("read_events", "query", "read", false),
+        ("record_finding_correlation", "command", "local_state", true),
         ("recover_jobs", "command", "local_state", true),
         ("remove_target", "command", "local_state", true),
         ("resolve_configuration", "query", "read", true),
         ("resume_job", "command", "external_effect", true),
         ("start_job", "command", "external_effect", true),
+        ("transition_finding", "command", "local_state", true),
     ];
     OPERATIONS
         .iter()
@@ -144,7 +147,7 @@ mod tests {
         assert_eq!(description.schema_version, CONTROL_DESCRIPTION_SCHEMA_V1);
         assert_eq!(description.api_schema_version, CONTROL_API_SCHEMA_V1);
         assert_eq!(description.event_schema_version, CONTROL_EVENT_SCHEMA_V1);
-        assert_eq!(description.operations.len(), 23);
+        assert_eq!(description.operations.len(), 26);
         assert!(description.operations.windows(2).all(|pair| pair[0].name < pair[1].name));
         assert_eq!(description.schemas.len(), 13);
         assert!(description.schemas.iter().all(|entry| entry.schema.is_object()));

@@ -52,6 +52,11 @@ infrastructure. The test suite never treats a timeout against an external addres
   lifecycle, grant, or execution authority. Service-managed inference requires separate external-
   tool and credential-use authorization, canonical redaction, no redirects, no retention, bounded
   input/output/time, and an awaited audit decision before send.
+- Finding validation, disposition, correlation, and suppression are append-only children of the
+  immutable scanner record. Every user mutation requires an independently bound principal and an
+  exact `local-state`/`active-safe` grant for the canonical finding target before storage changes.
+  Model analysis is provenance only; suppressions are exact and time-bounded; malformed history or
+  duplicated projections fail the complete public read.
 - Local run processors use versioned bounded contracts. Their target, module, capability, effect,
   and credential proposals may only narrow the host-built authorization ceiling; finding proposals
   remain separately labeled and cannot replace normalized scanner findings.
@@ -120,7 +125,9 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
 - `scorchkit control-api` is the only control HTTP startup path. It binds loopback directly, has no
   remote/public mode, and authenticates before routing or body parsing. Canonical findings and
   evidence are normalized and checked against duplicated durable projections before response
-  serialization; divergence fails the complete query.
+  serialization; finding triage children additionally verify ordered state, exact contributor and
+  evidence ownership, suppression scope and time bounds, and current-state parity. Divergence fails
+  the complete query.
 - Durable CLI and MCP job hosts may deliver configured webhooks through PostgreSQL. Queue records
   contain a destination identity, redacted event payload, and engagement snapshot, never the
   destination URL or authorization value. Each direct and redirected request uses the shared
