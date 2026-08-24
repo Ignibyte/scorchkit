@@ -41,6 +41,14 @@ All notable changes to ScorchKit will be documented in this file.
   89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
 
 ### Added
+- **Conversation-native application-security workbench (TICKET-032 / SK-054)** — Added an optional
+  provider-neutral MCP Apps resource for project posture, finding evidence/model analysis/triage,
+  and canonical attack paths/gaps. Exact extension and MIME negotiation withholds UI metadata from
+  headless clients while preserving their complete legacy text and versioned structured results.
+  The self-contained accessible component has no remote assets, domains, browser permissions,
+  credentials, direct API/storage access, or vendor branch; finding actions use the existing
+  authorized MCP tool. Delivery gates 17–19 now execute local Chrome interaction, representative
+  render, reviewed CSS digest, and source-isolation evidence.
 - **Durable finding validation and triage (TICKET-031 / SK-053)** — Added a provider-neutral
   seven-state append-only lifecycle with attributed evidence-backed transitions, multi-scanner
   correlation decisions, exact time-bounded suppressions, accepted risk, fixes, and deterministic

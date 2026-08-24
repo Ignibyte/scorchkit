@@ -8,6 +8,37 @@ use serde_json::Value;
 /// Version of the structured MCP result envelope and advertised output schema.
 pub const MCP_OUTPUT_SCHEMA_VERSION: &str = "scorchkit.mcp.tool-result/v1";
 
+/// Stable MCP Apps extension identifier used for capability negotiation.
+pub const MCP_UI_EXTENSION_ID: &str = "io.modelcontextprotocol/ui";
+
+/// Standard MIME type for an MCP Apps HTML resource.
+pub const MCP_UI_RESOURCE_MIME: &str = "text/html;profile=mcp-app";
+
+/// Stable resource URI for the optional conversation-native workbench.
+pub const CONVERSATION_WORKBENCH_RESOURCE_URI: &str = "ui://scorchkit/conversation-workbench/v1";
+
+/// Optional conversation-native view associated with an existing read tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpConversationView {
+    /// Project posture, scan summary, and finding trend view.
+    Posture,
+    /// Finding evidence, analysis, and triage view.
+    Finding,
+    /// Canonical attack paths and correlation-gap view.
+    AttackPaths,
+}
+
+/// Return the optional conversation view associated with an exact tool name.
+#[must_use]
+pub const fn conversation_view(tool: &str) -> Option<McpConversationView> {
+    match tool.as_bytes() {
+        b"project_status" => Some(McpConversationView::Posture),
+        b"finding_show" => Some(McpConversationView::Finding),
+        b"correlate_findings" => Some(McpConversationView::AttackPaths),
+        _ => None,
+    }
+}
+
 /// The strongest behavior a tool can perform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -171,6 +202,21 @@ impl McpToolContract {
         scorchkit.insert("toolClass".to_string(), Value::String(tool_class.to_string()));
         let mut meta = JsonObject::new();
         meta.insert("scorchkit".to_string(), Value::Object(scorchkit));
+        if conversation_view(self.name).is_some() {
+            let mut ui = JsonObject::new();
+            ui.insert(
+                "resourceUri".to_string(),
+                Value::String(CONVERSATION_WORKBENCH_RESOURCE_URI.to_string()),
+            );
+            ui.insert(
+                "visibility".to_string(),
+                Value::Array(vec![
+                    Value::String("model".to_string()),
+                    Value::String("app".to_string()),
+                ]),
+            );
+            meta.insert("ui".to_string(), Value::Object(ui));
+        }
         Meta(meta)
     }
 }
@@ -269,5 +315,25 @@ mod tests {
                 .as_deref(),
             Some("Scan Job Start")
         );
+    }
+
+    #[test]
+    fn conversation_views_are_exhaustive_and_metadata_is_nested() {
+        assert_eq!(conversation_view("project_status"), Some(McpConversationView::Posture));
+        assert_eq!(conversation_view("finding_show"), Some(McpConversationView::Finding));
+        assert_eq!(conversation_view("correlate_findings"), Some(McpConversationView::AttackPaths));
+        assert_eq!(conversation_view("project_show"), None);
+
+        let meta = tool_contract("finding_show").expect("finding contract").meta();
+        assert_eq!(
+            meta.0.get("ui").and_then(|value| value.get("resourceUri")),
+            Some(&Value::String(CONVERSATION_WORKBENCH_RESOURCE_URI.to_string()))
+        );
+        assert!(tool_contract("project_show")
+            .expect("project contract")
+            .meta()
+            .0
+            .get("ui")
+            .is_none());
     }
 }

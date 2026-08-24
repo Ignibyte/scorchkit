@@ -6,7 +6,8 @@
 //!
 //! # URI Scheme
 //!
-//! All resources use the `scorchkit://` protocol prefix:
+//! Project resources use the `scorchkit://` protocol prefix. The optional conversation-native
+//! workbench uses the MCP Apps `ui://` scheme:
 //!
 //! - `scorchkit://projects` — list all projects
 //! - `scorchkit://projects/{id}` — single project details
@@ -14,22 +15,29 @@
 //! - `scorchkit://projects/{id}/scans/{scan_id}` — single scan
 //! - `scorchkit://projects/{id}/findings` — tracked findings
 //! - `scorchkit://projects/{id}/findings/{finding_id}` — single finding
+//! - `ui://scorchkit/conversation-workbench/v1` — self-contained conversation workbench
 
 use rmcp::model::{
-    AnnotateAble, ListResourceTemplatesResult, ListResourcesResult, RawResource,
+    AnnotateAble, JsonObject, ListResourceTemplatesResult, ListResourcesResult, Meta, RawResource,
     RawResourceTemplate, ReadResourceResult, Resource, ResourceContents, ResourceTemplate,
 };
+use serde_json::Value;
 use uuid::Uuid;
 
 use super::server::ScorchKitServer;
 use crate::storage::{findings, projects, scans};
 use scorchkit_control::{ControlQueryV1, ControlRequestV1, ControlResultV1, PageRequestV1};
+use scorchkit_mcp::contract::{CONVERSATION_WORKBENCH_RESOURCE_URI, MCP_UI_RESOURCE_MIME};
 
 /// URI prefix for all `ScorchKit` resources.
 const URI_PREFIX: &str = "scorchkit://";
 
+const CONVERSATION_WORKBENCH_HTML: &str = include_str!("conversation-workbench.html");
+
 /// Parsed resource URI identifying what data to return.
 enum ResourceKind {
+    /// Self-contained optional MCP Apps conversation workbench.
+    ConversationWorkbench,
     /// List all projects.
     Projects,
     /// Single project by UUID.
@@ -46,9 +54,12 @@ enum ResourceKind {
 
 /// Parse a resource URI into a [`ResourceKind`].
 ///
-/// Returns `None` if the URI does not match the `scorchkit://` scheme
-/// or the path segments are not recognized.
+/// Returns `None` if the URI is not the exact workbench URI and does not match a recognized
+/// `scorchkit://` path.
 fn parse_resource_uri(uri: &str) -> Option<ResourceKind> {
+    if uri == CONVERSATION_WORKBENCH_RESOURCE_URI {
+        return Some(ResourceKind::ConversationWorkbench);
+    }
     let path = uri.strip_prefix(URI_PREFIX)?;
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
@@ -83,6 +94,36 @@ fn parse_resource_uri(uri: &str) -> Option<ResourceKind> {
 /// Build a JSON text resource content for a given URI.
 fn json_content(uri: &str, json: &str) -> ResourceContents {
     ResourceContents::text(json, uri).with_mime_type("application/json")
+}
+
+fn conversation_workbench_meta() -> Meta {
+    let mut csp = JsonObject::new();
+    for key in ["connectDomains", "resourceDomains", "frameDomains", "baseUriDomains"] {
+        csp.insert(key.to_string(), Value::Array(Vec::new()));
+    }
+    let mut ui = JsonObject::new();
+    ui.insert("prefersBorder".to_string(), Value::Bool(true));
+    ui.insert("csp".to_string(), Value::Object(csp));
+    let mut meta = JsonObject::new();
+    meta.insert("ui".to_string(), Value::Object(ui));
+    Meta(meta)
+}
+
+fn conversation_workbench_resource() -> Resource {
+    let mut resource =
+        RawResource::new(CONVERSATION_WORKBENCH_RESOURCE_URI, "ScorchKit Conversation Workbench")
+            .with_title("ScorchKit Security Workbench")
+            .with_description("Optional posture, finding evidence, triage, and attack-path views")
+            .with_mime_type(MCP_UI_RESOURCE_MIME)
+            .with_meta(conversation_workbench_meta());
+    resource.size = u32::try_from(CONVERSATION_WORKBENCH_HTML.len()).ok();
+    resource.no_annotation()
+}
+
+fn conversation_workbench_content() -> ResourceContents {
+    ResourceContents::text(CONVERSATION_WORKBENCH_HTML, CONVERSATION_WORKBENCH_RESOURCE_URI)
+        .with_mime_type(MCP_UI_RESOURCE_MIME)
+        .with_meta(conversation_workbench_meta())
 }
 
 /// Build the static list of resource templates.
@@ -149,26 +190,25 @@ fn to_json(value: &impl serde::Serialize) -> Result<String, rmcp::ErrorData> {
 impl ScorchKitServer {
     /// List all available resources.
     ///
-    /// Returns a static `scorchkit://projects` collection resource plus
-    /// one resource per project in the database.
+    /// Always returns the database-free conversation workbench. When a database is attached, also
+    /// returns the static `scorchkit://projects` collection and one resource per project.
     ///
     /// # Errors
     ///
-    /// Returns an error if the database query fails.
+    /// Returns an error if an attached database query fails.
     pub async fn do_list_resources(&self) -> Result<ListResourcesResult, rmcp::ErrorData> {
-        let pool = self.pool.as_ref().ok_or_else(|| {
-            rmcp::ErrorData::internal_error(
-                "database unavailable: project resources require an attached database",
-                None,
-            )
-        })?;
+        let mut resources = vec![conversation_workbench_resource()];
+        let Some(pool) = self.pool.as_ref() else {
+            return Ok(ListResourcesResult::with_all_items(resources));
+        };
         let project_list = projects::list_projects(pool).await.map_err(db_error)?;
 
-        let mut resources: Vec<Resource> =
-            vec![RawResource::new("scorchkit://projects", "All Projects")
+        resources.push(
+            RawResource::new("scorchkit://projects", "All Projects")
                 .with_description("List of all security assessment projects")
                 .with_mime_type("application/json")
-                .no_annotation()];
+                .no_annotation(),
+        );
 
         for project in &project_list {
             let uri = format!("scorchkit://projects/{}", project.id);
@@ -210,6 +250,10 @@ impl ScorchKitServer {
             rmcp::ErrorData::invalid_params(format!("invalid resource URI: {uri}"), None)
         })?;
 
+        if matches!(kind, ResourceKind::ConversationWorkbench) {
+            return Ok(ReadResourceResult::new(vec![conversation_workbench_content()]));
+        }
+
         let json = self.read_resource_json(&kind).await?;
         Ok(ReadResourceResult::new(vec![json_content(uri, &json)]))
     }
@@ -223,6 +267,10 @@ impl ScorchKitServer {
             )
         })?;
         match kind {
+            ResourceKind::ConversationWorkbench => Err(rmcp::ErrorData::internal_error(
+                "conversation workbench must be read through its static resource path",
+                None,
+            )),
             ResourceKind::Projects => {
                 let list = projects::list_projects(pool).await.map_err(db_error)?;
                 to_json(&list)
@@ -420,6 +468,16 @@ mod tests {
         assert!(matches!(result, Some(ResourceKind::Projects)));
     }
 
+    #[test]
+    fn parse_conversation_workbench_uri_is_exact() {
+        assert!(matches!(
+            parse_resource_uri(CONVERSATION_WORKBENCH_RESOURCE_URI),
+            Some(ResourceKind::ConversationWorkbench)
+        ));
+        assert!(parse_resource_uri("ui://scorchkit/conversation-workbench/v2").is_none());
+        assert!(parse_resource_uri("ui://scorchkit/conversation-workbench/v1/extra").is_none());
+    }
+
     /// Verify `scorchkit://projects/{uuid}` parses to [`ResourceKind::Project`].
     #[test]
     fn parse_single_project_uri() {
@@ -510,6 +568,60 @@ mod tests {
     fn control_resource_errors_preserve_safe_messages() {
         let mapped = control_resource_error("safe control failure".to_string());
         assert!(mapped.message.contains("safe control failure"));
+    }
+
+    #[tokio::test]
+    async fn stateless_server_lists_and_reads_the_self_contained_workbench() {
+        let server = ScorchKitServer::new_stateless(Arc::new(crate::config::AppConfig::default()));
+        let listed = server.do_list_resources().await.expect("list stateless resources");
+        assert_eq!(listed.resources.len(), 1);
+        let resource = &listed.resources[0];
+        assert_eq!(resource.raw.uri, CONVERSATION_WORKBENCH_RESOURCE_URI);
+        assert_eq!(resource.raw.mime_type.as_deref(), Some(MCP_UI_RESOURCE_MIME));
+        assert_eq!(resource.raw.size, u32::try_from(CONVERSATION_WORKBENCH_HTML.len()).ok());
+        assert!(CONVERSATION_WORKBENCH_HTML.len() < 96 * 1024);
+
+        let metadata = serde_json::to_value(resource).expect("serialize UI resource");
+        let ui = &metadata["_meta"]["ui"];
+        assert_eq!(ui["prefersBorder"], true);
+        for key in ["connectDomains", "resourceDomains", "frameDomains", "baseUriDomains"] {
+            assert_eq!(ui["csp"][key], serde_json::json!([]));
+        }
+        assert!(ui.get("permissions").is_none());
+
+        let read = server
+            .do_read_resource(CONVERSATION_WORKBENCH_RESOURCE_URI)
+            .await
+            .expect("read stateless workbench");
+        let ResourceContents::TextResourceContents { uri, mime_type, text, meta } =
+            &read.contents[0]
+        else {
+            panic!("workbench must be a text resource");
+        };
+        assert_eq!(uri, CONVERSATION_WORKBENCH_RESOURCE_URI);
+        assert_eq!(mime_type.as_deref(), Some(MCP_UI_RESOURCE_MIME));
+        assert_eq!(text, CONVERSATION_WORKBENCH_HTML);
+        assert!(text.starts_with("<!doctype html>"));
+        assert!(meta.is_some());
+    }
+
+    #[test]
+    fn workbench_consumes_the_exact_canonical_projection_paths() {
+        for projection in [
+            "findings.total_findings",
+            "findings.active_findings",
+            "findings.resolved_findings",
+            "scans.total_scans",
+            "scans.scans_last_30_days",
+            "raw.appsec",
+            "appsec.evidence",
+            "appsec.agent_analysis",
+        ] {
+            assert!(
+                CONVERSATION_WORKBENCH_HTML.contains(projection),
+                "workbench lost canonical projection path {projection}"
+            );
+        }
     }
 
     #[tokio::test]

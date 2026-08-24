@@ -363,6 +363,21 @@ mutation_gate() {
     esac
 }
 
+browser_e2e_gate() {
+    need node "install Node.js 22 or newer" || return 1
+    node tests/conversation_workbench_ui.mjs browser
+}
+
+dogfood_render_gate() {
+    need node "install Node.js 22 or newer" || return 1
+    node tests/conversation_workbench_ui.mjs render
+}
+
+built_css_gate() {
+    need node "install Node.js 22 or newer" || return 1
+    node tests/conversation_workbench_ui.mjs css
+}
+
 database_gate() {
     if [ -z "${DATABASE_URL:-}" ]; then
         echo "DATABASE_URL is required for the delivery-tier database tests" >&2
@@ -429,6 +444,12 @@ gate_selftest() {
         echo "gate selftest failed: zero-test workspace suite inventory is not explicit" >&2
         return 1
     }
+    if ! grep -q 'node tests/conversation_workbench_ui.mjs browser' bin/gate.sh \
+        || ! grep -q 'node tests/conversation_workbench_ui.mjs render' bin/gate.sh \
+        || ! grep -q 'node tests/conversation_workbench_ui.mjs css' bin/gate.sh; then
+        echo "gate selftest failed: conversation workbench evidence is not wired" >&2
+        return 1
+    fi
     if ! grep -q -- '--focused-repair' bin/gate.sh \
         || ! grep -q 'scorchkit_verify_focused_evidence' bin/gate.sh \
         || ! grep -q 'focused_repair_scope_gate' bin/gate.sh \
@@ -468,18 +489,18 @@ STATIC_FAILURES="$FAIL"
 if [ "$MODE" = "fast" ]; then
     skip_gate "gate:15 coverage" "fast mode"
     skip_gate "gate:16 mutation" "fast mode"
-    skip_gate "gate:17 browser e2e" "not applicable until ScorchKit ships a web UI"
-    skip_gate "gate:18 website dogfood render" "not applicable to the terminal security engine"
-    skip_gate "gate:19 built CSS sheets" "no web asset pipeline"
+    skip_gate "gate:17 browser e2e" "fast mode"
+    skip_gate "gate:18 website dogfood render" "fast mode"
+    skip_gate "gate:19 built CSS sheets" "fast mode"
     skip_gate "gate:20 nextest strictness" "fast mode"
     skip_gate "gate:21 PostgreSQL integration" "fast mode"
     skip_gate "gate:22 CLI and MCP contracts" "fast mode"
 elif [ "$STATIC_FAILURES" -gt 0 ]; then
     skip_gate "gate:15 coverage" "static prerequisite failed"
     skip_gate "gate:16 mutation (MSI >= 95%)" "static prerequisite failed"
-    skip_gate "gate:17 browser e2e" "not applicable until ScorchKit ships a web UI"
-    skip_gate "gate:18 website dogfood render" "not applicable to the terminal security engine"
-    skip_gate "gate:19 built CSS sheets" "no web asset pipeline"
+    skip_gate "gate:17 browser e2e" "static prerequisite failed"
+    skip_gate "gate:18 website dogfood render" "static prerequisite failed"
+    skip_gate "gate:19 built CSS sheets" "static prerequisite failed"
     skip_gate "gate:20 nextest strictness" "static prerequisite failed"
     skip_gate "gate:21 PostgreSQL integration" "static prerequisite failed"
     skip_gate "gate:22 CLI and MCP contracts" "static prerequisite failed"
@@ -490,9 +511,9 @@ else
     else
         run_gate "gate:16 mutation (MSI >= 95%)" mutation_gate
     fi
-    skip_gate "gate:17 browser e2e" "not applicable until ScorchKit ships a web UI"
-    skip_gate "gate:18 website dogfood render" "not applicable to the terminal security engine"
-    skip_gate "gate:19 built CSS sheets" "no web asset pipeline"
+    run_gate "gate:17 browser e2e" browser_e2e_gate
+    run_gate "gate:18 website dogfood render" dogfood_render_gate
+    run_gate "gate:19 built CSS sheets" built_css_gate
     run_gate "gate:20 nextest strictness" nextest_gate
     run_gate "gate:21 PostgreSQL integration" database_gate
     run_gate "gate:22 CLI and MCP contracts" contract_gate

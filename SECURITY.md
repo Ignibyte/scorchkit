@@ -63,6 +63,9 @@ infrastructure. The test suite never treats a timeout against an external addres
 - Remote MCP transport requires bearer authentication, exact principal-to-engagement binding,
   loopback backend ownership, host/origin validation, bounded input and sessions, and an explicit
   TLS-termination policy before listening.
+- Optional MCP Apps views are presentation only. They render validated canonical tool envelopes
+  with text-only DOM construction, have no external domains or browser permissions, and route every
+  mutation through an existing authorized MCP tool; capability and client metadata grant nothing.
 - The local control API is absent by default and requires an environment-backed bearer, exact
   principal-to-engagement binding, loopback bind and Host, constant-time credential verification,
   credential scrubbing, and bounded bodies, responses, concurrency, journals, and subscribers.
@@ -122,6 +125,12 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
   Every binding must name the exact enabled, unexpired configured engagement. Each principal owns
   a separate bounded session manager, so session IDs do not cross valid credentials. Direct TLS,
   non-loopback backends, OAuth/OIDC, multi-engagement selection, tenants, and RBAC are not supported.
+- UI-capable MCP clients may negotiate one self-contained
+  `ui://scorchkit/conversation-workbench/v1` resource for posture, finding, and attack-path results.
+  Headless text and structured results remain complete. The resource has empty connect, asset,
+  frame, and base-URI domain sets; no direct API, credential, storage, or scanner access; and no
+  vendor-specific identity branch. Finding lifecycle changes use `finding_update_status` and its
+  unchanged authorization and audit boundary.
 - `scorchkit control-api` is the only control HTTP startup path. It binds loopback directly, has no
   remote/public mode, and authenticates before routing or body parsing. Canonical findings and
   evidence are normalized and checked against duplicated durable projections before response

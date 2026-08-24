@@ -10,9 +10,10 @@ use std::sync::Mutex;
 
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    GetPromptRequestParams, GetPromptResult, Implementation, ListPromptsResult,
-    ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
-    ReadResourceRequestParams, ReadResourceResult, ServerCapabilities, ServerInfo,
+    ExtensionCapabilities, GetPromptRequestParams, GetPromptResult, Implementation, JsonObject,
+    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
+    PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult, ServerCapabilities,
+    ServerInfo,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::tool_handler;
@@ -32,6 +33,17 @@ use scorchkit_control::{
 };
 
 const RECOVERY_INTERVAL_SECONDS: u64 = 5;
+
+fn conversation_workbench_extensions() -> ExtensionCapabilities {
+    let mut settings = JsonObject::new();
+    settings.insert(
+        "mimeTypes".to_string(),
+        serde_json::json!([super::contract::MCP_UI_RESOURCE_MIME]),
+    );
+    let mut extensions = ExtensionCapabilities::new();
+    extensions.insert(super::contract::MCP_UI_EXTENSION_ID.to_string(), settings);
+    extensions
+}
 
 /// The `ScorchKit` MCP server.
 ///
@@ -190,6 +202,7 @@ impl ServerHandler for ScorchKitServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
+                .enable_extensions_with(conversation_workbench_extensions())
                 .enable_tools()
                 .enable_resources()
                 .enable_prompts()
@@ -197,6 +210,16 @@ impl ServerHandler for ScorchKitServer {
         )
         .with_server_info(Implementation::new("scorchkit", env!("CARGO_PKG_VERSION")))
         .with_instructions(super::instructions::INSTRUCTIONS.to_string())
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        let peer_info = context.peer.peer_info();
+        let capabilities = peer_info.as_deref().map(|info| &info.capabilities);
+        Ok(ListToolsResult::with_all_items(super::contract::tools_for_client(capabilities)))
     }
 
     async fn list_resources(
@@ -349,6 +372,22 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
+
+    #[test]
+    fn server_advertises_the_standard_workbench_extension_and_mime() {
+        let server = ScorchKitServer::new_stateless(Arc::new(AppConfig::default()));
+        let info = server.get_info();
+        let settings = info
+            .capabilities
+            .extensions
+            .as_ref()
+            .and_then(|extensions| extensions.get(super::super::contract::MCP_UI_EXTENSION_ID))
+            .expect("MCP Apps extension settings");
+        assert_eq!(
+            settings.get("mimeTypes"),
+            Some(&serde_json::json!([super::super::contract::MCP_UI_RESOURCE_MIME]))
+        );
+    }
 
     #[test]
     fn stateless_host_rejects_webhook_enabled_configuration() {

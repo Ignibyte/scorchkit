@@ -11,7 +11,10 @@ use std::sync::Arc;
 
 use httpmock::MockServer;
 use rmcp::handler::server::ServerHandler;
-use rmcp::model::{CallToolRequestParams, Implementation, ResourceContents};
+use rmcp::model::{
+    CallToolRequestParams, ClientCapabilities, ClientInfo, ExtensionCapabilities, Implementation,
+    JsonObject, ReadResourceRequestParams, ResourceContents,
+};
 use rmcp::ServiceExt;
 use scorchkit::config::AppConfig;
 use scorchkit::engine::evidence::HttpEvidence;
@@ -25,7 +28,10 @@ use scorchkit::engine::scan_result::ScanResult;
 use scorchkit::engine::scope::ScopeRule;
 use scorchkit::engine::severity::Severity;
 use scorchkit::engine::target::Target;
-use scorchkit::mcp::contract::{tool_contract, MCP_OUTPUT_SCHEMA_VERSION};
+use scorchkit::mcp::contract::{
+    tool_contract, CONVERSATION_WORKBENCH_RESOURCE_URI, MCP_OUTPUT_SCHEMA_VERSION,
+    MCP_UI_EXTENSION_ID, MCP_UI_RESOURCE_MIME,
+};
 use scorchkit::mcp::server::ScorchKitServer;
 use scorchkit::mcp::types::*;
 use scorchkit::storage;
@@ -593,6 +599,10 @@ async fn stateless_job_runs_through_mcp_transport_without_database() {
                 .and_then(|value| value.get("outputSchemaVersion")),
             Some(&serde_json::json!(MCP_OUTPUT_SCHEMA_VERSION))
         );
+        assert!(
+            tool.meta.as_ref().and_then(|meta| meta.0.get("ui")).is_none(),
+            "headless clients must not receive app-only metadata"
+        );
     }
     assert!(tools.iter().any(|tool| tool.name == "scan_job_start"));
     assert!(tools.iter().any(|tool| tool.name == "scan_job_status"));
@@ -655,6 +665,74 @@ async fn stateless_job_runs_through_mcp_transport_without_database() {
     .expect("transport job completed");
 
     client.cancel().await.expect("close MCP client");
+    server_task.await.expect("server task joined").expect("server transport closed cleanly");
+}
+
+#[tokio::test]
+async fn ui_capable_transport_lists_and_reads_the_negotiated_workbench() {
+    let server = test_server_without_database();
+    let (server_transport, client_transport) = tokio::io::duplex(1_048_576);
+    let server_task = tokio::spawn(async move {
+        let running =
+            Box::pin(server.serve(server_transport)).await.map_err(|error| error.to_string())?;
+        running.waiting().await.map_err(|error| error.to_string())
+    });
+
+    let mut settings = JsonObject::new();
+    settings.insert("mimeTypes".to_string(), serde_json::json!([MCP_UI_RESOURCE_MIME]));
+    let mut extensions = ExtensionCapabilities::new();
+    extensions.insert(MCP_UI_EXTENSION_ID.to_string(), settings);
+    let capabilities = ClientCapabilities::builder().enable_extensions_with(extensions).build();
+    let client_info =
+        ClientInfo::new(capabilities, Implementation::new("provider-neutral-ui-fixture", "1.0"));
+    let client = client_info.serve(client_transport).await.expect("initialize UI-capable client");
+
+    let server_info = client.peer_info().expect("initialized server info");
+    assert_eq!(
+        server_info
+            .capabilities
+            .extensions
+            .as_ref()
+            .and_then(|extensions| extensions.get(MCP_UI_EXTENSION_ID))
+            .and_then(|settings| settings.get("mimeTypes")),
+        Some(&serde_json::json!([MCP_UI_RESOURCE_MIME]))
+    );
+
+    let tools = client.list_all_tools().await.expect("list UI-capable tools");
+    assert_eq!(
+        tools
+            .iter()
+            .filter(|tool| tool.meta.as_ref().is_some_and(|meta| meta.0.contains_key("ui")))
+            .map(|tool| tool.name.as_ref())
+            .collect::<Vec<_>>(),
+        vec!["correlate_findings", "finding_show", "project_status"]
+    );
+    for tool in tools.iter().filter(|tool| {
+        matches!(tool.name.as_ref(), "correlate_findings" | "finding_show" | "project_status")
+    }) {
+        assert_eq!(
+            tool.meta
+                .as_ref()
+                .and_then(|meta| meta.0.get("ui"))
+                .and_then(|ui| ui.get("resourceUri")),
+            Some(&serde_json::json!(CONVERSATION_WORKBENCH_RESOURCE_URI))
+        );
+    }
+
+    let resources = client.list_all_resources().await.expect("list stateless UI resources");
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0].raw.uri, CONVERSATION_WORKBENCH_RESOURCE_URI);
+    let read = client
+        .read_resource(ReadResourceRequestParams::new(CONVERSATION_WORKBENCH_RESOURCE_URI))
+        .await
+        .expect("read negotiated workbench");
+    let ResourceContents::TextResourceContents { mime_type, text, .. } = &read.contents[0] else {
+        panic!("workbench must use text resource content");
+    };
+    assert_eq!(mime_type.as_deref(), Some(MCP_UI_RESOURCE_MIME));
+    assert!(text.contains("ScorchKit Security Workbench"));
+
+    client.cancel().await.expect("close UI-capable client");
     server_task.await.expect("server task joined").expect("server transport closed cleanly");
 }
 

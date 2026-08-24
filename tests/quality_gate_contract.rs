@@ -6,7 +6,7 @@
 
 use std::{fs, path::Path};
 
-const WEB_ONLY_GATES: [u8; 3] = [17, 18, 19];
+const DELIVERY_UI_GATES: [u8; 3] = [17, 18, 19];
 
 fn repository_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -38,11 +38,9 @@ fn constitution_and_runner_keep_stable_gate_ids() {
 
         let executable = format!("run_gate \"gate:{gate} ");
         let skipped = format!("skip_gate \"gate:{gate} ");
-        if WEB_ONLY_GATES.contains(&gate) {
-            assert!(!runner.contains(&executable), "web-only gate:{gate} must not execute");
-            assert!(runner.contains(&skipped), "web-only gate:{gate} needs a named skip");
-        } else {
-            assert!(runner.contains(&executable), "gate:{gate} is not executable");
+        assert!(runner.contains(&executable), "gate:{gate} is not executable");
+        if DELIVERY_UI_GATES.contains(&gate) {
+            assert!(runner.contains(&skipped), "delivery UI gate:{gate} needs a fast-mode skip");
         }
     }
 }
@@ -72,6 +70,9 @@ fn local_and_ci_gates_share_the_canonical_helpers() {
     assert!(runner.contains("STATIC_FAILURES=\"$FAIL\""));
     assert!(runner.contains("\"static prerequisite failed\""));
     assert!(runner.contains("\"coverage prerequisite failed\""));
+    assert!(runner.contains("node tests/conversation_workbench_ui.mjs browser"));
+    assert!(runner.contains("node tests/conversation_workbench_ui.mjs render"));
+    assert!(runner.contains("node tests/conversation_workbench_ui.mjs css"));
     assert!(runner.contains("git ls-files --cached --others --exclude-standard -- '*.toml'"));
     assert!(mutation_runner.contains("FLOOR=\"${SCORCHKIT_MUTATION_MSI_MIN:-95}\""));
     assert!(mutation_runner.contains("RUN_COMPLETED=0"));

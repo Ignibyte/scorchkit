@@ -5,8 +5,7 @@ use std::sync::Arc;
 use rmcp::handler::server::common::{schema_for_output, FromContextPart};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::{IntoCallToolResult, ToolCallContext};
-use rmcp::model::{CallToolResult, Content, JsonObject};
-#[cfg(test)]
+use rmcp::model::{CallToolResult, ClientCapabilities, Content, JsonObject, Tool};
 use serde_json::Value;
 
 use super::server::McpTransportPrincipal;
@@ -14,8 +13,10 @@ use super::server::ScorchKitServer;
 use crate::report::terminal::escape_terminal_text;
 
 pub use scorchkit_mcp::contract::{
-    tool_contract, tool_contracts, McpClientAttribution, McpPrincipalContext, McpToolClass,
-    McpToolContract, McpToolEnvelope, McpToolError, McpToolOutcome, MCP_OUTPUT_SCHEMA_VERSION,
+    conversation_view, tool_contract, tool_contracts, McpClientAttribution, McpConversationView,
+    McpPrincipalContext, McpToolClass, McpToolContract, McpToolEnvelope, McpToolError,
+    McpToolOutcome, CONVERSATION_WORKBENCH_RESOURCE_URI, MCP_OUTPUT_SCHEMA_VERSION,
+    MCP_UI_EXTENSION_ID, MCP_UI_RESOURCE_MIME,
 };
 #[cfg(test)]
 use scorchkit_mcp::integration::tool_title;
@@ -126,6 +127,33 @@ pub(crate) fn decorate_tool_router(router: &mut ToolRouter<ScorchKitServer>) -> 
     Ok(())
 }
 
+/// Whether an initialized peer explicitly negotiated this workbench MIME type.
+pub(crate) fn client_supports_conversation_workbench(
+    capabilities: Option<&ClientCapabilities>,
+) -> bool {
+    capabilities
+        .and_then(|capabilities| capabilities.extensions.as_ref())
+        .and_then(|extensions| extensions.get(MCP_UI_EXTENSION_ID))
+        .and_then(|settings| settings.get("mimeTypes"))
+        .and_then(Value::as_array)
+        .is_some_and(|mime_types| {
+            mime_types.iter().any(|mime| mime.as_str() == Some(MCP_UI_RESOURCE_MIME))
+        })
+}
+
+/// Return the canonical tool inventory, withholding app-only metadata from headless peers.
+pub(crate) fn tools_for_client(capabilities: Option<&ClientCapabilities>) -> Vec<Tool> {
+    let mut tools = ScorchKitServer::contract_tool_router().list_all();
+    if !client_supports_conversation_workbench(capabilities) {
+        for tool in &mut tools {
+            if let Some(meta) = &mut tool.meta {
+                meta.0.remove("ui");
+            }
+        }
+    }
+    tools
+}
+
 impl ScorchKitServer {
     pub(crate) fn contract_tool_router() -> ToolRouter<Self> {
         let mut router = Self::tool_router();
@@ -170,6 +198,7 @@ impl ScorchKitServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rmcp::model::ExtensionCapabilities;
 
     #[test]
     fn tool_inventory_is_sorted_unique_and_classified() {
@@ -219,6 +248,10 @@ mod tests {
                     .and_then(|value| value.get("toolClass")),
                 Some(&serde_json::to_value(contract.tool_class).expect("serialize tool class"))
             );
+            assert_eq!(
+                tool.meta.as_ref().and_then(|meta| meta.0.get("ui")).is_some(),
+                conversation_view(&tool.name).is_some()
+            );
         }
 
         router.remove_route("scan");
@@ -226,6 +259,38 @@ mod tests {
             decorate_tool_router(&mut router).expect_err("missing route must fail"),
             "MCP tool router has 38 routes but contract inventory has 39"
         );
+    }
+
+    fn ui_capabilities(mime_types: Value) -> ClientCapabilities {
+        let mut settings = JsonObject::new();
+        settings.insert("mimeTypes".to_string(), mime_types);
+        let mut extensions = ExtensionCapabilities::new();
+        extensions.insert(MCP_UI_EXTENSION_ID.to_string(), settings);
+        ClientCapabilities::builder().enable_extensions_with(extensions).build()
+    }
+
+    #[test]
+    fn tool_listing_negotiates_ui_by_extension_and_exact_mime() {
+        let supported = ui_capabilities(serde_json::json!([MCP_UI_RESOURCE_MIME]));
+        assert!(client_supports_conversation_workbench(Some(&supported)));
+        let supported_tools = tools_for_client(Some(&supported));
+        assert_eq!(
+            supported_tools
+                .iter()
+                .filter(|tool| tool.meta.as_ref().is_some_and(|meta| meta.0.contains_key("ui")))
+                .map(|tool| tool.name.as_ref())
+                .collect::<Vec<_>>(),
+            vec!["correlate_findings", "finding_show", "project_status"]
+        );
+
+        let unsupported = ui_capabilities(serde_json::json!(["text/html"]));
+        assert!(!client_supports_conversation_workbench(Some(&unsupported)));
+        for tool in tools_for_client(Some(&unsupported)) {
+            let meta = tool.meta.expect("ScorchKit metadata remains advertised");
+            assert!(meta.0.contains_key("scorchkit"));
+            assert!(!meta.0.contains_key("ui"));
+        }
+        assert!(!client_supports_conversation_workbench(None));
     }
 
     #[tokio::test]

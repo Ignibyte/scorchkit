@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>ScorchKit Security Workbench</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --surface-alt: #eef2f7;
+      --ink: #172033;
+      --muted: #536176;
+      --line: #c8d0dc;
+      --accent: #b33b00;
+      --accent-ink: #ffffff;
+      --critical: #9e1b32;
+      --high: #b44700;
+      --medium: #8a6300;
+      --low: #276749;
+      --focus: #1368ce;
+      --radius: 12px;
+      --shadow: 0 8px 24px rgb(23 32 51 / 10%);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    :root[data-theme="dark"] {
+      --bg: #11151d;
+      --surface: #1b2230;
+      --surface-alt: #252e3d;
+      --ink: #f4f7fb;
+      --muted: #b4c0d0;
+      --line: #465267;
+      --accent: #f06b2b;
+      --accent-ink: #11151d;
+      --critical: #ff8fa3;
+      --high: #ffab70;
+      --medium: #f2ce72;
+      --low: #7bd7ad;
+      --focus: #7db8ff;
+      --shadow: 0 8px 24px rgb(0 0 0 / 30%);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 240px;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.5;
+    }
+
+    main { max-width: 1040px; margin: 0 auto; padding: 20px; }
+
+    .masthead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-mark {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 10px;
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-weight: 800;
+    }
+    .brand h1 { margin: 0; font-size: 1rem; letter-spacing: .01em; }
+    .eyebrow { margin: 0 0 3px; color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .09em; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      min-height: 26px;
+      padding: 3px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-alt);
+      color: var(--ink);
+      font-size: .78rem;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .hero, .panel, .empty {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .hero { padding: 22px; margin-bottom: 16px; }
+    .hero h2 { margin: 4px 0 6px; font-size: clamp(1.35rem, 4vw, 2rem); line-height: 1.2; }
+    .hero p { margin: 0; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; }
+    .panel { grid-column: span 6; padding: 17px; min-width: 0; }
+    .panel.wide { grid-column: 1 / -1; }
+    .panel h3 { margin: 0 0 12px; font-size: 1rem; }
+    .panel h4 { margin: 16px 0 7px; font-size: .88rem; }
+
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); gap: 10px; }
+    .metric { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-alt); }
+    .metric dt { color: var(--muted); font-size: .75rem; }
+    .metric dd { margin: 2px 0 0; font-size: 1.3rem; font-weight: 780; overflow-wrap: anywhere; }
+
+    .clean-list { margin: 0; padding-left: 20px; }
+    .clean-list li + li { margin-top: 7px; }
+    .kv { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr); gap: 7px 12px; margin: 0; }
+    .kv dt { color: var(--muted); font-size: .82rem; }
+    .kv dd { margin: 0; font-weight: 620; overflow-wrap: anywhere; }
+    .data-block {
+      margin: 0;
+      max-height: 290px;
+      overflow: auto;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-alt);
+      color: var(--ink);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: .78rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    .action-row { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+    label { display: grid; gap: 5px; color: var(--muted); font-size: .8rem; font-weight: 650; }
+    select, button {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font: inherit;
+    }
+    select { min-width: 180px; padding: 7px 34px 7px 10px; background: var(--surface); color: var(--ink); }
+    button { padding: 8px 14px; background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 760; cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .65; }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+
+    .empty { padding: 28px; text-align: center; }
+    .empty h2 { margin-top: 0; }
+    .empty p, .status { color: var(--muted); }
+    .status { min-height: 1.5em; margin: 10px 0 0; font-size: .83rem; }
+    .severity-critical { color: var(--critical); }
+    .severity-high { color: var(--high); }
+    .severity-medium { color: var(--medium); }
+    .severity-low { color: var(--low); }
+
+    @media (max-width: 640px) {
+      main { padding: 12px; }
+      .masthead { align-items: flex-start; }
+      .panel { grid-column: 1 / -1; }
+      .kv { grid-template-columns: 1fr; }
+      .kv dd + dt { margin-top: 6px; }
+      .action-row, select, button { width: 100%; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+    }
+
+    @media (forced-colors: active) {
+      .hero, .panel, .empty, .metric, .data-block, .badge { border: 1px solid CanvasText; box-shadow: none; }
+      button { border: 2px solid ButtonText; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="masthead">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">S</div>
+        <div><p class="eyebrow">Security evidence</p><h1>ScorchKit Workbench</h1></div>
+      </div>
+      <span class="badge" id="connection-state">Connecting</span>
+    </header>
+    <div id="workbench" aria-busy="true">
+      <section class="empty" aria-labelledby="waiting-title">
+        <h2 id="waiting-title">Preparing the workbench</h2>
+        <p>The complete result remains available in the conversation while this optional view loads.</p>
+      </section>
+    </div>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </main>
+  <script>
+    (() => {
+      "use strict";
+      const SCHEMA = "scorchkit.mcp.tool-result/v1";
+      const VIEWS = new Set(["project_status", "finding_show", "correlate_findings"]);
+      const STATUSES = ["new", "acknowledged", "false_positive", "remediated", "verified"];
+      const state = { nextId: 1, initializeId: 0, pendingActionId: 0, initialized: false };
+      const root = document.getElementById("workbench");
+      const live = document.getElementById("status");
+      const connection = document.getElementById("connection-state");
+
+      function node(tag, className, text) {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        if (text !== undefined) element.textContent = String(text);
+        return element;
+      }
+
+      function clear(element) {
+        while (element.firstChild) element.removeChild(element.firstChild);
+      }
+
+      function object(value) {
+        return value !== null && typeof value === "object" && !Array.isArray(value);
+      }
+
+      function display(value, fallback = "Not reported") {
+        if (value === null || value === undefined || value === "") return fallback;
+        if (typeof value === "object") return JSON.stringify(value, null, 2);
+        return String(value);
+      }
+
+      function post(message) {
+        window.parent.postMessage(message, "*");
+      }
+
+      function request(method, params) {
+        const id = state.nextId;
+        state.nextId += 1;
+        post({ jsonrpc: "2.0", id, method, params });
+        return id;
+      }
+
+      function notify(method, params) {
+        post({ jsonrpc: "2.0", method, params });
+      }
+
+      function applyHostContext(context) {
+        if (!object(context)) return;
+        if (context.theme === "dark" || context.theme === "light") {
+          document.documentElement.dataset.theme = context.theme;
+        }
+      }
+
+      function heading(title, subtitle, badge) {
+        const section = node("section", "hero");
+        const eyebrow = node("p", "eyebrow", badge);
+        const h2 = node("h2", "", title);
+        h2.id = "view-title";
+        section.setAttribute("aria-labelledby", h2.id);
+        section.append(eyebrow, h2, node("p", "", subtitle));
+        return section;
+      }
+
+      function panel(title, wide = false) {
+        const section = node("section", wide ? "panel wide" : "panel");
+        const h3 = node("h3", "", title);
+        section.append(h3);
+        return section;
+      }
+
+      function keyValues(entries) {
+        const list = node("dl", "kv");
+        for (const [label, value] of entries) {
+          list.append(node("dt", "", label), node("dd", "", display(value)));
+        }
+        return list;
+      }
+
+      function dataBlock(value, label) {
+        const block = node("pre", "data-block", display(value));
+        block.setAttribute("aria-label", label);
+        return block;
+      }
+
+      function listValues(values, emptyText) {
+        if (!Array.isArray(values) || values.length === 0) return node("p", "", emptyText);
+        const list = node("ul", "clean-list");
+        for (const value of values) list.append(node("li", "", display(value)));
+        return list;
+      }
+
+      function renderPosture(result) {
+        root.append(heading(
+          display(result.project_name, "Project posture"),
+          "Current scan coverage, unresolved findings, and security trend.",
+          "Posture summary"
+        ));
+        const grid = node("div", "grid");
+        const overview = panel("Current posture", true);
+        const metrics = node("dl", "metrics");
+        const findings = object(result.finding_summary) ? result.finding_summary : {};
+        const scans = object(result.scan_summary) ? result.scan_summary : {};
+        const metricValues = [
+          ["Total findings", findings.total_findings],
+          ["Active findings", findings.active_findings],
+          ["Resolved findings", findings.resolved_findings],
+          ["Total scans", scans.total_scans],
+          ["Scans in 30 days", scans.scans_last_30_days],
+          ["Regressions", Array.isArray(result.regressions) ? result.regressions.length : result.regressions],
+          ["MTTR days", result.mttr_days],
+          ["Trend", result.trend]
+        ];
+        for (const [label, value] of metricValues) {
+          const item = node("div", "metric");
+          item.append(node("dt", "", label), node("dd", "", display(value, "—")));
+          metrics.append(item);
+        }
+        overview.append(metrics);
+        const severity = panel("Severity breakdown");
+        severity.append(dataBlock(result.severity_breakdown ?? {}, "Severity breakdown data"));
+        const status = panel("Lifecycle breakdown");
+        status.append(dataBlock(result.status_breakdown ?? {}, "Finding lifecycle data"));
+        const latest = panel("Latest scan");
+        latest.append(keyValues([
+          ["Scan ID", scans.latest_scan_id],
+          ["Completed", scans.latest_scan_date]
+        ]));
+        const regressions = panel("Regressions");
+        regressions.append(dataBlock(result.regressions ?? [], "Regressed findings"));
+        const unresolved = panel("Top unresolved findings", true);
+        unresolved.append(listValues(result.top_unresolved, "No unresolved findings were reported."));
+        grid.append(overview, severity, status, latest, regressions, unresolved);
+        root.append(grid);
+      }
+
+      function renderFinding(result) {
+        const severity = display(result.severity, "unknown").toLowerCase();
+        root.append(heading(
+          display(result.title, "Finding evidence"),
+          display(result.description, "Canonical scanner evidence and triage history."),
+          `${severity} severity`
+        ));
+        const heroBadge = root.querySelector(".hero .eyebrow");
+        if (["critical", "high", "medium", "low"].includes(severity)) {
+          heroBadge.classList.add(`severity-${severity}`);
+        }
+        const grid = node("div", "grid");
+        const identity = panel("Finding identity");
+        identity.append(keyValues([
+          ["Finding ID", result.id],
+          ["Status", result.status],
+          ["Target", result.affected_target],
+          ["CWE", result.cwe_id],
+          ["OWASP", result.owasp_category],
+          ["Confidence", result.confidence],
+          ["Seen", result.seen_count]
+        ]));
+        const raw = object(result.raw_finding) ? result.raw_finding : {};
+        const appsec = object(raw.appsec) ? raw.appsec : {};
+        const scannerEvidence = Array.isArray(appsec.evidence) && appsec.evidence.length > 0
+          ? appsec.evidence
+          : result.evidence;
+        const evidence = panel("Scanner evidence");
+        evidence.append(dataBlock(scannerEvidence ?? {}, "Canonical scanner evidence"));
+        const analysis = panel("Model analysis");
+        analysis.append(dataBlock(
+          Array.isArray(appsec.agent_analysis) && appsec.agent_analysis.length > 0
+            ? appsec.agent_analysis
+            : "No separate model analysis was recorded.",
+          "Labeled model analysis"
+        ));
+        const triage = panel("Triage history");
+        triage.append(dataBlock(result.triage ?? {}, "Finding triage lifecycle"));
+        const remediation = panel("Remediation", true);
+        remediation.append(node("p", "", display(result.remediation, "No remediation guidance was reported.")));
+        remediation.append(node("h4", "", "Update lifecycle status"));
+        const actionRow = node("div", "action-row");
+        const label = node("label", "", "New status");
+        const select = node("select");
+        select.id = "finding-status";
+        for (const status of STATUSES) {
+          const option = node("option", "", status.replaceAll("_", " "));
+          option.value = status;
+          if (status === result.status) option.selected = true;
+          select.append(option);
+        }
+        label.setAttribute("for", select.id);
+        label.append(select);
+        const button = node("button", "", "Update finding");
+        button.type = "button";
+        button.id = "update-finding";
+        button.addEventListener("click", () => {
+          const id = typeof result.id === "string" ? result.id : "";
+          const status = select.value;
+          if (!id || id.length > 128 || !STATUSES.includes(status)) {
+            live.textContent = "This finding cannot be updated because its identity or status is invalid.";
+            return;
+          }
+          button.disabled = true;
+          live.textContent = `Requesting status update to ${status.replaceAll("_", " ")}.`;
+          state.pendingActionId = request("tools/call", {
+            name: "finding_update_status",
+            arguments: { id, status }
+          });
+        });
+        actionRow.append(label, button);
+        remediation.append(actionRow);
+        grid.append(identity, evidence, analysis, triage, remediation);
+        root.append(grid);
+      }
+
+      function renderAttackPaths(result) {
+        root.append(heading(
+          display(result.project, "Attack-path correlation"),
+          "Canonical cross-scanner paths are shown separately from evidence gaps.",
+          "Attack paths"
+        ));
+        const grid = node("div", "grid");
+        const summary = panel("Correlation summary", true);
+        summary.append(keyValues([
+          ["Status", result.status],
+          ["Findings available", result.total_findings_available],
+          ["Findings analyzed", result.total_findings_analyzed],
+          ["Attack paths", result.attack_paths_found]
+        ]));
+        const paths = panel("Canonical attack paths");
+        paths.append(dataBlock(result.attack_paths ?? [], "Canonical attack paths"));
+        const gaps = panel("Evidence gaps");
+        gaps.append(dataBlock(result.gaps ?? [], "Correlation evidence gaps"));
+        const legacy = panel("Legacy unverified chains", true);
+        legacy.append(dataBlock(result.legacy_unverified_attack_chains ?? {}, "Legacy unverified attack chains"));
+        grid.append(summary, paths, gaps, legacy);
+        root.append(grid);
+      }
+
+      function invalid(message) {
+        clear(root);
+        const section = node("section", "empty");
+        section.append(node("h2", "", "Workbench data unavailable"), node("p", "", message));
+        root.append(section);
+        root.setAttribute("aria-busy", "false");
+        live.textContent = message;
+      }
+
+      function renderToolResult(toolResult) {
+        const envelope = object(toolResult) && object(toolResult.structuredContent)
+          ? toolResult.structuredContent
+          : null;
+        if (!object(envelope) || envelope.schemaVersion !== SCHEMA ||
+            !VIEWS.has(envelope.tool) || envelope.outcome !== "success" || !object(envelope.result)) {
+          invalid("The host did not provide a supported, validated ScorchKit result.");
+          return;
+        }
+        clear(root);
+        root.setAttribute("aria-busy", "false");
+        connection.textContent = "Evidence ready";
+        if (envelope.tool === "project_status") renderPosture(envelope.result);
+        if (envelope.tool === "finding_show") renderFinding(envelope.result);
+        if (envelope.tool === "correlate_findings") renderAttackPaths(envelope.result);
+        live.textContent = "Workbench view updated from the canonical tool result.";
+      }
+
+      function handleResponse(message) {
+        if (message.id === state.initializeId) {
+          if (!object(message.result)) {
+            invalid("The host did not complete MCP Apps initialization.");
+            return;
+          }
+          state.initialized = true;
+          applyHostContext(message.result.hostContext);
+          notify("ui/notifications/initialized", {});
+          connection.textContent = "Connected";
+          return;
+        }
+        if (message.id === state.pendingActionId) {
+          const button = document.getElementById("update-finding");
+          if (button) button.disabled = false;
+          if (message.error || (object(message.result) && message.result.isError === true)) {
+            live.textContent = "The finding status update was rejected. The original evidence is unchanged.";
+          } else {
+            live.textContent = "Finding status update completed through the standard ScorchKit tool path.";
+          }
+          state.pendingActionId = 0;
+        }
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent || !object(event.data) || event.data.jsonrpc !== "2.0") return;
+        const message = event.data;
+        if (Object.hasOwn(message, "id") && (Object.hasOwn(message, "result") || Object.hasOwn(message, "error"))) {
+          handleResponse(message);
+          return;
+        }
+        if (message.method === "ui/notifications/host-context-changed") {
+          applyHostContext(message.params);
+        } else if (message.method === "ui/notifications/tool-result") {
+          renderToolResult(message.params);
+        } else if (message.method === "ui/notifications/cancelled") {
+          live.textContent = "The host cancelled the current operation.";
+        } else if (message.method === "ui/notifications/teardown") {
+          connection.textContent = "Closed";
+          live.textContent = "The host closed the workbench session.";
+        }
+      });
+
+      state.initializeId = request("ui/initialize", {
+        protocolVersion: "2026-01-26",
+        appInfo: { name: "scorchkit-conversation-workbench", version: "1.0.0" },
+        appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
+      });
+    })();
+  </script>
+</body>
+</html>

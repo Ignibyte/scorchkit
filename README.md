@@ -243,6 +243,20 @@ environment-backed credentials and binds them to the exact configured engagement
 client names remain untrusted trace context; ScorchKit engagement policy remains the sole target,
 capability, and effect authorization source.
 
+## Optional conversation workbench
+
+MCP clients that negotiate the stable `io.modelcontextprotocol/ui` extension and
+`text/html;profile=mcp-app` can render a self-contained ScorchKit workbench for `project_status`,
+`finding_show`, and `correlate_findings`. The view presents posture, scanner evidence, separately
+labeled model analysis, triage history, canonical attack paths, and evidence gaps. Finding status
+actions call the existing `finding_update_status` tool and therefore repeat the normal engagement,
+target, capability, effect, control-service, and audit checks.
+
+The component has no external assets, browser permissions, direct HTTP client, database access, or
+host-name branch. Clients without the extension continue receiving the complete existing text and
+`scorchkit.mcp.tool-result/v1` structured response. See the
+[MCP architecture](docs/architecture/mcp.md#conversation-native-workbench).
+
 ## Network and integration boundaries
 
 - HTTP requests use one policy-bound client that checks the requested URL, every redirect,
@@ -274,6 +288,9 @@ capability, and effect authorization source.
 - Finding triage mutations require `local-state`/`active-safe` grants for the exact canonical
   runtime, source, artifact, network, or cloud target before append-only storage changes. A project,
   model recommendation, or stored compatibility status is never sufficient authority.
+- The optional conversation workbench is a capability-negotiated, self-contained MCP Apps
+  resource. It consumes the same canonical tool envelopes, makes lifecycle changes only through
+  the existing MCP tool path, loads no remote assets, and is never required for headless operation.
 
 See [SECURITY.md](SECURITY.md) for the enforced boundary and current limitations.
 
@@ -313,6 +330,7 @@ Read [CONSTITUTION.md](CONSTITUTION.md), [AGENTS.md](AGENTS.md), and the
 - [AI adapters](docs/architecture/ai.md)
 - [Model analysis](docs/architecture/model-analysis.md)
 - [Finding triage lifecycle](docs/architecture/finding-triage.md)
+- [MCP and conversation-native views](docs/architecture/mcp.md)
 - [Module development](docs/architecture/modules.md)
 - [External tool inventory](docs/tools-checklist.md)
 - [Tutorials](docs/tutorials/README.md)

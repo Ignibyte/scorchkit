@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** SK-053 is complete; SK-054 is next; SK-055 through SK-057 are documented platform candidates
+**Status:** SK-054 is complete; SK-055 is next; SK-056 and SK-057 are documented platform candidates
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-24
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
@@ -158,6 +158,7 @@ file-mode observations while the index retains authoritative modes.
 | SK-051 | Promoted lifecycle hooks into a typed run pipeline with proposal-only preprocessing, enrichment, reporting, carried authority narrowing, immutable scanner findings, and durable typed outcomes. | Eleven inspection findings repaired; 84.80% line coverage; 2,096 strict cases; PostgreSQL and CLI/MCP contracts green; sealed evidence caught 275/275 viable mutations at 100% MSI after one 374-mutant DIFF and survivor-only follow-ups. |
 | SK-052 | Added provider-neutral model roles, exact host/service/local adapters, provenance, readiness, and deterministic evaluations while keeping model output outside scanner evidence, finding lifecycle, and execution authority. | Twelve inspection findings repaired; the canonical DIFF recorded 85.03% line coverage; the focused-repair gate passed 2,140 strict cases plus PostgreSQL and CLI/MCP contracts; one completed 287-mutant DIFF and exact survivor-only follow-ups produced sealed 253/253 viable caught at 100% MSI. |
 | SK-053 | Added a provider-neutral append-only finding-triage lifecycle with exact transitions, correlations, scoped time-bounded suppressions, model provenance, deterministic rediscovery, and one validated cross-surface projection. | Six inspection findings repaired; 85.55% line coverage and 2,189 strict cases passed with PostgreSQL and CLI/MCP contracts; one completed 598-mutant DIFF and survivor-only rechecks produced sealed 552/552 viable caught at 100% MSI. |
+| SK-054 | Added an optional provider-neutral MCP Apps workbench for canonical posture, finding/evidence/triage, and attack-path results while preserving complete headless MCP contracts and routing actions through ordinary authorized tools. | Exact capability/resource/headless parity contracts; browser interaction and representative render/CSS lanes; 85.62% line coverage; 2,196 strict cases; authenticated PostgreSQL and CLI/MCP contracts; one 25-mutant DIFF caught 20/20 viable mutations with five unviable and zero survivors. |
 
 The sealed Codex Security scan `efe30eaf-9b1b-4572-949a-0e8391d48247` reviewed 603 changed paths and
 closed 192/192 semantic rows. Its eight high-confidence findings have code fixes and regression
@@ -167,31 +168,32 @@ evidence.
 
 ## Current validation evidence
 
-Evidence produced through the TICKET-031 pre-completion worktree:
+Evidence produced through the TICKET-032 pre-completion worktree:
 
 | Signal | Last result | Final requirement |
 |---|---:|---:|
 | Compiler | all targets, workspace packages, and features passed | pass after final edits |
 | Strict Clippy | zero diagnostics across every derived feature state and workspace package | pass after final edits and every feature state |
 | All-feature tests | Workspace library, package, integration, and doctest suites passed; strict feature-matrix Clippy had zero diagnostics | pass after final edits with PostgreSQL |
-| Canonical line coverage | 85.55% in the TICKET-031 focused-repair gate | at least the unchanged 62% floor |
-| SK-053 focused mutation evidence | One completed 598-mutant DIFF preserved 195 survivors; exact survivor-only proof reconstructs 552/552 viable caught, 46 unviable, 100% MSI | remain at or above the unchanged 95% floor |
-| Nextest strictness | 2,189 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
+| Canonical line coverage | 85.62% in the TICKET-032 DIFF gate | at least the unchanged 62% floor |
+| SK-054 DIFF mutation evidence | One completed 25-mutant DIFF caught 20/20 viable mutations with 5 unviable, zero survivors, and 100% MSI; no follow-up run was needed | remain at or above the unchanged 95% floor |
+| Browser/render/CSS evidence | Gates 17–19 passed interaction, canonical representative rendering, responsive/high-contrast behavior, and reviewed CSS/source policy | pass whenever the workbench ships |
+| Nextest strictness | 2,196 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
 | PostgreSQL integration | Migrated PostgreSQL storage and MCP suites passed against an authenticated disposable loopback database | pass |
-| CLI/MCP contracts | 24 CLI, 2 code-scan, 77 MCP, and 12 scan-plan tests passed | pass |
-| Delivery receipt | TICKET-031 pre-completion focused-repair gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive focused-repair receipt for the exact completed tree |
+| CLI/MCP contracts | 24 CLI, 2 code-scan, 78 MCP, and 12 scan-plan tests passed | pass |
+| Delivery receipt | TICKET-032 DIFF and pre-completion focused-repair gates each passed all 22 lanes with no failures or skips; the focused gate verified the sealed zero-survivor result without cargo-mutants | post-archive focused-repair receipt for the exact completed tree |
 
 The test count is historical evidence, not a promised final count. The gate output after all source and
 documentation edits is authoritative.
 
 ## Baseline blockers
 
-None. The feature-readiness baseline and SK-028 through SK-053 are closed above.
+None. The feature-readiness baseline and SK-028 through SK-054 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. TICKET-031 closes the provider-neutral finding-triage
-boundary; SK-054 is next.
+The pipeline permits one active ticket. TICKET-032 closes the optional conversation-view boundary;
+SK-055 is next.
 Each later row has a specified candidate intake under `docs/planning/intake/` and becomes a numbered
 ticket only when promoted. Backlog status is not a waiver of a safety invariant.
 
@@ -211,7 +213,7 @@ ticket only when promoted. Backlog status is not a waiver of a safety invariant.
 | 12 | SK-051 (completed) | Promote the existing event bus and lifecycle hooks into a typed run pipeline for preprocessing, planning proposals, normalization, enrichment, correlation, reporting, and notification. | SK-028, SK-043, SK-049, SK-050 | [TICKET-029](tickets/closed/TICKET-029-typed-run-pipeline.md) |
 | 13 | SK-052 (completed) | Add provider-neutral model roles, host and service adapters, provenance, readiness reporting, and evaluations without granting a model execution authority or scanner-evidence status. | SK-030, SK-031, SK-042, SK-049, SK-050 | [TICKET-030](tickets/closed/TICKET-030-model-analysis.md) |
 | 14 | SK-053 (completed) | Add an append-only finding validation and triage lifecycle with correlation, scoped suppression, accepted risk, fix state, and regression verification. | SK-035, SK-040, SK-041, SK-052 | [TICKET-031](tickets/closed/TICKET-031-finding-triage.md) |
-| 15 | SK-054 | Add optional conversation-native result views for scan summaries, evidence, triage, and attack paths while keeping every MCP and API workflow complete without UI. | SK-031, SK-032, SK-042, SK-049, SK-053 | [intake](intake/INTAKE-conversation-workbench.md) |
+| 15 | SK-054 (completed) | Add optional conversation-native result views for scan summaries, evidence, triage, and attack paths while keeping every MCP and API workflow complete without UI. | SK-031, SK-032, SK-042, SK-049, SK-053 | [TICKET-032](tickets/closed/TICKET-032-conversation-workbench.md) |
 | 16 | SK-055 | Add an optional Rustal-based local operator console that consumes the control API for jobs, evidence, triage, engagement editing, and live progress. | SK-049, SK-053, SK-054 | [intake](intake/INTAKE-rustal-console.md) |
 | 17 | SK-056 | Add an authenticated multi-user deployment profile with tenant and project isolation, RBAC, shared queues, object storage, audit, backup, and recovery. | SK-043, SK-044, SK-048, SK-049, SK-055 | [intake](intake/INTAKE-team-suite.md) |
 | 18 | SK-057 | Add a signed extension catalog with compatibility, provenance, permission review, upgrade, rollback, revocation, and conformance checks. | SK-048, SK-050, SK-051, SK-052 | [intake](intake/INTAKE-extension-catalog.md) |
@@ -327,10 +329,10 @@ source bans, actionable-marker policy, Cargo Sort/Taplo/typos, and Semgrep.
 
 ### Delivery gates, IDs 15–22
 
-Coverage, mutation, named web skips 17–19, Nextest strictness, migrated PostgreSQL integration, and
-CLI/MCP contracts. The web IDs remain visible not-applicable skips because ScorchKit has no web UI.
-Documenting SK-054 and SK-055 does not change that status. A future UI ticket must replace each skip
-with an executable browser, rendering, or asset-drift contract before claiming the surface ships.
+Coverage, mutation, interactive-surface gates 17–19, Nextest strictness, migrated PostgreSQL
+integration, and CLI/MCP contracts. SK-054 replaced all three former named web skips in delivery
+modes with executable local browser interaction, representative dogfood rendering, and reviewed
+CSS/source asset-drift evidence. Fast mode retains explicit named skips; missing delivery tools fail.
 
 Missing tools and missing database configuration fail closed. Cargo commands run sequentially.
 Mutation workers may run in bounded parallel on local scratch. Floors may rise through reviewed

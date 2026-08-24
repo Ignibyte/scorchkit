@@ -49,6 +49,11 @@ finding-status commands map their old vocabulary into `TransitionFinding`; suppr
 correlation writes are also first-class v1 control commands. Scan-specific orchestration,
 schedules, and intelligence remain separate application workflows.
 
+The optional MCP conversation workbench remains above this boundary. It renders the validated
+`project_status`, `finding_show`, and `correlate_findings` envelopes and invokes the existing
+`finding_update_status` MCP adapter for lifecycle changes. It never receives a database handle,
+canonical storage row, bearer, engagement grant, or alternate write command.
+
 Module views include engine-assigned trust and runtime labels. Explicitly configured isolated
 extensions appear as `third_party` / `wasm_worker` only after the control service reauthorizes and
 digest-validates their exact manifest/module pair; invalid or duplicate registrations fail the

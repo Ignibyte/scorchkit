@@ -1,9 +1,9 @@
 ---
 title: INTAKE-conversation-workbench
-status: candidate
+status: promoted
 created: 2026-08-21
-ticket:
-pipeline_spec:
+ticket: TICKET-032
+pipeline_spec: docs/planning/pipeline/active/conversation-workbench.spec.md
 ---
 
 # Conversation-native application-security workbench

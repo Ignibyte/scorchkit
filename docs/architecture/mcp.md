@@ -133,6 +133,32 @@ The text content remains byte-for-byte compatible for successful calls so pre-SK
 continue decoding the original result. New hosts should prefer `structuredContent`, verify the
 schema version and tool name, and use the text block only as a compatibility fallback.
 
+## Conversation-native workbench
+
+The server advertises the stable `io.modelcontextprotocol/ui` extension with the single supported
+MIME type `text/html;profile=mcp-app`. A client receives nested `ui.resourceUri` metadata only when
+its initialization capabilities advertise that exact extension and MIME type. Negotiation never
+examines client implementation name or version. The three associated read tools are:
+
+| Tool | View |
+|---|---|
+| `project_status` | scan coverage, posture metrics, severity/status breakdown, trend, and unresolved findings |
+| `finding_show` | canonical scanner evidence, separately labeled model analysis, triage history, and remediation |
+| `correlate_findings` | canonical attack paths, evidence gaps, and separately labeled legacy unverified chains |
+
+All three retain their complete text block and `scorchkit.mcp.tool-result/v1` structured envelope.
+Headless clients receive no `ui` tool metadata and lose no data or workflow. The component validates
+the schema, exact tool, success outcome, and object result before rendering. Untrusted values enter
+the document only through text nodes; malformed or unsupported data produces a visible fallback.
+
+`ui://scorchkit/conversation-workbench/v1` is a compile-time HTML/CSS/JavaScript resource. It has
+empty connect, resource, frame, and base-URI domain sets; no browser permissions, external assets,
+credential access, direct API client, database handle, or persistent browser storage. It branches
+only on negotiated capability, host display context, and the exact result tool—not on a vendor or
+client name. A finding lifecycle action sends the ordinary `tools/call` request for
+`finding_update_status`; the MCP/control path repeats its existing authorization, canonical read,
+append-only write, audit, and redaction rules.
+
 Local stdio records `kind=local_process` and subject `local-mcp-process`. Remote HTTP records
 `kind=authenticated_bearer` and the subject selected by the matched runtime credential binding.
 Remote startup separately proves that binding names the exact configured engagement UUID. MCP
@@ -167,7 +193,7 @@ values and adds no authorization path. See
 
 ## Resources
 
-Resources provide read-only project data as `application/json`:
+Resources provide read-only project data as `application/json` plus the optional MCP Apps resource:
 
 | URI | Value |
 |---|---|
@@ -177,9 +203,11 @@ Resources provide read-only project data as `application/json`:
 | `scorchkit://projects/{project_id}/scans/{scan_id}` | one scan |
 | `scorchkit://projects/{project_id}/findings` | tracked findings |
 | `scorchkit://projects/{project_id}/findings/{finding_id}` | one finding |
+| `ui://scorchkit/conversation-workbench/v1` | self-contained optional result workbench |
 
-The five parameterized forms are also advertised as resource templates. There is no subscription or
-push-notification protocol.
+The UI resource is available without PostgreSQL; project resources retain their database
+requirement. The five parameterized project forms are also advertised as resource templates. There
+is no subscription or push-notification protocol.
 
 ## Prompts
 
@@ -272,7 +300,9 @@ inventory and schema snapshot, annotations, structured success
 and failure, spoofed client attribution, stateless jobs over duplex MCP transport, project
 membership, schedule snapshots, one-slot concurrency, N-caller at-most-once execution, finding
 lifecycle, resources, and prompts. Contract unit tests decorate and reject generated routers without
-a transport.
+a transport. Delivery gates 17–19 run a disposable loopback Node/Chrome harness for handshake,
+malicious-text containment, exact lifecycle action, all three representative render shapes, narrow
+and forced-high-contrast presentation, reviewed CSS digest, and forbidden source/asset patterns.
 Direct test commands may skip database cases
 when `DATABASE_URL` is absent. Delivery gate 21 treats a missing database as failure, and gate 22
 executes the CLI/MCP contract lane.
@@ -290,7 +320,8 @@ src/mcp/
   remote.rs        authenticated bounded Streamable HTTP adapter and session isolation
   tools.rs         39 tool wrappers and do_* business methods
   types.rs         compatibility re-exports
-  resources.rs     URI parser, listings, templates, and reads
+  resources.rs     URI parser, listings, templates, and JSON/UI resource reads
+  conversation-workbench.html  self-contained MCP Apps component
   prompts.rs       five workflow prompts and compatibility-only unverified correlation rules
   instructions.rs  compatibility re-exports
 ```

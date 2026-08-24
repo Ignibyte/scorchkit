@@ -38,9 +38,12 @@ Delivery gates:
     completed outcomes for every repaired survivor at the same floor and bind them to the exact
     mutation-relevant inputs. A later repair must prove its old-to-new input transition and add raw
     outcomes limited to the newly repaired functions.
-17. Browser end-to-end checks: not applicable until ScorchKit ships a web UI; always a named skip.
-18. Website dogfood rendering: not applicable; always a named skip.
-19. Built CSS sheet drift: not applicable; always a named skip.
+17. Browser end-to-end checks for shipped interactive surfaces, using local fixtures and no remote
+    target effects; fast mode retains a named skip.
+18. Dogfood rendering of every shipped interactive result shape, including narrow and high-contrast
+    states; fast mode retains a named skip.
+19. Reviewed CSS digest drift and external-asset/source isolation for shipped interactive surfaces;
+    fast mode retains a named skip.
 20. Nextest strictness: no empty non-binary suites, no retries, and bounded per-test timeouts.
 21. PostgreSQL integration against a migrated database; missing `DATABASE_URL` is a failure.
 22. CLI and MCP contract suites.

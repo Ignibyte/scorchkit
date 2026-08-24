@@ -283,3 +283,7 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-latest-state-history-revalidation-001` | historical-integrity bug | `AAR-031-finding-triage` |
 | `BF-scorchkit-append-bound-lock-order-001` | concurrency and resource-bound bug | `AAR-031-finding-triage` |
 | `BF-scorchkit-selector-invariant-mutation-gap-001` | test-gap bug | `AAR-031-finding-triage` |
+| `BF-scorchkit-ui-fixture-projection-drift-001` | projection test gap | `AAR-032-conversation-workbench` |
+| `BF-scorchkit-loopback-harness-event-loop-starvation-001` | test harness failure | `AAR-032-conversation-workbench` |
+| `PR-scorchkit-ui-fixture-canonical-shape-001` | Derive interactive-view fixtures from the exact serialized public DTO and pin every consumed path against the canonical producer contract. | `AAR-032-conversation-workbench` |
+| `PR-scorchkit-loopback-harness-nonblocking-driver-001` | Drive clients asynchronously when the test process owns the loopback fixture server they consume. | `AAR-032-conversation-workbench` |
