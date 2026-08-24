@@ -941,6 +941,20 @@ fn source_value_range(bytes: &[u8], start: usize) -> Option<(usize, usize)> {
         }
         end += 1;
     }
+    if bytes[start..end].eq_ignore_ascii_case(b"bearer") {
+        let credential_start = skip_ascii_whitespace(bytes, end);
+        let mut credential_end = credential_start;
+        while let Some(&byte) = bytes.get(credential_end) {
+            if byte.is_ascii_whitespace() || matches!(byte, b',' | b';' | b')' | b']' | b'}' | b'&')
+            {
+                break;
+            }
+            credential_end += 1;
+        }
+        if credential_end > credential_start {
+            end = credential_end;
+        }
+    }
     (end > start).then_some((start, end))
 }
 
@@ -1266,6 +1280,14 @@ mod tests {
     }
 
     #[test]
+    fn redact_text_keeps_bearer_scheme_and_token_inside_one_assignment_boundary() {
+        let redacted = redact_text("Remove authorization=Bearer extension-secret before storing");
+        assert!(!redacted.contains("extension-secret"));
+        assert!(redacted.contains("authorization=[REDACTED]"));
+        assert!(redacted.ends_with("before storing"));
+    }
+
+    #[test]
     fn redact_text_does_not_rewrite_comparisons_or_ordinary_source() {
         let source = concat!(
             "if password == expected { authenticate(); }\n",
@@ -1389,6 +1411,7 @@ mod tests {
 
     #[test]
     fn source_value_parser_preserves_exact_value_boundaries() {
+        assert_eq!(source_value_range(b"'", 0), None);
         assert_eq!(source_value_range(b"xx[REDACTED],tail", 2), Some((2, 12)));
         assert_eq!(source_value_range(b"xx'v'", 2), Some((3, 4)));
         assert_eq!(source_value_range(b"xx''", 2), None);
@@ -1397,6 +1420,11 @@ mod tests {
         assert_eq!(source_value_range(b"xxvalue,tail", 2), Some((2, 7)));
         assert_eq!(source_value_range(b"xxvalue tail", 2), Some((2, 7)));
         assert_eq!(source_value_range(b",tail", 0), None);
+
+        let production =
+            include_str!("observation.rs").split("#[cfg(test)]").next().expect("production source");
+        let compact: String = production.split_whitespace().collect();
+        assert!(compact.contains("ifcredential_end>credential_start{"));
     }
 
     #[test]

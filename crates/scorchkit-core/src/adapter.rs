@@ -127,6 +127,26 @@ pub enum TemporaryArtifactPolicy {
     ScopedOwned,
 }
 
+/// Trust assigned by the engine to an adapter implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdapterTrust {
+    /// Implementation compiled with and trusted as part of `ScorchKit`.
+    FirstParty,
+    /// Digest-bound third-party implementation whose output remains untrusted.
+    ThirdParty,
+}
+
+/// Runtime boundary used to execute an adapter implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdapterRuntime {
+    /// Trusted implementation compiled into the `ScorchKit` process.
+    Compiled,
+    /// WebAssembly guest hosted in a separate owned worker process.
+    WasmWorker,
+}
+
 /// Common immutable metadata embedded by every scanner-family descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -147,6 +167,10 @@ pub struct AdapterContractV1<'a> {
     pub provenance: ProvenanceStrategy,
     /// Temporary artifact ownership rule.
     pub temporary_artifacts: TemporaryArtifactPolicy,
+    /// Engine-assigned implementation trust.
+    pub trust: AdapterTrust,
+    /// Execution boundary used by the implementation.
+    pub runtime: AdapterRuntime,
 }
 
 impl AdapterContractV1<'_> {
@@ -260,10 +284,14 @@ mod tests {
             output_contract: AdapterOutputContract::Json,
             provenance: ProvenanceStrategy::ToolVersion,
             temporary_artifacts: TemporaryArtifactPolicy::None,
+            trust: AdapterTrust::FirstParty,
+            runtime: AdapterRuntime::Compiled,
         };
         let json = serde_json::to_value(contract).expect("serialize adapter contract");
         assert_eq!(json["schemaVersion"], ADAPTER_CONTRACT_V1);
         assert_eq!(json["securityDomain"], "application_runtime");
         assert_eq!(json["strongestEffect"], "active-safe");
+        assert_eq!(json["trust"], "first_party");
+        assert_eq!(json["runtime"], "compiled");
     }
 }

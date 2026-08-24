@@ -8,8 +8,9 @@ use crate::engine::infra_module::InfraCategory;
 use crate::engine::module_trait::ModuleCategory;
 use crate::engine::policy::EffectClass;
 use scorchkit_core::{
-    AdapterContractV1, AdapterOutputContract, AdapterTargetKind, LifecycleStage,
-    ProvenanceStrategy, SecurityDomain, TemporaryArtifactPolicy, ADAPTER_CONTRACT_V1,
+    AdapterContractV1, AdapterOutputContract, AdapterRuntime, AdapterTargetKind, AdapterTrust,
+    LifecycleStage, ProvenanceStrategy, SecurityDomain, TemporaryArtifactPolicy,
+    ADAPTER_CONTRACT_V1,
 };
 
 const SOURCE_TARGET: &[AdapterTargetKind] = &[AdapterTargetKind::SourceTree];
@@ -256,6 +257,8 @@ pub fn web_adapter_contract(
         } else {
             TemporaryArtifactPolicy::None
         },
+        trust: AdapterTrust::FirstParty,
+        runtime: AdapterRuntime::Compiled,
     }
 }
 
@@ -314,6 +317,8 @@ pub fn code_adapter_contract(
         } else {
             TemporaryArtifactPolicy::None
         },
+        trust: AdapterTrust::FirstParty,
+        runtime: AdapterRuntime::Compiled,
     }
 }
 
@@ -344,6 +349,8 @@ pub fn infra_adapter_contract(
             ProvenanceStrategy::BuiltIn
         },
         temporary_artifacts: TemporaryArtifactPolicy::None,
+        trust: AdapterTrust::FirstParty,
+        runtime: AdapterRuntime::Compiled,
     }
 }
 
@@ -380,6 +387,8 @@ pub fn cloud_adapter_contract(
         } else {
             TemporaryArtifactPolicy::None
         },
+        trust: AdapterTrust::FirstParty,
+        runtime: AdapterRuntime::Compiled,
     }
 }
 

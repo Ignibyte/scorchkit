@@ -67,6 +67,7 @@ pub mod cloud;
 pub mod config;
 pub mod control;
 pub mod engine;
+pub mod extension;
 pub mod facade;
 #[cfg(feature = "infra")]
 pub mod infra;

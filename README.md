@@ -282,6 +282,7 @@ Read [CONSTITUTION.md](CONSTITUTION.md), [AGENTS.md](AGENTS.md), and the
 - [Architecture overview](docs/architecture/overview.md)
 - [Cargo workspace boundaries](docs/architecture/workspace.md)
 - [Application-security adapter catalog](docs/architecture/application-security-catalog.md)
+- [Isolated WebAssembly extensions](docs/architecture/extensions.md)
 - [Application supply-chain evidence](docs/architecture/application-supply-chain.md)
 - [Agent integration](docs/architecture/agent.md)
 - [Codex plugin](docs/guide/codex-plugin.md)

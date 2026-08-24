@@ -195,6 +195,10 @@ pub struct ModuleViewV1 {
     pub lifecycle_stage: String,
     /// Strongest effect.
     pub strongest_effect: String,
+    /// Whether the implementation is first-party or third-party.
+    pub trust: String,
+    /// Compiled or isolated worker runtime.
+    pub runtime: String,
     /// Whether a bounded external process is required.
     pub requires_external_tool: bool,
     /// Required executable, when applicable.

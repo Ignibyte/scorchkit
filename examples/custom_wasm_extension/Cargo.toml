@@ -1,0 +1,15 @@
+[package]
+name = "scorchkit-custom-wasm-extension"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+scorchkit-extension = { path = "../../crates/scorchkit-extension", default-features = false, features = [
+  "guest-sdk",
+] }
+
+[workspace]

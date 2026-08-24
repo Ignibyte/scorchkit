@@ -58,6 +58,10 @@ infrastructure. The test suite never treats a timeout against an external addres
 - Release publication requires one immutable semantic-version tag and revision, exact native
   target/toolchain/features, header-verified bounded binaries, per-subject hashes and SBOMs, signed
   provenance, and complete readback verification before a draft becomes public.
+- Third-party extensions require explicitly named, policy-authorized manifests and digest-bound
+  WebAssembly modules. They run without WASI or ambient imports in a bounded owned worker; every
+  host effect is separately authorized and its awaited audit event is published before it begins,
+  and guest output is treated as an untrusted proposal rather than engine evidence or authority.
 
 The current implementation has direct regression coverage for absence denial, HTTP redirects and
 DNS answers, project membership, stored schedule snapshots, CVE-provider endpoints and cache paths,
@@ -71,6 +75,11 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
   application source, dependency, artifact, runtime, and attack-path modules. Network, enterprise,
   and cloud-account posture adapters require explicit compatibility selection. Selection never
   supplies an engagement or a missing capability or effect grant.
+- Isolated third-party extensions are disabled by default and registered only through exact
+  manifest paths. Version 1 supports credential-free, no-redirect HTTP `GET` and `HEAD` plus
+  opaque pre-opened inputs; filesystem, credential, subprocess, native-library, automatic
+  discovery, and direct storage access are unsupported. Trusted Rust modules and legacy command
+  wrappers remain separate in-process or configured trust surfaces, not sandboxed extensions.
 - Scanner descriptors declare their strongest effect. DAST process authorization reads the same
   canonical tool-effect mapping: Hydra, Kerbrute, NetExec, onesixtyone, and SMBMap require
   `credential-test` and `credential-use`; Commix and Metasploit require `exploit`. The legacy

@@ -41,6 +41,14 @@ All notable changes to ScorchKit will be documented in this file.
   89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
 
 ### Added
+- **Capability-declared isolated extension runtime (TICKET-028 / SK-050)** — Added a versioned
+  provider-neutral manifest, protocol, portable WebAssembly SDK, and explicit digest-bound
+  registration for third-party application-security modules. Extensions run without WASI or
+  ambient imports in a bounded owned worker; a parent policy broker authorizes every typed effect
+  and awaits its audit-event publication before execution. Guest findings are bounded,
+  reauthorized, normalized, redacted, and assigned engine provenance before entering the existing
+  report, control/MCP, and
+  persistence paths, while shared module descriptors retain explicit trust and runtime labels.
 - **Versioned provider-neutral control API (TICKET-027 / SK-049)** — Added a stable
   `scorchkit.control/v1` contract and generated self-description, monotonic four-layer run
   configuration, one shared application service for library/CLI/MCP/HTTP operations, canonical

@@ -10,6 +10,7 @@ are compatibility re-exports of package-owned types where a stable contract has 
 |---|---|---|
 | `scorchkit-policy` | engagement, scope, capability, effect, and decision types | clients, contexts, or effect execution |
 | `scorchkit-core` | targets, findings, evidence, results, events, correlation, CVE, compliance, and scanner-adapter contracts | CLI, MCP, storage, or agent adapters |
+| `scorchkit-extension` | portable guest ABI/protocol plus optional host manifest and SDK contracts | process launch, policy decisions, effects, or persistence |
 | `scorchkit-config` | application configuration, credentials, CVE configuration, bounded webhook destinations, and provider-neutral remote MCP shape | effect authorization, HTTP hosting, or delivery execution |
 | `scorchkit-control` | versioned control requests, results, errors, schemas, events, cursors, and monotonic run configuration | composition, authorization, storage, transports, or agent providers |
 | `scorchkit-executor` | bounded scheduling plus durable job, webhook queue, and store contracts | family orchestration, HTTP, or PostgreSQL queries |
@@ -41,6 +42,7 @@ flowchart LR
     ROOT --> CONTROL["scorchkit-control"]
     ROOT --> EXECUTOR["scorchkit-executor"]
     ROOT --> TOOLS["scorchkit-tools"]
+    ROOT --> EXTENSION["scorchkit-extension"]
     ROOT --> LEAVES["family, storage, MCP, CLI, and agent packages"]
     CORE --> POLICY
     CONFIG --> CORE
@@ -49,6 +51,8 @@ flowchart LR
     EXECUTOR --> CORE
     EXECUTOR --> POLICY
     TOOLS --> CORE
+    EXTENSION --> CORE
+    EXTENSION --> POLICY
     LEAVES --> CORE
 ```
 

@@ -40,9 +40,9 @@ pub mod policy {
 }
 
 pub use adapter::{
-    AdapterContractV1, AdapterOutputContract, AdapterParseOutcome, AdapterTargetKind,
-    LifecycleStage, ProvenanceStrategy, SecurityDomain, TemporaryArtifactPolicy,
-    ADAPTER_CONTRACT_V1,
+    AdapterContractV1, AdapterOutputContract, AdapterParseOutcome, AdapterRuntime,
+    AdapterTargetKind, AdapterTrust, LifecycleStage, ProvenanceStrategy, SecurityDomain,
+    TemporaryArtifactPolicy, ADAPTER_CONTRACT_V1,
 };
 pub use adapter_execution::{
     AdapterExecutionAssessment, AdapterExecutionGap, AdapterExecutionGapKind,

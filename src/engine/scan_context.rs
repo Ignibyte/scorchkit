@@ -248,6 +248,91 @@ impl ScanContext {
         Ok(decision)
     }
 
+    /// Authorize one canonical extension manifest or module before opening it.
+    pub(crate) fn authorize_extension_input(&self, canonical_path: &std::path::Path) -> Result<()> {
+        let engagement = self.engagement.as_ref().ok_or_else(|| {
+            crate::engine::error::ScorchError::Config(
+                "extension input denied: no active engagement authorizer".to_string(),
+            )
+        })?;
+        let target = PolicyTarget::Code(canonical_path.to_path_buf());
+        engagement
+            .authorize(target.clone(), Capability::LocalState, EffectClass::Passive)
+            .require()?;
+        engagement
+            .authorize(target.clone(), Capability::ExtensionExecute, EffectClass::Passive)
+            .require()?;
+        self.events.publish(crate::engine::events::ScanEvent::Custom {
+            kind: "extension.input_authorized".to_string(),
+            data: serde_json::json!({
+                "target": target,
+                "capabilities": ["local-state", "extension-execute"],
+                "effect": "passive",
+            }),
+        });
+        Ok(())
+    }
+
+    /// Prove the complete grant set before an isolated worker is spawned.
+    pub(crate) fn authorize_extension_execution(&self, effect: EffectClass) -> Result<()> {
+        self.require_adapter_grant(Capability::DastScan, effect)?;
+        self.require_adapter_grant(Capability::ExternalTool, effect)?;
+        self.require_adapter_grant(Capability::ExtensionExecute, effect)?;
+        self.events.publish(crate::engine::events::ScanEvent::Custom {
+            kind: "extension.execution_authorized".to_string(),
+            data: serde_json::json!({
+                "target": self.target.url,
+                "capabilities": ["dast-scan", "external-tool", "extension-execute"],
+                "effect": effect,
+            }),
+        });
+        Ok(())
+    }
+
+    /// Reauthorize an exact guest-proposed web target before a brokered effect or finding commit.
+    pub(crate) fn authorize_extension_target(
+        &self,
+        target: &url::Url,
+        effect: EffectClass,
+    ) -> Result<()> {
+        let policy_target = PolicyTarget::Web(target.clone());
+        if let Some(engagement) = &self.engagement {
+            engagement.authorize(policy_target.clone(), Capability::DastScan, effect).require()?;
+            engagement.authorize(policy_target, Capability::ExtensionExecute, effect).require()?;
+            return Ok(());
+        }
+        if target == &self.target.url {
+            self.require_grant(Capability::DastScan, effect)?;
+            self.require_grant(Capability::ExtensionExecute, effect)?;
+            return Ok(());
+        }
+        Err(crate::engine::error::ScorchError::Config(
+            "extension target denied: no active engagement authorizer".to_string(),
+        ))
+    }
+
+    /// Build a credential-free, no-redirect client bound to an extension's exact effect.
+    pub(crate) fn extension_http_client(
+        &self,
+        endpoint: &url::Url,
+        effect: EffectClass,
+    ) -> Result<reqwest::Client> {
+        let engagement = self.engagement.as_ref().ok_or_else(|| {
+            crate::engine::error::ScorchError::Config(
+                "extension HTTP denied: no active engagement authorizer".to_string(),
+            )
+        })?;
+        crate::engine::policy_http::build_service_client(
+            Arc::clone(engagement),
+            endpoint,
+            Capability::DastScan,
+            effect,
+            &self.config.scan.user_agent,
+            Duration::from_secs(self.config.scan.timeout_seconds),
+            crate::engine::policy_http::RedirectMode::None,
+        )
+    }
+
     pub(crate) fn require_tool_authorization(&self, tool_name: &str) -> Result<()> {
         if cfg!(test) && self.authorization.is_empty() {
             return Ok(());
@@ -506,5 +591,54 @@ mod tests {
         assert!(context.authorize_local_state(&file.canonicalize().expect("canonical")).is_ok());
         let outside = tempfile::NamedTempFile::new().expect("outside");
         assert!(context.authorize_local_state(&outside.path().canonicalize().unwrap()).is_err());
+    }
+
+    #[test]
+    fn extension_execution_requires_all_three_exact_capability_grants() {
+        let target = Target::parse("https://example.com").expect("target");
+        let grants = [Capability::DastScan, Capability::ExternalTool, Capability::ExtensionExecute];
+        let authorized = context(
+            target.clone(),
+            grants
+                .into_iter()
+                .map(|capability| decision(&target, capability, EffectClass::ActiveSafe))
+                .collect(),
+        );
+        assert!(authorized.authorize_extension_execution(EffectClass::ActiveSafe).is_ok());
+
+        for omitted in grants {
+            let denied = context(
+                target.clone(),
+                grants
+                    .into_iter()
+                    .filter(|capability| *capability != omitted)
+                    .map(|capability| decision(&target, capability, EffectClass::ActiveSafe))
+                    .collect(),
+            );
+            assert!(
+                denied.authorize_extension_execution(EffectClass::ActiveSafe).is_err(),
+                "missing {omitted:?} must deny execution"
+            );
+        }
+    }
+
+    #[test]
+    fn extension_target_without_an_engagement_must_match_the_context_target() {
+        let target = Target::parse("https://example.com").expect("target");
+        let grants = vec![
+            decision(&target, Capability::DastScan, EffectClass::ActiveSafe),
+            decision(&target, Capability::ExtensionExecute, EffectClass::ActiveSafe),
+        ];
+        let context = context(target.clone(), grants);
+        assert!(context.authorize_extension_target(&target.url, EffectClass::ActiveSafe).is_ok());
+        let other = url::Url::parse("https://outside.example/").expect("other target");
+        assert!(context.authorize_extension_target(&other, EffectClass::ActiveSafe).is_err());
+    }
+
+    #[test]
+    fn extension_http_client_requires_an_active_engagement_authorizer() {
+        let target = Target::parse("https://example.com").expect("target");
+        let context = context(target.clone(), Vec::new());
+        assert!(context.extension_http_client(&target.url, EffectClass::ActiveSafe).is_err());
     }
 }

@@ -364,6 +364,65 @@ async fn test_scan_persist_and_query() {
 }
 
 #[tokio::test]
+async fn isolated_extension_provenance_round_trips_through_postgres() {
+    let Some(pool) = get_pool_or_skip().await else { return };
+    let project =
+        storage::projects::create_project(&pool, &unique_name("test-extension-provenance"), "")
+            .await
+            .expect("create extension persistence project");
+    let now = chrono::Utc::now();
+    let scan = storage::scans::save_scan(
+        &pool,
+        project.id,
+        "https://example.com/extension",
+        "standard",
+        now,
+        Some(now),
+        &["fixture.extension".to_string()],
+        &[],
+        &serde_json::json!({"total_findings": 1}),
+    )
+    .await
+    .expect("save extension scan");
+    let digest = "a".repeat(64);
+    let finding = Finding::new(
+        "fixture.extension",
+        Severity::Medium,
+        "Extension persistence fixture",
+        "Engine-normalized extension proposal",
+        "https://example.com/extension",
+    )
+    .with_confidence(0.75)
+    .with_provenance(
+        ScannerProvenance::new("fixture.extension", now)
+            .with_version("1.2.3")
+            .with_rule("extension-module", Some(digest.clone()))
+            .with_config("extension-invocation:fixture-1;parser:validated"),
+    );
+
+    let created = storage::findings::save_findings(&pool, project.id, scan.id, &[finding])
+        .await
+        .expect("save extension finding");
+    assert_eq!(created, 1);
+    let stored =
+        storage::findings::find_by_scan(&pool, scan.id).await.expect("read extension finding");
+    assert_eq!(stored.len(), 1);
+    let restored: Finding =
+        serde_json::from_value(stored[0].raw_finding.clone()).expect("decode stored finding");
+    assert_eq!(restored.module_id, "fixture.extension");
+    assert_eq!(restored.appsec.provenance.scanner_version.as_deref(), Some("1.2.3"));
+    assert_eq!(restored.appsec.provenance.rule_digest.as_deref(), Some(digest.as_str()));
+    assert_eq!(
+        restored.appsec.provenance.config_identity.as_deref(),
+        Some("extension-invocation:fixture-1;parser:validated")
+    );
+
+    storage::projects::delete_project(&pool, project.id)
+        .await
+        .expect("delete extension persistence project");
+}
+
+#[tokio::test]
 async fn test_scan_execution_evidence_round_trips() {
     let Some(pool) = get_pool_or_skip().await else {
         return;

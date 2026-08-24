@@ -48,6 +48,11 @@ service. They do not receive canonical finding/evidence storage rows. Scan-speci
 finding lifecycle transitions not present in v1, schedules, and intelligence remain separate
 application workflows.
 
+Module views include engine-assigned trust and runtime labels. Explicitly configured isolated
+extensions appear as `third_party` / `wasm_worker` only after the control service reauthorizes and
+digest-validates their exact manifest/module pair; invalid or duplicate registrations fail the
+complete catalog query.
+
 ## Canonical durable reads
 
 Finding reads deserialize and normalize `raw_finding`, reapply redaction and identity derivation,

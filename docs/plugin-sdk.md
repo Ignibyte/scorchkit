@@ -1,12 +1,12 @@
-# Rust module extension API
+# Trusted Rust module extension API
 
 ScorchKit exposes Rust traits for trusted in-process DAST and SAST modules. An extension receives a
 policy-sealed context and returns normal `Finding` values, so it can share orchestration, events,
 reports, and error handling with built-in modules.
 
 This is a source-level Rust API, not a stable binary plugin ABI or a sandbox. Loading a Rust module
-means trusting its code with the host process. Versioned plugin definitions and a stronger plugin
-contract are tracked in the roadmap.
+means trusting its code with the host process. For digest-bound third-party code, use the separate
+[isolated WebAssembly extension runtime](architecture/extensions.md).
 
 ## Choose a module type
 
@@ -205,16 +205,19 @@ active. Plugin definitions are trusted configuration and should be reviewed like
 
 ## Verification
 
-The repository ships two standalone extension crates:
+The repository ships two trusted Rust examples and one isolated WebAssembly example:
 
 - `examples/custom_scanner`
 - `examples/custom_code_scanner`
+- `examples/custom_wasm_extension`
 
 Compile and test them against the current checkout:
 
 ```bash
 cargo test --manifest-path examples/custom_scanner/Cargo.toml
 cargo test --manifest-path examples/custom_code_scanner/Cargo.toml
+cargo build --manifest-path examples/custom_wasm_extension/Cargo.toml \
+  --target wasm32-unknown-unknown
 ```
 
 Module tests should cover metadata, clean input, positive input, parser failures, bounds, and the

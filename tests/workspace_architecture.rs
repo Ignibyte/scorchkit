@@ -12,6 +12,7 @@ const PACKAGES: &[(&str, &[&str])] = &[
     ("scorchkit-control", &[]),
     ("scorchkit-core", &["scorchkit-policy"]),
     ("scorchkit-executor", &["scorchkit-config", "scorchkit-core", "scorchkit-policy"]),
+    ("scorchkit-extension", &["scorchkit-core", "scorchkit-policy"]),
     ("scorchkit-infra", &["scorchkit-core"]),
     ("scorchkit-mcp", &[]),
     ("scorchkit-policy", &[]),
@@ -112,6 +113,10 @@ fn compatibility_facade_reexports_the_package_owned_type_identities() {
     assert_eq!(
         std::any::TypeId::of::<scorchkit::runner::job::ScanJob>(),
         std::any::TypeId::of::<scorchkit_executor::job::ScanJob>()
+    );
+    assert_eq!(
+        std::any::TypeId::of::<scorchkit::extension::ExtensionManifestV1>(),
+        std::any::TypeId::of::<scorchkit_extension::ExtensionManifestV1>()
     );
     assert_eq!(
         std::any::TypeId::of::<scorchkit::runner::subprocess::ToolInvocation>(),

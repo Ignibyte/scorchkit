@@ -5,6 +5,18 @@ use scorchkit::cli::runner;
 
 #[tokio::main]
 async fn main() {
+    let mut arguments = std::env::args_os();
+    let _program = arguments.next();
+    if arguments.next().as_deref()
+        == Some(std::ffi::OsStr::new(scorchkit::extension::EXTENSION_WORKER_ARGUMENT))
+        && arguments.next().is_none()
+    {
+        if scorchkit::extension::run_worker_stdio().await.is_err() {
+            eprintln!("extension worker failed");
+            std::process::exit(1);
+        }
+        return;
+    }
     let cli = Cli::parse();
 
     // Initialize tracing based on verbosity

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Instant;
+use std::{path::Path, path::PathBuf};
 
 use chrono::Utc;
 use colored::Colorize;
@@ -69,17 +70,37 @@ pub struct Orchestrator {
     modules: Vec<Box<dyn ScanModule>>,
     hook_runner: crate::engine::hook_runner::HookRunner,
     job_progress: Option<Arc<dyn JobProgressSink>>,
+    registration_error: Option<String>,
 }
 
 impl Orchestrator {
     #[must_use]
     pub fn new(ctx: ScanContext) -> Self {
         let hook_runner = crate::engine::hook_runner::HookRunner::new(&ctx.config.hooks);
-        Self { ctx, modules: Vec::new(), hook_runner, job_progress: None }
+        Self { ctx, modules: Vec::new(), hook_runner, job_progress: None, registration_error: None }
     }
 
     pub fn register_default_modules(&mut self) {
         self.modules = all_modules();
+        self.registration_error = None;
+
+        if !self.ctx.config.extensions.manifests.is_empty() {
+            match std::env::current_exe() {
+                Ok(worker_program) => {
+                    for manifest in self.ctx.config.extensions.manifests.clone() {
+                        if let Err(error) = self.register_extension(&manifest, &worker_program) {
+                            self.registration_error =
+                                Some(crate::engine::observation::redact_text(&error.to_string()));
+                            break;
+                        }
+                    }
+                }
+                Err(_) => {
+                    self.registration_error =
+                        Some("configured extension worker program is unavailable".to_string());
+                }
+            }
+        }
 
         // Load user-defined plugins if configured
         if let Some(ref plugins_dir) = self.ctx.config.scan.plugins_dir {
@@ -94,6 +115,42 @@ impl Orchestrator {
                 self.modules.push(Box::new(super::rule_engine::RuleEngineModule::new(rules)));
             }
         }
+        if self.registration_error.is_none() {
+            let mut identities = std::collections::BTreeSet::new();
+            if let Some(duplicate) = self
+                .modules
+                .iter()
+                .map(|module| module.id())
+                .find(|identity| !identities.insert((*identity).to_string()))
+            {
+                self.registration_error = Some(format!(
+                    "duplicate module identity '{}'",
+                    crate::engine::observation::redact_text(duplicate)
+                ));
+            }
+        }
+    }
+
+    /// Validate and register one isolated extension with an explicitly trusted worker program.
+    ///
+    /// # Errors
+    ///
+    /// Returns an authorization, validation, compatibility, digest, or duplicate-identity error.
+    pub fn register_extension(
+        &mut self,
+        manifest_path: &Path,
+        worker_program: impl Into<PathBuf>,
+    ) -> Result<()> {
+        let module =
+            crate::extension::WasmExtensionModule::load(&self.ctx, manifest_path, worker_program)?;
+        if self.modules.iter().any(|existing| existing.id() == module.id()) {
+            return Err(crate::engine::error::ScorchError::Config(format!(
+                "duplicate extension module identity '{}'",
+                crate::engine::observation::redact_text(module.id())
+            )));
+        }
+        self.modules.push(Box::new(module));
+        Ok(())
     }
 
     /// Add one trusted module to this policy-sealed scan runner.
@@ -328,6 +385,11 @@ impl Orchestrator {
         quiet: bool,
         cancellation: &CancellationToken,
     ) -> Result<ScanResult> {
+        if let Some(error) = &self.registration_error {
+            return Err(crate::engine::error::ScorchError::Config(format!(
+                "extension registration failed: {error}"
+            )));
+        }
         let started_at = Utc::now();
         let scan_started = Instant::now();
         let scan_id = Uuid::new_v4().to_string();
@@ -1750,5 +1812,16 @@ mod tests {
             "event sequence"
         );
         drop(events);
+    }
+
+    #[test]
+    fn extension_registration_pins_empty_catalog_and_duplicate_identity_guards() {
+        let production = include_str!("orchestrator.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        let compact: String = production.split_whitespace().collect();
+        assert!(compact.contains("if!self.ctx.config.extensions.manifests.is_empty(){"));
+        assert!(compact.contains("existing.id()==module.id()"));
     }
 }

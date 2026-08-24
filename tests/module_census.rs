@@ -3,7 +3,10 @@
 use std::collections::BTreeSet;
 
 use scorchkit::adapter_catalog::{KNOWN_CODE_ADAPTER_IDS, KNOWN_WEB_ADAPTER_IDS};
-use scorchkit_core::{AdapterOutputContract, TemporaryArtifactPolicy, ADAPTER_CONTRACT_V1};
+use scorchkit_core::{
+    AdapterOutputContract, AdapterRuntime, AdapterTrust, TemporaryArtifactPolicy,
+    ADAPTER_CONTRACT_V1,
+};
 
 #[test]
 fn dast_and_sast_registry_counts_are_stable() {
@@ -62,6 +65,10 @@ fn every_registered_module_has_one_versioned_adapter_contract() {
     assert!(web_modules
         .iter()
         .all(|module| module.descriptor().adapter.schema_version == ADAPTER_CONTRACT_V1));
+    assert!(web_modules.iter().all(|module| {
+        let adapter = module.descriptor().adapter;
+        adapter.trust == AdapterTrust::FirstParty && adapter.runtime == AdapterRuntime::Compiled
+    }));
 
     let code_modules = scorchkit::runner::code_orchestrator::all_code_modules();
     let code_ids: BTreeSet<&str> = code_modules.iter().map(|module| module.id()).collect();
@@ -70,6 +77,10 @@ fn every_registered_module_has_one_versioned_adapter_contract() {
     assert!(code_modules
         .iter()
         .all(|module| module.descriptor().adapter.schema_version == ADAPTER_CONTRACT_V1));
+    assert!(code_modules.iter().all(|module| {
+        let adapter = module.descriptor().adapter;
+        adapter.trust == AdapterTrust::FirstParty && adapter.runtime == AdapterRuntime::Compiled
+    }));
 }
 
 #[test]

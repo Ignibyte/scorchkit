@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** SK-049 is complete; SK-050 is next; SK-051 through SK-057 are documented platform candidates
+**Status:** SK-050 is complete; SK-051 is next; SK-052 through SK-057 are documented platform candidates
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-23
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
@@ -181,12 +181,12 @@ documentation edits is authoritative.
 
 ## Baseline blockers
 
-None. The feature-readiness baseline and SK-028 through SK-049 are closed above.
+None. The feature-readiness baseline and SK-028 through SK-050 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. TICKET-027 closed the provider-neutral control boundary;
-SK-050 is the next platform candidate.
+The pipeline permits one active ticket. TICKET-028 closed the isolated extension boundary; SK-051
+is the next platform candidate.
 Each later row has a specified candidate intake under `docs/planning/intake/` and becomes a numbered
 ticket only when promoted. Backlog status is not a waiver of a safety invariant.
 
@@ -202,7 +202,7 @@ ticket only when promoted. Backlog status is not a waiver of a safety invariant.
 | 8 | SK-047 (completed) | Preserve the stopped broad campaign as incomplete discovery evidence and close the exact reproduced survivor set without another broad run or an unsupported floor change. | SK-027 | [TICKET-025](tickets/closed/TICKET-025-quality-ratchet.md) |
 | 9 | SK-048 (completed) | Add reproducible ScorchKit releases, signed artifacts, SBOM/provenance, upgrade and rollback tests, and performance/chaos budgets. | SK-033, SK-035, SK-046 | [TICKET-026](tickets/closed/TICKET-026-reproducible-releases.md) |
 | 10 | SK-049 (completed) | Add a versioned provider-neutral control API and self-description contract for configuration, engagements, jobs, findings, evidence, modules, reports, and event streams. | SK-029, SK-032, SK-033, SK-044, SK-048 | [TICKET-027](tickets/closed/TICKET-027-control-api.md) |
-| 11 | SK-050 | Add a capability-declared extension manifest, SDK, and isolated runtime for first-party and third-party application-security modules. | SK-034, SK-048, SK-049 | [intake](intake/INTAKE-extension-runtime.md) |
+| 11 | SK-050 (completed) | Add a capability-declared extension manifest, SDK, and isolated runtime for first-party and third-party application-security modules. | SK-034, SK-048, SK-049 | [TICKET-028](tickets/closed/TICKET-028-extension-runtime.md) |
 | 12 | SK-051 | Promote the existing event bus and lifecycle hooks into a typed run pipeline for preprocessing, planning proposals, normalization, enrichment, correlation, reporting, and notification. | SK-028, SK-043, SK-049, SK-050 | [intake](intake/INTAKE-typed-run-pipeline.md) |
 | 13 | SK-052 | Add provider-neutral model roles, host and service adapters, provenance, readiness reporting, and evaluations without granting a model execution authority or scanner-evidence status. | SK-030, SK-031, SK-042, SK-049, SK-050 | [intake](intake/INTAKE-model-analysis.md) |
 | 14 | SK-053 | Add an append-only finding validation and triage lifecycle with correlation, scoped suppression, accepted risk, fix state, and regression verification. | SK-035, SK-040, SK-041, SK-052 | [intake](intake/INTAKE-finding-triage.md) |

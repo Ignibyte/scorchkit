@@ -44,6 +44,8 @@ pub enum Capability {
     CloudScan,
     /// Launch an external scanner or tool process.
     ExternalTool,
+    /// Execute a digest-bound isolated third-party extension.
+    ExtensionExecute,
     /// Use credentials supplied for an engagement.
     CredentialUse,
     /// Execute an exploit capability.

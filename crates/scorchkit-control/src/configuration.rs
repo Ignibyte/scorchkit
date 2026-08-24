@@ -48,6 +48,8 @@ pub enum ControlCapabilityV1 {
     CodeScan,
     /// Bounded external tool execution.
     ExternalTool,
+    /// Digest-bound isolated third-party extension execution.
+    ExtensionExecute,
     /// Explicit credential use.
     CredentialUse,
     /// Explicit exploitation.

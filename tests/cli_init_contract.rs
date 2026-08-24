@@ -551,7 +551,13 @@ async fn project_and_schedule_dispatchers_observe_database_state() {
     let config_path = write_config(directory.path(), "database.toml", &config);
     let project_output = run_cli(
         directory.path(),
-        &["--config", config_path.to_str().expect("UTF-8 config path"), "project", "list"],
+        &[
+            "--config",
+            config_path.to_str().expect("UTF-8 config path"),
+            "project",
+            "show",
+            &project_name,
+        ],
     );
     let schedule_output = run_cli(
         directory.path(),
@@ -570,7 +576,7 @@ async fn project_and_schedule_dispatchers_observe_database_state() {
 
     assert!(
         project_output.status.success(),
-        "project list failed: {}",
+        "project show failed: {}",
         String::from_utf8_lossy(&project_output.stderr)
     );
     let project_stdout = String::from_utf8(project_output.stdout).expect("project output UTF-8");

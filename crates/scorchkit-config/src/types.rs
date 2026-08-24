@@ -37,6 +37,9 @@ pub struct AppConfig {
     /// Optional bearer-authenticated loopback control API.
     #[serde(default)]
     pub control_api: crate::control_api::ControlApiConfig,
+    /// Explicit digest-bound isolated extension registrations.
+    #[serde(default)]
+    pub extensions: crate::extension::ExtensionConfig,
     /// Local and authenticated remote MCP transport configuration.
     #[serde(default)]
     pub mcp: crate::mcp::McpConfig,

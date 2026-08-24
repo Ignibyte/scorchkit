@@ -65,6 +65,11 @@ Trusted callers can add a Rust module with the orchestrator's `add_module` metho
 `register_default_modules()` first runs the extension alongside the built-in registry. The public
 example and security constraints are in [the Rust module extension API](../plugin-sdk.md).
 
+Third-party modules do not use that trusted in-process seam. Exact configured manifests are loaded
+as `third_party` / `wasm_worker` descriptors through the
+[isolated WebAssembly runtime](extensions.md). They share the normal `ScanModule` selection and
+finding paths, but receive no `ScanContext` or ambient host authority.
+
 TOML DAST plugins describe bounded external commands. They still run through the context executor,
 including target and `ExternalTool` authorization, executable resolution, timeout, output limit,
 exit policy, and process-tree cleanup. They are trusted configuration, not a sandbox.

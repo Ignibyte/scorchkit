@@ -137,6 +137,11 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-secretless-control-target-001` | Revalidate stored and new control targets as canonical secretless URLs before persistence, public projection, or lifecycle continuation. | `AAR-027-control-api` |
 | `PR-scorchkit-immutable-store-pagination-001` | Implement continuation at the store with immutable ordered keys and explicit missing-cursor failure; never page a capped compatibility collection. | `AAR-027-control-api` |
 | `PR-scorchkit-focused-raw-artifact-preservation-001` | Copy completed mutation inventories and raw outcomes to a ticket-specific immutable slot before any follow-up invocation. | `AAR-027-control-api` |
+| `PR-scorchkit-guest-feature-graph-portability-001` | Compile the portable guest feature graph and standalone example for the real guest target with host defaults disabled. | `AAR-028-extension-runtime` |
+| `PR-scorchkit-dynamic-catalog-global-identity-001` | Claim identities in one set spanning every built-in and dynamic catalog entry before publishing any result. | `AAR-028-extension-runtime` |
+| `PR-scorchkit-wasm-resource-dimensions-001` | Bound both the count and capacity of every independently limited WebAssembly resource and test oversized instantiation. | `AAR-028-extension-runtime` |
+| `PR-scorchkit-extension-host-reachability-001` | Every advertised extension capability needs a bounded authorized host seam plus allowed and denied end-to-end tests. | `AAR-028-extension-runtime` |
+| `PR-scorchkit-multitoken-secret-redaction-001` | Treat scheme plus credential as one sensitive range in assignment-shaped and header-shaped redaction fixtures. | `AAR-028-extension-runtime` |
 
 ## Register
 
@@ -251,3 +256,8 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-control-url-secret-roundtrip-001` | secret-handling bug | `AAR-027-control-api` |
 | `BF-scorchkit-control-materialized-page-tail-001` | resource-bound bug | `AAR-027-control-api` |
 | `BF-scorchkit-focused-baseline-overwrite-001` | mutation-evidence failure | `AAR-027-control-api` |
+| `BF-scorchkit-guest-host-dependency-leak-001` | build-isolation bug | `AAR-028-extension-runtime` |
+| `BF-scorchkit-dynamic-catalog-identity-split-001` | catalog-integrity bug | `AAR-028-extension-runtime` |
+| `BF-scorchkit-wasm-table-capacity-gap-001` | resource-budget bug | `AAR-028-extension-runtime` |
+| `BF-scorchkit-extension-capability-unreachable-001` | contract-reachability bug | `AAR-028-extension-runtime` |
+| `BF-scorchkit-bearer-assignment-redaction-tail-001` | secret-handling bug | `AAR-028-extension-runtime` |

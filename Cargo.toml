@@ -114,6 +114,7 @@ scorchkit-config = { version = "=3.0.0", path = "crates/scorchkit-config" }
 scorchkit-control = { version = "=3.0.0", path = "crates/scorchkit-control" }
 scorchkit-core = { version = "=3.0.0", path = "crates/scorchkit-core" }
 scorchkit-executor = { version = "=3.0.0", path = "crates/scorchkit-executor" }
+scorchkit-extension = { version = "=3.0.0", path = "crates/scorchkit-extension" }
 scorchkit-infra = { version = "=3.0.0", path = "crates/scorchkit-infra" }
 scorchkit-mcp = { version = "=3.0.0", path = "crates/scorchkit-mcp", optional = true }
 scorchkit-policy = { version = "=3.0.0", path = "crates/scorchkit-policy" }
@@ -154,6 +155,8 @@ url = { version = "2", features = ["serde"] }
 
 # UUID for scan IDs
 uuid = { version = "1", features = ["v4", "serde"] }
+wasmi = { version = "1.1.0", features = ["extra-checks"] }
+wat = "1"
 webpki-roots = "1"
 x509-parser = "0.16"
 

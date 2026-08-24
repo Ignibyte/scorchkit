@@ -238,7 +238,7 @@ impl ControlService {
                 .and_then(|job| job_view(&job))
                 .map(ControlResultV1::Job),
             ControlQueryV1::ListModules { family, page } => {
-                let modules = module_views()?;
+                let modules = module_views(&self.config)?;
                 paginate_modules(
                     modules,
                     family.as_deref(),
@@ -882,7 +882,7 @@ fn validate_resolution_ceiling(
                 )
             })?;
     }
-    let known: BTreeSet<_> = module_views()?.into_iter().map(|module| module.id).collect();
+    let known: BTreeSet<_> = module_views(config)?.into_iter().map(|module| module.id).collect();
     if ceiling.modules.iter().any(|module| !known.contains(module)) {
         return Err(ControlErrorV1::new(
             ControlErrorCodeV1::InvalidRequest,
@@ -908,6 +908,7 @@ const fn control_capability(capability: scorchkit_control::ControlCapabilityV1) 
         scorchkit_control::ControlCapabilityV1::DastScan => Capability::DastScan,
         scorchkit_control::ControlCapabilityV1::CodeScan => Capability::CodeScan,
         scorchkit_control::ControlCapabilityV1::ExternalTool => Capability::ExternalTool,
+        scorchkit_control::ControlCapabilityV1::ExtensionExecute => Capability::ExtensionExecute,
         scorchkit_control::ControlCapabilityV1::CredentialUse => Capability::CredentialUse,
         scorchkit_control::ControlCapabilityV1::Exploit => Capability::Exploit,
         scorchkit_control::ControlCapabilityV1::LocalState => Capability::LocalState,
@@ -1111,7 +1112,7 @@ fn job_view(job: &ScanJob) -> Result<JobViewV1, ControlErrorV1> {
     })
 }
 
-fn module_views() -> Result<Vec<ModuleViewV1>, ControlErrorV1> {
+fn module_views(config: &AppConfig) -> Result<Vec<ModuleViewV1>, ControlErrorV1> {
     let mut modules = Vec::new();
     for module in crate::runner::orchestrator::application_modules() {
         let descriptor = module.descriptor();
@@ -1123,9 +1124,51 @@ fn module_views() -> Result<Vec<ModuleViewV1>, ControlErrorV1> {
             security_domain: enum_name(descriptor.adapter.security_domain)?,
             lifecycle_stage: enum_name(descriptor.adapter.lifecycle_stage)?,
             strongest_effect: enum_name(descriptor.adapter.strongest_effect)?,
+            trust: enum_name(descriptor.adapter.trust)?,
+            runtime: enum_name(descriptor.adapter.runtime)?,
             requires_external_tool: descriptor.requires_external_tool,
             required_tool: descriptor.required_tool.map(str::to_string),
         });
+    }
+    if !config.extensions.manifests.is_empty() {
+        let engagement = config.engagement.as_ref().ok_or_else(|| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::PolicyDenied,
+                "configured extension catalog has no active engagement",
+            )
+        })?;
+        for manifest_path in &config.extensions.manifests {
+            let loaded = crate::extension::LoadedExtension::load_for_catalog(
+                &config.extensions,
+                engagement,
+                manifest_path,
+            )
+            .map_err(|_| {
+                ControlErrorV1::new(
+                    ControlErrorCodeV1::PolicyDenied,
+                    "configured extension registration is invalid or unauthorized",
+                )
+            })?;
+            if modules.iter().any(|module| module.id == loaded.manifest.id) {
+                return Err(ControlErrorV1::new(
+                    ControlErrorCodeV1::InvalidRequest,
+                    "configured extension identity duplicates an application module",
+                ));
+            }
+            modules.push(ModuleViewV1 {
+                id: loaded.manifest.id,
+                family: "web".to_string(),
+                name: loaded.manifest.name,
+                description: loaded.manifest.description,
+                security_domain: enum_name(loaded.manifest.adapter.security_domain)?,
+                lifecycle_stage: enum_name(loaded.manifest.adapter.lifecycle_stage)?,
+                strongest_effect: enum_name(loaded.manifest.adapter.strongest_effect)?,
+                trust: enum_name(scorchkit_core::AdapterTrust::ThirdParty)?,
+                runtime: enum_name(scorchkit_core::AdapterRuntime::WasmWorker)?,
+                requires_external_tool: false,
+                required_tool: None,
+            });
+        }
     }
     for module in crate::runner::code_orchestrator::application_code_modules() {
         let descriptor = module.descriptor();
@@ -1137,6 +1180,8 @@ fn module_views() -> Result<Vec<ModuleViewV1>, ControlErrorV1> {
             security_domain: enum_name(descriptor.adapter.security_domain)?,
             lifecycle_stage: enum_name(descriptor.adapter.lifecycle_stage)?,
             strongest_effect: enum_name(descriptor.adapter.strongest_effect)?,
+            trust: enum_name(descriptor.adapter.trust)?,
+            runtime: enum_name(descriptor.adapter.runtime)?,
             requires_external_tool: descriptor.requires_external_tool,
             required_tool: descriptor.required_tool.map(str::to_string),
         });
@@ -2147,12 +2192,15 @@ mod tests {
 
     #[test]
     fn module_inventory_is_sorted_application_only_and_unique() {
-        let modules = module_views().expect("modules");
+        let modules = module_views(&AppConfig::default()).expect("modules");
         assert!(!modules.is_empty());
         assert!(modules
             .windows(2)
             .all(|pair| { (&pair[0].family, &pair[0].id) < (&pair[1].family, &pair[1].id) }));
         assert!(modules.iter().all(|module| module.security_domain.starts_with("application_")));
+        assert!(modules
+            .iter()
+            .all(|module| module.trust == "first_party" && module.runtime == "compiled"));
         assert_eq!(
             modules.iter().map(|module| &module.id).collect::<BTreeSet<_>>().len(),
             modules.len(),

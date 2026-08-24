@@ -41,6 +41,8 @@ Future drop is the effect cancellation boundary:
 - Dropping a pending reqwest future releases its request and connection state.
 - Dropping `SystemToolExecutor` terminates its owned Unix process group or Windows Job Object,
   including descendants and the direct child.
+- Dropping an isolated extension future releases the same process-tree owner; its parent also
+  enforces manifest wall time while the worker enforces Wasmi fuel, memory, stack, and frame limits.
 - Native socket futures release their sockets.
 
 Loopback HTTP and local process-tree tests require cleanup within two seconds. The executor does not

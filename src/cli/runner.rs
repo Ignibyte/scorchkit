@@ -235,8 +235,7 @@ pub async fn execute(cli: Cli) -> Result<()> {
         Commands::Diff { baseline, current } => run_diff(&baseline, &current),
 
         Commands::Modules { check_tools, include_compatibility } => {
-            list_modules(check_tools, include_compatibility);
-            Ok(())
+            list_modules(&config, check_tools, include_compatibility)
         }
 
         Commands::Init { target, project, database_url } => {
@@ -1348,12 +1347,14 @@ async fn run_code_scan(
     Ok(())
 }
 
-fn list_modules(check_tools: bool, include_compatibility: bool) {
+fn list_modules(config: &AppConfig, check_tools: bool, include_compatibility: bool) -> Result<()> {
     let modules = if include_compatibility {
         crate::runner::orchestrator::all_modules()
     } else {
         crate::runner::orchestrator::application_modules()
     };
+    let mut module_identities: std::collections::BTreeSet<String> =
+        modules.iter().map(|module| module.id().to_string()).collect();
 
     println!();
     println!("{}", "Available Modules".bold().underline());
@@ -1383,7 +1384,43 @@ fn list_modules(check_tools: bool, include_compatibility: bool) {
             tool_status,
         );
     }
+    if !config.extensions.manifests.is_empty() {
+        let engagement = config.engagement.as_ref().ok_or_else(|| {
+            crate::engine::error::ScorchError::Config(
+                "configured extension catalog has no active engagement".to_string(),
+            )
+        })?;
+        for manifest_path in &config.extensions.manifests {
+            let loaded = crate::extension::LoadedExtension::load_for_catalog(
+                &config.extensions,
+                engagement,
+                manifest_path,
+            )?;
+            claim_extension_catalog_identity(&mut module_identities, &loaded.manifest.id)?;
+            println!(
+                "  {:>8} | {:<20} {}{}",
+                ModuleCategory::Scanner.to_string().dimmed(),
+                loaded.manifest.id.cyan(),
+                loaded.manifest.description,
+                " [isolated wasm]".dimmed(),
+            );
+        }
+    }
     println!();
+    Ok(())
+}
+
+fn claim_extension_catalog_identity(
+    identities: &mut std::collections::BTreeSet<String>,
+    identity: &str,
+) -> Result<()> {
+    if !identities.insert(identity.to_string()) {
+        return Err(crate::engine::error::ScorchError::Config(format!(
+            "duplicate extension module identity '{}'",
+            crate::engine::observation::redact_text(identity)
+        )));
+    }
+    Ok(())
 }
 
 fn empty_plan_fallback_message(quiet: bool, profile: &str) -> Option<String> {
@@ -1403,8 +1440,9 @@ mod tests {
     #[cfg(feature = "storage")]
     use super::persist_scan_results;
     use super::{
-        effective_quiet, emit_scan_report, empty_plan_fallback_message, run_ai_analysis,
-        run_application_dast, run_supply_chain_command, should_run_ai,
+        claim_extension_catalog_identity, effective_quiet, emit_scan_report,
+        empty_plan_fallback_message, run_ai_analysis, run_application_dast,
+        run_supply_chain_command, should_run_ai,
     };
     #[cfg(feature = "infra")]
     use super::{run_assess, AssessmentTargets};
@@ -1422,6 +1460,15 @@ mod tests {
             empty_plan_fallback_message(false, "standard"),
             Some("Empty plan — falling back to 'standard' profile".to_string())
         );
+    }
+
+    #[test]
+    fn extension_catalog_identity_claims_reject_every_duplicate() {
+        let mut identities = std::collections::BTreeSet::from(["headers".to_string()]);
+        assert!(claim_extension_catalog_identity(&mut identities, "fixture.extension").is_ok());
+        assert!(claim_extension_catalog_identity(&mut identities, "fixture.extension").is_err());
+        assert!(claim_extension_catalog_identity(&mut identities, "headers").is_err());
+        assert_eq!(identities.len(), 2);
     }
 
     #[test]

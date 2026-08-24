@@ -1,0 +1,34 @@
+[package]
+name = "scorchkit-extension"
+version = "3.0.0"
+edition = "2021"
+description = "Provider-neutral isolated extension manifest, protocol, and guest SDK for ScorchKit"
+license = "MIT"
+
+[features]
+default = ["host-contract"]
+guest-sdk = []
+host-contract = [
+  "dep:semver",
+  "dep:scorchkit-core",
+  "dep:scorchkit-policy",
+  "dep:thiserror",
+]
+
+[dependencies]
+scorchkit-core = { version = "=3.0.0", path = "../scorchkit-core", optional = true }
+scorchkit-policy = { version = "=3.0.0", path = "../scorchkit-policy", optional = true }
+semver = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = { version = "2", optional = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+module_name_repetitions = "allow"
