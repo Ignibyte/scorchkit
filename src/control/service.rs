@@ -29,8 +29,8 @@ use scorchkit_control::{
     ControlErrorCodeV1, ControlErrorV1, ControlEventBatchV1, ControlOperationV1,
     ControlPrincipalKindV1, ControlPrincipalV1, ControlQueryV1, ControlRequestV1,
     ControlResponseOutcomeV1, ControlResponseV1, ControlResultV1, ControlTargetKindV1,
-    EventCursorV1, JobProgressViewV1, JobViewV1, ModuleViewV1, PageRequestV1, PageV1,
-    ResolvedConfigurationV1, CONTROL_API_SCHEMA_V1,
+    EventCursorV1, JobProgressViewV1, JobViewV1, ModelReadinessViewV1, ModuleViewV1, PageRequestV1,
+    PageV1, ResolvedConfigurationV1, CONTROL_API_SCHEMA_V1,
 };
 
 const MAX_CONTROL_RECOVERY_CANDIDATES: usize = 1_000;
@@ -227,6 +227,12 @@ impl ControlService {
                 let engagement = self.require_engagement()?;
                 engagement_view(engagement).map(ControlResultV1::Engagement)
             }
+            ControlQueryV1::GetModelReadiness => Ok(ControlResultV1::ModelReadiness(
+                crate::model_analysis::model_readiness(&self.config.model_analysis)
+                    .into_iter()
+                    .map(model_readiness_view)
+                    .collect(),
+            )),
             ControlQueryV1::ListJobs { page } => {
                 self.list_jobs(page).await.map(ControlResultV1::Jobs)
             }
@@ -1357,6 +1363,27 @@ fn finding_view(
     })
 }
 
+fn model_readiness_view(readiness: scorchkit_core::ModelReadiness) -> ModelReadinessViewV1 {
+    ModelReadinessViewV1 {
+        role: readiness.role.as_str().to_string(),
+        provider: readiness.provider,
+        model: readiness.model,
+        execution_location: readiness
+            .execution_location
+            .map(|location| location.as_str().to_string()),
+        state: match readiness.state {
+            scorchkit_core::ModelReadinessState::Disabled => "disabled",
+            scorchkit_core::ModelReadinessState::Unconfigured => "unconfigured",
+            scorchkit_core::ModelReadinessState::Invalid => "invalid",
+            scorchkit_core::ModelReadinessState::Unavailable => "unavailable",
+            scorchkit_core::ModelReadinessState::EvaluationRequired => "evaluation_required",
+            scorchkit_core::ModelReadinessState::Ready => "ready",
+        }
+        .to_string(),
+        reason: readiness.reason,
+    }
+}
+
 #[cfg(feature = "storage")]
 fn evidence_view(evidence: crate::storage::findings::ValidatedEvidence) -> EvidenceViewV1 {
     EvidenceViewV1 {
@@ -1490,6 +1517,28 @@ mod tests {
         let response =
             service.execute_local(ControlRequestV1::query(ControlQueryV1::Describe, None)).await;
         assert!(matches!(response.result, ControlResponseOutcomeV1::Success(_)));
+    }
+
+    #[tokio::test]
+    async fn model_readiness_is_complete_credential_safe_and_side_effect_free() {
+        let service = ControlService::in_memory(config());
+        let response = service
+            .execute_local(ControlRequestV1::query(ControlQueryV1::GetModelReadiness, None))
+            .await;
+        let ControlResponseOutcomeV1::Success(result) = response.result else {
+            panic!("model readiness failed");
+        };
+        let ControlResultV1::ModelReadiness(readiness) = *result else {
+            panic!("unexpected readiness result");
+        };
+        assert_eq!(readiness.len(), 6);
+        assert!(readiness.iter().all(|item| item.state == "disabled"));
+        assert_eq!(readiness[0].role, "planning");
+        assert_eq!(readiness[5].role, "verification");
+        let encoded = serde_json::to_string(&readiness).expect("readiness JSON");
+        assert!(!encoded.contains("credential"));
+        assert!(!encoded.contains("binary"));
+        assert!(!encoded.contains("endpoint"));
     }
 
     #[tokio::test]

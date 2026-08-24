@@ -145,6 +145,10 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-lifecycle-authority-monotonic-001` | Carry one sealed mutable authority ceiling through a lifecycle; accepted narrowing constrains every later phase. | `AAR-029-typed-run-pipeline` |
 | `PR-scorchkit-source-before-derived-publication-001` | Durably publish canonical source records before processor outcomes or derived proposals that reference them. | `AAR-029-typed-run-pipeline` |
 | `PR-scorchkit-database-auth-preflight-001` | Authenticate an exact database URL before a long delivery gate; readiness and container initialization metadata are insufficient. | `AAR-029-typed-run-pipeline` |
+| `PR-scorchkit-public-typed-canonical-redaction-001` | Treat public typed structs as constructible without their safe constructors; require canonical redaction again at every consumer, durable, and public boundary. | `AAR-030-model-analysis` |
+| `PR-scorchkit-immutable-corpus-exact-validation-001` | Validate a versioned built-in evaluation corpus against its complete immutable case metadata, expected answers, and refusal requirements, not only schema and class coverage. | `AAR-030-model-analysis` |
+| `PR-scorchkit-serialized-envelope-budget-001` | Enforce transport input ceilings over the complete serialized envelope after field-level bounds; payload sums do not account for framing and metadata overhead. | `AAR-030-model-analysis` |
+| `PR-scorchkit-child-projection-canonical-order-001` | Load append-preserved child records in the same unique ordering used by canonical root normalization before reattaching them to a public document. | `AAR-030-model-analysis` |
 
 ## Register
 
@@ -267,3 +271,7 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-lifecycle-authority-reconstruction-001` | authorization bug | `AAR-029-typed-run-pipeline` |
 | `BF-scorchkit-derived-event-before-source-001` | provenance-order bug | `AAR-029-typed-run-pipeline` |
 | `BF-scorchkit-postgres-init-env-auth-drift-001` | delivery-environment failure | `AAR-029-typed-run-pipeline` |
+| `BF-scorchkit-model-typed-redaction-bypass-001` | secret-handling bug | `AAR-030-model-analysis` |
+| `BF-scorchkit-versioned-corpus-metadata-drift-001` | evaluation-integrity bug | `AAR-030-model-analysis` |
+| `BF-scorchkit-envelope-overhead-budget-gap-001` | resource-budget bug | `AAR-030-model-analysis` |
+| `BF-scorchkit-analysis-child-order-drift-001` | projection-integrity bug | `AAR-030-model-analysis` |

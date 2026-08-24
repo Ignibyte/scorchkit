@@ -112,12 +112,9 @@ pub fn print_report(result: &ScanResult) {
             }
 
             for analysis in &finding.canonical_appsec().agent_analysis {
-                let model =
-                    analysis.model.as_deref().map_or_else(String::new, |model| format!("/{model}"));
                 println!(
-                    "  Agent analysis [{}{}]: {}",
-                    escape_terminal_text(&analysis.provider).magenta(),
-                    escape_terminal_text(&model).magenta(),
+                    "  Agent analysis [{}]: {}",
+                    escape_terminal_text(&analysis.report_label()).magenta(),
                     escape_terminal_text(&analysis.summary).magenta()
                 );
             }

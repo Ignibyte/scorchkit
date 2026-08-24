@@ -159,6 +159,27 @@ pub struct FindingViewV1 {
     pub canonical: serde_json::Value,
 }
 
+/// Credential-safe readiness for one exact model-analysis role binding.
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelReadinessViewV1 {
+    /// Stable role name.
+    pub role: String,
+    /// Configured provider, when a unique binding exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Exact configured model, when a unique binding exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Execution ownership, when configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_location: Option<String>,
+    /// Disabled, unconfigured, invalid, unavailable, `evaluation_required`, or ready.
+    pub state: String,
+    /// Stable credential-free reason code.
+    pub reason: String,
+}
+
 /// Canonical validated evidence projection.
 #[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -254,6 +275,8 @@ pub enum ControlResultV1 {
     Finding(FindingViewV1),
     /// Evidence page.
     Evidence(PageV1<EvidenceViewV1>),
+    /// Readiness for every closed model-analysis role.
+    ModelReadiness(Vec<ModelReadinessViewV1>),
     /// Module page.
     Modules(PageV1<ModuleViewV1>),
     /// Project report.

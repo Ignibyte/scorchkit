@@ -11,6 +11,7 @@
     ["get_engagement", "query", "read", false],
     ["get_finding", "query", "read", false],
     ["get_job", "query", "read", false],
+    ["get_model_readiness", "query", "read", false],
     ["get_project", "query", "read", false],
     ["get_project_report", "query", "read", false],
     ["list_evidence", "query", "read", false],
@@ -38,7 +39,8 @@
     "configuration_ceiling",
     "configuration_patch",
     "configuration_result",
-    "module"
+    "module",
+    "model_readiness"
   ],
-  "schemaSha256": "4095eb61fa71ae0a6489e6950477232c652474f63c875288c4ee8816bceefd78"
+  "schemaSha256": "3ddbde98adb2fbfd38b159fd36d6f63f6b5c864e4adc8a4155632e5c93f04629"
 }

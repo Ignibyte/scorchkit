@@ -73,6 +73,7 @@ pub mod facade;
 pub mod infra;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+pub mod model_analysis;
 pub mod prelude;
 pub mod recon;
 pub mod report;
@@ -138,18 +139,23 @@ pub use scorchkit_core::{
     AttackPathGap, AttackPathGapKind, AttackPathIdentity, AttackPathMember, AttackPathMemberRole,
     AttackPathState, AttackPathTransition, AttackPathTransitionReason, AttackPathValidationError,
     CorrelationFacet, CorrelationFacetKind, DependencyEvidenceKind, FocusedVerificationSelection,
-    PackageIdentity, ProviderSnapshot, ProviderSnapshotState, RequestVerificationSelector,
-    SbomArtifact, ScannerVerificationSelector, SupplyChainAssessment, SupplyChainCorrelation,
-    SupplyChainCoverageGap, SupplyChainCoverageStatus, SupplyChainGapKind, SupplyChainObservation,
-    SupplyChainPhase, SupplyChainTarget, SupplyChainTargetKind, VerificationAttempt,
-    VerificationAttemptError, VerificationConditions, VerificationCoverage, VerificationOutcome,
+    ModelAnalysisInput, ModelAnalysisProvenance, ModelAnalysisRequest, ModelAnalysisResponse,
+    ModelAnalysisValidationError, ModelEligibilityKey, ModelEvaluationAnswer, ModelEvaluationCase,
+    ModelEvaluationClass, ModelEvaluationCorpus, ModelEvaluationOutcome, ModelEvaluationResult,
+    ModelEvaluationVerdict, ModelExecutionLocation, ModelReadiness, ModelReadinessState,
+    ModelRequestPayload, ModelResponsePayload, ModelRole, PackageIdentity, ProviderSnapshot,
+    ProviderSnapshotState, RequestVerificationSelector, SbomArtifact, ScannerVerificationSelector,
+    SupplyChainAssessment, SupplyChainCorrelation, SupplyChainCoverageGap,
+    SupplyChainCoverageStatus, SupplyChainGapKind, SupplyChainObservation, SupplyChainPhase,
+    SupplyChainTarget, SupplyChainTargetKind, VerificationAttempt, VerificationAttemptError,
+    VerificationConditions, VerificationCoverage, VerificationOutcome,
     ADAPTER_EXECUTION_ASSESSMENT_SCHEMA_V1, APPLICATION_DAST_ASSESSMENT_SCHEMA_V1,
     APPLICATION_EVIDENCE_IMPORT_SCHEMA_V1, APPLICATION_PENTEST_ASSESSMENT_SCHEMA_V1,
     APPLICATION_PENTEST_PLAN_SCHEMA_V1, APPLICATION_PENTEST_SCENARIO_SCHEMA_V1,
     APPLICATION_SECURITY_CONTEXT_SCHEMA_V1, APPSEC_CHANGE_SET_SCHEMA_V1,
     APPSEC_WORKFLOW_PLAN_SCHEMA_V1, ATTACK_PATH_CORRELATION_SCHEMA_V1,
     ATTACK_PATH_IDENTITY_SCHEMA_V1, ATTACK_PATH_SCHEMA_V1, ATTACK_PATH_TRANSITION_SCHEMA_V1,
-    FOCUSED_VERIFICATION_SCHEMA_V1, SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
-    VERIFICATION_ATTEMPT_SCHEMA_V1,
+    FOCUSED_VERIFICATION_SCHEMA_V1, MODEL_ANALYSIS_CONTRACT_V1, MODEL_ANALYSIS_PROVENANCE_V1,
+    MODEL_EVALUATION_CORPUS_V1, SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1, VERIFICATION_ATTEMPT_SCHEMA_V1,
 };
 pub use supply_chain::{ProviderDownload, ProviderRefreshRequest, SupplyChainProvider};

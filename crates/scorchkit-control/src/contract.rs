@@ -98,6 +98,8 @@ pub enum ControlQueryV1 {
     ResolveConfiguration(Box<ConfigurationResolutionRequestV1>),
     /// Return the current engagement projection.
     GetEngagement,
+    /// Return credential-safe readiness for every model-analysis role.
+    GetModelReadiness,
     /// List projects.
     ListProjects { page: PageRequestV1 },
     /// Read one project.
@@ -230,6 +232,7 @@ fn validate_query(query: &ControlQueryV1) -> Result<(), ControlErrorV1> {
         ControlQueryV1::Describe
         | ControlQueryV1::ResolveConfiguration(..)
         | ControlQueryV1::GetEngagement
+        | ControlQueryV1::GetModelReadiness
         | ControlQueryV1::GetProject { .. }
         | ControlQueryV1::GetJob { .. }
         | ControlQueryV1::GetFinding { .. }
@@ -369,6 +372,18 @@ mod tests {
                 ControlErrorCodeV1::InvalidRequest
             );
         }
+    }
+
+    #[test]
+    fn request_validation_dispatches_to_query_validation() {
+        let request = ControlRequestV1::query(
+            ControlQueryV1::ListProjects { page: PageRequestV1 { cursor: None, limit: 0 } },
+            None,
+        );
+        assert_eq!(
+            request.validate().expect_err("query page limit").code,
+            ControlErrorCodeV1::LimitExceeded
+        );
     }
 
     #[test]

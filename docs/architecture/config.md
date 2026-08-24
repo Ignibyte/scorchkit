@@ -231,6 +231,23 @@ auto_analyze = false
 `provider = "claude"` selects the compatibility adapter. `max_budget_usd` applies only to that
 adapter. Legacy `claude_binary` remains readable but should not appear in new files.
 
+## Model analysis
+
+Exact model-role configuration is separate from the legacy `[ai]` adapter and is disabled by
+default:
+
+```toml
+[model_analysis]
+enabled = false
+```
+
+Bindings name one provider and exact model for one of the six closed roles. Host and local
+adapters name a contract-compatible binary; service adapters use a credential-free HTTP(S)
+endpoint, environment-variable credential reference, no redirects, mandatory redaction and no
+retention, and bounded input/output/time policy. A binding remains `evaluation_required` until its
+exact provider/model/role/contract/corpus result passes all five built-in cases. See
+[model analysis](model-analysis.md) for the full schema and safety boundary.
+
 ## Static analysis
 
 The embedded Semgrep pack needs no configuration. A reviewed local replacement must use an absolute

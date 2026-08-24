@@ -2662,6 +2662,64 @@ mod tests {
     }
 
     #[test]
+    fn legacy_mcp_finding_projection_preserves_model_analysis_provenance() {
+        let (finding, tracked, _) = durable_correlation_fixture();
+        let request = scorchkit_core::ModelAnalysisRequest::analysis(
+            "fixture-host",
+            "exact-model",
+            scorchkit_core::ModelRole::FindingValidation,
+            "workflow/v1",
+            vec![scorchkit_core::ModelAnalysisInput::new("1".repeat(64), "fixture evidence")
+                .expect("input")],
+            "validate",
+        )
+        .expect("request");
+        let response = scorchkit_core::ModelAnalysisResponse {
+            schema: scorchkit_core::MODEL_ANALYSIS_CONTRACT_V1.to_string(),
+            provider: request.provider.clone(),
+            model: request.model.clone(),
+            role: request.role,
+            payload: scorchkit_core::ModelResponsePayload::Analysis {
+                summary: "Supported".to_string(),
+                confidence_bps: 8_000,
+                evidence_digests: request.evidence_digests(),
+            },
+        };
+        let provenance = scorchkit_core::ModelAnalysisProvenance::from_validated_response(
+            &request,
+            &response,
+            scorchkit_core::ModelExecutionLocation::HostManaged,
+            tracked.found_at,
+        )
+        .expect("provenance");
+        let analysis = scorchkit_core::AgentAnalysisRecord::from_model(provenance, "Supported")
+            .expect("analysis");
+        let canonical =
+            serde_json::to_value(finding.with_agent_analysis(analysis)).expect("canonical finding");
+        let projected = legacy_finding_projection(FindingViewV1 {
+            id: tracked.id,
+            project_id: tracked.project_id,
+            scan_id: tracked.scan_id,
+            fingerprint: tracked.fingerprint,
+            identity_schema: tracked.identity_schema,
+            stable_identity: tracked.stable_identity,
+            correlation_keys: tracked.correlation_keys,
+            status: tracked.status,
+            status_note: tracked.status_note,
+            seen_count: u32::try_from(tracked.seen_count).expect("seen count"),
+            first_seen: tracked.first_seen,
+            last_seen: tracked.last_seen,
+            found_at: tracked.found_at,
+            canonical,
+        })
+        .expect("projection");
+        let model = &projected["raw_finding"]["appsec"]["agent_analysis"][0];
+        assert_eq!(model["schema"], scorchkit_core::MODEL_ANALYSIS_CONTRACT_V1);
+        assert_eq!(model["model_provenance"]["role"], "finding_validation");
+        assert_eq!(model["model_provenance"]["execution_location"], "host_managed");
+    }
+
+    #[test]
     fn durable_correlation_checks_every_evidence_and_finding_parity_field() {
         let (finding, tracked, evidence) = durable_correlation_fixture();
         let (findings, gaps) =

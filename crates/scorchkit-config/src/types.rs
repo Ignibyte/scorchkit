@@ -32,6 +32,9 @@ pub struct AppConfig {
     #[serde(default)]
     pub supply_chain: SupplyChainConfig,
     pub ai: AiConfig,
+    /// Exact provider-neutral model-role bindings and evaluation evidence.
+    #[serde(default)]
+    pub model_analysis: crate::model_analysis::ModelAnalysisConfig,
     pub report: ReportConfig,
     pub database: DatabaseConfig,
     /// Optional bearer-authenticated loopback control API.

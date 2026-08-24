@@ -17,6 +17,7 @@ pub use crate::engine::scan_result::ScanResult;
 pub use crate::engine::scope::ScopeRule;
 pub use crate::engine::severity::Severity;
 pub use crate::engine::target::Target;
+pub use crate::model_analysis::ModelAnalysisService;
 pub use crate::{
     AdvisoryIdentity, ApplicationChangeSet, ApplicationContextGap, ApplicationContextGapKind,
     ApplicationContextProvenance, ApplicationContextTarget, ApplicationContextValue,
@@ -38,12 +39,15 @@ pub use crate::{
     ApplicationSecurityWorkflowProfile, ApplicationSecurityWorkflowStep, AttackPath,
     AttackPathCorrelation, AttackPathState, CorrelationFacet, CorrelationFacetKind,
     DependencyEvidenceKind, FocusedVerificationSelection, ManualApplicationFinding,
-    PackageIdentity, ProviderDownload, ProviderRefreshRequest, ProviderSnapshot,
-    ProviderSnapshotState, SbomArtifact, SupplyChainAssessment, SupplyChainCorrelation,
-    SupplyChainCoverageGap, SupplyChainCoverageStatus, SupplyChainGapKind, SupplyChainObservation,
-    SupplyChainPhase, SupplyChainProfile, SupplyChainProvider, SupplyChainTarget,
-    SupplyChainTargetKind, VerificationAttempt, VerificationConditions, VerificationCoverage,
-    VerificationOutcome, APPLICATION_DAST_ASSESSMENT_SCHEMA_V1, ATTACK_PATH_SCHEMA_V1,
+    ModelAnalysisInput, ModelAnalysisProvenance, ModelAnalysisRequest, ModelAnalysisResponse,
+    ModelEligibilityKey, ModelEvaluationCorpus, ModelEvaluationResult, ModelExecutionLocation,
+    ModelReadiness, ModelReadinessState, ModelRole, PackageIdentity, ProviderDownload,
+    ProviderRefreshRequest, ProviderSnapshot, ProviderSnapshotState, SbomArtifact,
+    SupplyChainAssessment, SupplyChainCorrelation, SupplyChainCoverageGap,
+    SupplyChainCoverageStatus, SupplyChainGapKind, SupplyChainObservation, SupplyChainPhase,
+    SupplyChainProfile, SupplyChainProvider, SupplyChainTarget, SupplyChainTargetKind,
+    VerificationAttempt, VerificationConditions, VerificationCoverage, VerificationOutcome,
+    APPLICATION_DAST_ASSESSMENT_SCHEMA_V1, ATTACK_PATH_SCHEMA_V1,
     SUPPLY_CHAIN_ASSESSMENT_SCHEMA_V1,
 };
 

@@ -338,15 +338,10 @@ fn render_findings(findings: &[crate::engine::finding::Finding]) -> String {
             let analysis_rows = f.canonical_appsec().agent_analysis.iter().fold(
                 String::new(),
                 |mut output, analysis| {
-                    let model = analysis
-                        .model
-                        .as_deref()
-                        .map_or_else(String::new, |model| format!("/{model}"));
                     let _ = write!(
                         output,
-                        "<tr><th>Agent analysis [{}{}]</th><td>{}</td></tr>",
-                        html_escape(&analysis.provider),
-                        html_escape(&model),
+                        "<tr><th>Agent analysis [{}]</th><td>{}</td></tr>",
+                        html_escape(&analysis.report_label()),
                         html_escape(&analysis.summary)
                     );
                     output
@@ -518,10 +513,34 @@ const PDF_CSS: &str = r#"<style>
 mod tests {
     use super::*;
     use crate::engine::finding::Finding;
+    use crate::engine::observation::AgentAnalysisRecord;
     use crate::engine::scan_result::{ScanResult, ScanSummary};
     use crate::engine::severity::Severity;
     use crate::engine::target::Target;
+    use crate::{
+        ModelAnalysisProvenance, ModelExecutionLocation, ModelRole, MODEL_ANALYSIS_CONTRACT_V1,
+        MODEL_ANALYSIS_PROVENANCE_V1,
+    };
     use chrono::Utc;
+
+    fn model_record(now: chrono::DateTime<Utc>) -> AgentAnalysisRecord {
+        AgentAnalysisRecord::from_model(
+            ModelAnalysisProvenance {
+                schema: MODEL_ANALYSIS_PROVENANCE_V1.to_string(),
+                provider: "fixture-host".to_string(),
+                model: "exact-model".to_string(),
+                role: ModelRole::Remediation,
+                contract_version: MODEL_ANALYSIS_CONTRACT_V1.to_string(),
+                input_evidence_digests: vec!["1".repeat(64)],
+                workflow_version: "workflow/v1".to_string(),
+                created_at: now,
+                confidence_bps: 7_500,
+                execution_location: ModelExecutionLocation::Local,
+            },
+            "Model remediation guidance",
+        )
+        .expect("model record")
+    }
 
     // Test suite for PDF report generation.
     //
@@ -656,6 +675,16 @@ mod tests {
         assert!(html.contains("OR 1=1"), "Missing evidence");
         assert!(html.contains("Finding #1"), "Missing finding number");
         assert!(html.contains("Finding #2"), "Missing second finding");
+    }
+
+    #[test]
+    fn pdf_projects_complete_model_provenance_label() {
+        let mut result = test_result();
+        let finding = result.findings.remove(0).with_agent_analysis(model_record(Utc::now()));
+        result.findings.insert(0, finding);
+        let html = render_pdf_html(&result);
+        assert!(html.contains("fixture-host/exact-model remediation@local"));
+        assert!(html.contains("Model remediation guidance"));
     }
 
     /// Verify print CSS rules are present for proper PDF rendering.

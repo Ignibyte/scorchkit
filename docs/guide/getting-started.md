@@ -215,6 +215,20 @@ ephemeral session, and prompt input over stdin. `provider = "claude"` selects th
 adapter. If the configured provider is disabled or unavailable, deterministic scanning and reports
 continue without AI output.
 
+Exact provider-neutral model roles use a separate inert default:
+
+```toml
+[model_analysis]
+enabled = false
+```
+
+When enabled, each configured role names one exact provider/model and host, service, or local
+adapter. It reports unavailable rather than substituting another model and becomes ready only after
+that exact binding passes the complete versioned AppSec evaluation corpus. Service adapters also
+require endpoint and credential-use grants. Model conclusions retain evidence-digest and
+provider/model/role/location provenance but remain separate from scanner evidence and finding
+state. See [model analysis](../architecture/model-analysis.md) before configuring an adapter.
+
 ## Projects, schedules, and PostgreSQL
 
 Stateless CLI scans do not require a database. Project persistence, schedules, and MCP use

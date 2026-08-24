@@ -24,6 +24,6 @@ pub use error::{ControlErrorCodeV1, ControlErrorV1};
 pub use event::{ControlEventBatchV1, ControlEventKindV1, ControlEventV1};
 pub use resource::{
     ControlResultV1, EngagementViewV1, EvidenceViewV1, FindingViewV1, JobProgressViewV1, JobViewV1,
-    ModuleViewV1, PageV1, ProjectReportViewV1, ProjectViewV1, TargetViewV1,
+    ModelReadinessViewV1, ModuleViewV1, PageV1, ProjectReportViewV1, ProjectViewV1, TargetViewV1,
 };
 pub use schema::{description_v1, ControlApiDescriptionV1, ControlOperationDescriptionV1};

@@ -8,6 +8,7 @@ pub mod control_api;
 pub mod cve;
 pub mod extension;
 pub mod mcp;
+pub mod model_analysis;
 pub mod network_credentials;
 pub mod run_pipeline;
 pub mod webhook;
@@ -18,6 +19,11 @@ pub use control_api::ControlApiConfig;
 pub use cve::{CompositeConfig, CompositeSource, CveBackendKind, CveConfig, NvdConfig};
 pub use extension::ExtensionConfig;
 pub use mcp::{McpConfig, RemoteMcpConfig, RemoteMcpPrincipalBinding, RemoteMcpTlsTermination};
+pub use model_analysis::{
+    ModelAdapterConfig, ModelAnalysisConfig, ModelRoleBindingConfig, ModelServiceDataPolicy,
+    ModelServiceRedactionPolicy, ModelServiceRetentionPolicy, MAX_MODEL_SERVICE_OUTPUT_BYTES,
+    MAX_MODEL_TIMEOUT_MILLIS, MIN_MODEL_TIMEOUT_MILLIS,
+};
 pub use network_credentials::NetworkCredentials;
 pub use run_pipeline::RunProcessorConfig;
 pub use types::*;

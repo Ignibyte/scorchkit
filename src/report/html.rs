@@ -36,24 +36,18 @@ fn render_findings_html(result: &ScanResult) -> String {
         let affected_target = redact_url(&f.affected_target).0;
         let owasp = f.owasp_category.as_deref().unwrap_or("");
         let cwe = f.cwe_id.map_or(String::new(), |c| format!("CWE-{c}"));
-        let agent_analysis_html = f
-            .canonical_appsec()
-            .agent_analysis
-            .iter()
-            .fold(String::new(), |mut output, analysis| {
-                let model = analysis
-                    .model
-                    .as_deref()
-                    .map_or_else(String::new, |model| format!("/{model}"));
+        let agent_analysis_html = f.canonical_appsec().agent_analysis.iter().fold(
+            String::new(),
+            |mut output, analysis| {
                 let _ = write!(
                     output,
-                    "<div class=\"agent-analysis\"><strong>Agent analysis [{}{}]:</strong> {}</div>",
-                    html_escape(&analysis.provider),
-                    html_escape(&model),
+                    "<div class=\"agent-analysis\"><strong>Agent analysis [{}]:</strong> {}</div>",
+                    html_escape(&analysis.report_label()),
                     html_escape(&analysis.summary)
                 );
                 output
-            });
+            },
+        );
         // JUSTIFICATION: confidence is 0.0–1.0, well within u8 range
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let confidence_pct = (f.confidence * 100.0) as u8;
@@ -415,8 +409,29 @@ mod tests {
     use crate::engine::target::Target;
     use crate::{
         ApplicationDastAssessment, ApplicationDastCoverageGap, ApplicationDastGapKind,
-        ApplicationDastPhase, ApplicationDastProfile,
+        ApplicationDastPhase, ApplicationDastProfile, ModelAnalysisProvenance,
+        ModelExecutionLocation, ModelRole, MODEL_ANALYSIS_CONTRACT_V1,
+        MODEL_ANALYSIS_PROVENANCE_V1,
     };
+
+    fn model_record(now: chrono::DateTime<Utc>) -> AgentAnalysisRecord {
+        AgentAnalysisRecord::from_model(
+            ModelAnalysisProvenance {
+                schema: MODEL_ANALYSIS_PROVENANCE_V1.to_string(),
+                provider: "fixture-host".to_string(),
+                model: "exact-model".to_string(),
+                role: ModelRole::FindingValidation,
+                contract_version: MODEL_ANALYSIS_CONTRACT_V1.to_string(),
+                input_evidence_digests: vec!["1".repeat(64)],
+                workflow_version: "workflow/v1".to_string(),
+                created_at: now,
+                confidence_bps: 8_500,
+                execution_location: ModelExecutionLocation::HostManaged,
+            },
+            "Model-labeled validation",
+        )
+        .expect("model record")
+    }
 
     #[test]
     fn html_report_renders_findings_and_document_shell() {
@@ -435,7 +450,8 @@ mod tests {
             "Validated source-to-sink path",
             Vec::new(),
             now,
-        ));
+        ))
+        .with_agent_analysis(model_record(now));
         let result = ScanResult::new(
             "html-test".to_string(),
             Target::parse("https://example.com").expect("valid target"),
@@ -449,6 +465,8 @@ mod tests {
         assert!(findings.contains("Unsafe &lt;eval&gt;"));
         assert!(findings.contains("result = eval(user_input)"));
         assert!(findings.contains("Agent analysis [codex-security/trusted-security]"));
+        assert!(findings
+            .contains("Agent analysis [fixture-host/exact-model finding_validation@host_managed]"));
 
         let document = render_html(&result);
         assert!(document.starts_with("<!DOCTYPE html>"));

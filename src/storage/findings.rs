@@ -14,8 +14,10 @@ use crate::application_pentest::PreparedApplicationEvidenceImport;
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::finding::Finding;
 use crate::engine::observation::{
-    redact_text, redact_url, EvidencePayload, EvidenceRecord, FindingRecordV2,
+    redact_text, redact_url, AgentAnalysisRecord, EvidencePayload, EvidenceRecord, FindingRecordV2,
 };
+
+const MAX_VALIDATED_ANALYSES_PER_FINDING: usize = 1_000;
 
 struct FindingWrite<'a> {
     finding: &'a Finding,
@@ -45,6 +47,11 @@ pub(crate) struct ValidatedEvidence {
 impl<'a> FindingWrite<'a> {
     fn prepare(finding: &'a Finding) -> Result<Self> {
         let appsec = finding.canonical_appsec();
+        for analysis in &appsec.agent_analysis {
+            analysis.validate().map_err(|error| {
+                ScorchError::Database(format!("invalid canonical agent analysis: {error}"))
+            })?;
+        }
         let raw_json = serde_json::to_value(finding)
             .map_err(|e| ScorchError::Database(format!("serialize finding: {e}")))?;
         let correlation_keys = serde_json::to_value(&appsec.correlation_keys)
@@ -995,9 +1002,14 @@ async fn validate_finding_row(pool: &PgPool, row: TrackedFinding) -> Result<Vali
         ));
     }
     validate_scan_project(pool, row.scan_id, row.project_id).await?;
+    for declared in &write.appsec.agent_analysis {
+        declared.validate().map_err(|error| {
+            canonical_mismatch(format!("invalid declared agent analysis: {error}"))
+        })?;
+    }
     let canonical = serde_json::to_value(&finding)
         .map_err(|error| canonical_mismatch(format!("serialize validated finding: {error}")))?;
-    let validated = ValidatedFinding { row, canonical };
+    let mut validated = ValidatedFinding { row, canonical };
     for declared in &write.appsec.evidence {
         let evidence = sqlx::query_as::<_, FindingEvidence>(
             "SELECT * FROM finding_evidence \
@@ -1020,7 +1032,77 @@ async fn validate_finding_row(pool: &PgPool, row: TrackedFinding) -> Result<Vali
             ));
         }
     }
+
+    let analyses =
+        load_validated_analyses(pool, validated.row.id, &write.appsec.agent_analysis).await?;
+    let mut projected = finding;
+    projected.appsec.agent_analysis = analyses;
+    validated.canonical = serde_json::to_value(projected)
+        .map_err(|error| canonical_mismatch(format!("serialize projected finding: {error}")))?;
     Ok(validated)
+}
+
+async fn load_validated_analyses(
+    pool: &PgPool,
+    parent_finding_id: Uuid,
+    declared_analyses: &[AgentAnalysisRecord],
+) -> Result<Vec<AgentAnalysisRecord>> {
+    let query_limit = i64::try_from(MAX_VALIDATED_ANALYSES_PER_FINDING + 1)
+        .map_err(|_| canonical_mismatch("agent analysis limit overflow"))?;
+    let rows = sqlx::query_as::<_, StoredAgentAnalysis>(
+        "SELECT * FROM finding_agent_analysis WHERE tracked_finding_id = $1 \
+         ORDER BY analysis_identity LIMIT $2",
+    )
+    .bind(parent_finding_id)
+    .bind(query_limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| ScorchError::Database(format!("load validated agent analysis: {error}")))?;
+    if rows.len() > MAX_VALIDATED_ANALYSES_PER_FINDING {
+        return Err(canonical_mismatch(
+            "agent analysis exceeds the bounded public projection limit",
+        ));
+    }
+    let analyses = rows
+        .iter()
+        .map(|row| validate_analysis_row(parent_finding_id, row))
+        .collect::<Result<Vec<_>>>()?;
+    if declared_analyses
+        .iter()
+        .any(|declared| !analyses.iter().any(|analysis| analysis == declared))
+    {
+        return Err(canonical_mismatch(
+            "canonical finding and declared agent analysis document differ",
+        ));
+    }
+    Ok(analyses)
+}
+
+fn validate_analysis_row(
+    parent_finding_id: Uuid,
+    row: &StoredAgentAnalysis,
+) -> Result<AgentAnalysisRecord> {
+    if row.tracked_finding_id != parent_finding_id {
+        return Err(canonical_mismatch("agent analysis parent finding projection differs"));
+    }
+    let declared: AgentAnalysisRecord = serde_json::from_value(row.raw_analysis.clone())
+        .map_err(|error| canonical_mismatch(format!("invalid raw agent analysis: {error}")))?;
+    declared
+        .validate()
+        .map_err(|error| canonical_mismatch(format!("invalid agent analysis: {error}")))?;
+    let normalized = declared.normalized();
+    let canonical = serde_json::to_value(&normalized)
+        .map_err(|error| canonical_mismatch(format!("serialize agent analysis: {error}")))?;
+    if row.raw_analysis != canonical
+        || row.analysis_schema != normalized.schema
+        || row.analysis_identity != normalized.identity
+        || row.created_at.timestamp_micros() != normalized.created_at.timestamp_micros()
+    {
+        return Err(canonical_mismatch(
+            "agent analysis canonical document and duplicated projection differ",
+        ));
+    }
+    Ok(normalized)
 }
 
 async fn validate_evidence_row(
@@ -1252,11 +1334,64 @@ mod tests {
         );
     }
 
+    #[test]
+    fn canonical_write_rejects_invalid_model_analysis_provenance() {
+        let now = chrono::Utc::now();
+        let mut analysis = model_analysis_record(now);
+        analysis.model_provenance.as_mut().expect("provenance").schema = "future".to_string();
+        let finding = Finding::new(
+            "fixture",
+            Severity::High,
+            "Canonical fixture",
+            "Canonical description",
+            "src/lib.rs:7",
+        )
+        .with_agent_analysis(analysis);
+        let Err(error) = FindingWrite::prepare(&finding) else {
+            panic!("invalid model analysis was accepted");
+        };
+        assert!(error.to_string().contains("invalid canonical agent analysis"));
+    }
+
     struct CanonicalFixture {
         project: Uuid,
         scan: Uuid,
         finding: Uuid,
         evidence: Uuid,
+        analysis: Uuid,
+    }
+
+    fn model_analysis_record(now: chrono::DateTime<chrono::Utc>) -> AgentAnalysisRecord {
+        let request = scorchkit_core::ModelAnalysisRequest::analysis(
+            "fixture-host",
+            "exact-model",
+            scorchkit_core::ModelRole::FindingValidation,
+            "workflow/v1",
+            vec![scorchkit_core::ModelAnalysisInput::new("1".repeat(64), "canonical evidence")
+                .expect("model input")],
+            "validate",
+        )
+        .expect("model request");
+        let response = scorchkit_core::ModelAnalysisResponse {
+            schema: scorchkit_core::MODEL_ANALYSIS_CONTRACT_V1.to_string(),
+            provider: "fixture-host".to_string(),
+            model: "exact-model".to_string(),
+            role: scorchkit_core::ModelRole::FindingValidation,
+            payload: scorchkit_core::ModelResponsePayload::Analysis {
+                summary: "Canonical model analysis".to_string(),
+                confidence_bps: 8_000,
+                evidence_digests: vec!["1".repeat(64)],
+            },
+        };
+        let provenance = scorchkit_core::ModelAnalysisProvenance::from_validated_response(
+            &request,
+            &response,
+            scorchkit_core::ModelExecutionLocation::HostManaged,
+            now,
+        )
+        .expect("model provenance");
+        AgentAnalysisRecord::from_model(provenance, "Canonical model analysis")
+            .expect("model analysis")
     }
 
     async fn canonical_fixture(pool: &PgPool) -> CanonicalFixture {
@@ -1292,7 +1427,8 @@ mod tests {
         .with_remediation("canonical remediation")
         .with_owasp("A03:2021")
         .with_cwe(89)
-        .with_confidence(0.75);
+        .with_confidence(0.75)
+        .with_agent_analysis(model_analysis_record(now));
         save_findings(pool, project.id, scan.id, &[finding]).await.expect("save canonical finding");
         let finding = list_findings(pool, project.id)
             .await
@@ -1306,12 +1442,57 @@ mod tests {
             .into_iter()
             .next()
             .expect("fixture evidence");
+        let analysis = list_agent_analysis(pool, finding.id)
+            .await
+            .expect("list fixture analysis")
+            .into_iter()
+            .next()
+            .expect("fixture analysis");
         CanonicalFixture {
             project: project.id,
             scan: scan.id,
             finding: finding.id,
             evidence: evidence.id,
+            analysis: analysis.id,
         }
+    }
+
+    async fn insert_bounded_analysis_fixtures(
+        pool: &PgPool,
+        finding_id: Uuid,
+        start: usize,
+        count: usize,
+    ) {
+        let now = chrono::Utc::now();
+        let rows = (start..start + count)
+            .map(|index| {
+                let analysis = AgentAnalysisRecord::new(
+                    "bounded-fixture",
+                    None,
+                    format!("bounded analysis {index}"),
+                    Vec::new(),
+                    now,
+                );
+                (
+                    analysis.identity.clone(),
+                    analysis.schema.clone(),
+                    serde_json::to_value(&analysis).expect("serialize bounded analysis"),
+                    analysis.created_at,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut query = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+            "INSERT INTO finding_agent_analysis \
+             (tracked_finding_id, analysis_identity, analysis_schema, raw_analysis, created_at) ",
+        );
+        query.push_values(&rows, |mut row, (identity, schema, raw, created_at)| {
+            row.push_bind(finding_id)
+                .push_bind(identity)
+                .push_bind(schema)
+                .push_bind(raw)
+                .push_bind(created_at);
+        });
+        query.build().execute(pool).await.expect("insert bounded analyses");
     }
 
     fn assert_canonical_mismatch<T>(result: Result<T>) {
@@ -1377,6 +1558,27 @@ mod tests {
             crate::storage::projects::delete_project(pool, fixture.project)
                 .await
                 .expect("delete corrupt evidence project");
+        }
+    }
+
+    async fn assert_analysis_corruptions(pool: &PgPool) {
+        let corruptions = [
+            "UPDATE finding_agent_analysis SET raw_analysis = '{}'::jsonb WHERE id = $1",
+            "UPDATE finding_agent_analysis SET analysis_identity = analysis_identity || '-corrupt' WHERE id = $1",
+            "UPDATE finding_agent_analysis SET analysis_schema = analysis_schema || '-corrupt' WHERE id = $1",
+            "UPDATE finding_agent_analysis SET created_at = created_at + interval '1 second' WHERE id = $1",
+        ];
+        for corruption in corruptions {
+            let fixture = canonical_fixture(pool).await;
+            sqlx::query(corruption)
+                .bind(fixture.analysis)
+                .execute(pool)
+                .await
+                .expect("corrupt analysis projection");
+            assert_canonical_mismatch(get_validated_finding(pool, fixture.finding).await);
+            crate::storage::projects::delete_project(pool, fixture.project)
+                .await
+                .expect("delete corrupt analysis project");
         }
     }
 
@@ -1446,12 +1648,71 @@ mod tests {
                 .len(),
             1
         );
+        let projected = get_validated_finding(&pool, round_trip.finding)
+            .await
+            .expect("validated model finding")
+            .expect("model finding");
+        assert_eq!(
+            projected.canonical["appsec"]["agent_analysis"].as_array().map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            projected.canonical["appsec"]["agent_analysis"][0]["schema"],
+            scorchkit_core::MODEL_ANALYSIS_CONTRACT_V1
+        );
         crate::storage::projects::delete_project(&pool, round_trip.project)
             .await
             .expect("delete round-trip project");
         assert_finding_corruptions(&pool).await;
         assert_evidence_corruptions(&pool).await;
+        assert_analysis_corruptions(&pool).await;
         assert_relationship_corruptions(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn validated_analysis_projection_enforces_the_exact_child_limit() {
+        let Ok(database_url) = std::env::var("DATABASE_URL") else {
+            return;
+        };
+        let pool = crate::storage::connect(&database_url)
+            .await
+            .expect("connect bounded-analysis database");
+        crate::storage::migrate::run_migrations(&pool)
+            .await
+            .expect("migrate bounded-analysis database");
+        let fixture = canonical_fixture(&pool).await;
+
+        insert_bounded_analysis_fixtures(
+            &pool,
+            fixture.finding,
+            0,
+            MAX_VALIDATED_ANALYSES_PER_FINDING - 1,
+        )
+        .await;
+        assert_eq!(
+            load_validated_analyses(&pool, fixture.finding, &[])
+                .await
+                .expect("exact child limit")
+                .len(),
+            MAX_VALIDATED_ANALYSES_PER_FINDING
+        );
+
+        insert_bounded_analysis_fixtures(
+            &pool,
+            fixture.finding,
+            MAX_VALIDATED_ANALYSES_PER_FINDING - 1,
+            1,
+        )
+        .await;
+        let error = load_validated_analyses(&pool, fixture.finding, &[])
+            .await
+            .expect_err("one child over the limit");
+        assert!(error
+            .to_string()
+            .contains("agent analysis exceeds the bounded public projection limit"));
+        crate::storage::projects::delete_project(&pool, fixture.project)
+            .await
+            .expect("delete bounded-analysis project");
     }
 
     #[tokio::test]

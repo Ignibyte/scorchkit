@@ -275,10 +275,30 @@ mod tests {
     use crate::engine::target::Target;
     use crate::{
         ApplicationDastAssessment, ApplicationDastCoverageGap, ApplicationDastGapKind,
-        ApplicationDastPhase, ApplicationDastProfile, SupplyChainAssessment,
-        SupplyChainCoverageGap, SupplyChainGapKind, SupplyChainPhase, SupplyChainTarget,
-        SupplyChainTargetKind,
+        ApplicationDastPhase, ApplicationDastProfile, ModelAnalysisProvenance,
+        ModelExecutionLocation, ModelRole, SupplyChainAssessment, SupplyChainCoverageGap,
+        SupplyChainGapKind, SupplyChainPhase, SupplyChainTarget, SupplyChainTargetKind,
+        MODEL_ANALYSIS_CONTRACT_V1, MODEL_ANALYSIS_PROVENANCE_V1,
     };
+
+    fn model_record(now: chrono::DateTime<Utc>) -> AgentAnalysisRecord {
+        AgentAnalysisRecord::from_model(
+            ModelAnalysisProvenance {
+                schema: MODEL_ANALYSIS_PROVENANCE_V1.to_string(),
+                provider: "fixture-host".to_string(),
+                model: "exact-model".to_string(),
+                role: ModelRole::FindingValidation,
+                contract_version: MODEL_ANALYSIS_CONTRACT_V1.to_string(),
+                input_evidence_digests: vec!["1".repeat(64)],
+                workflow_version: "workflow/v1".to_string(),
+                created_at: now,
+                confidence_bps: 8_500,
+                execution_location: ModelExecutionLocation::HostManaged,
+            },
+            "Model-labeled validation",
+        )
+        .expect("model record")
+    }
 
     fn result_with(finding: Finding) -> ScanResult {
         ScanResult::new(
@@ -328,13 +348,17 @@ mod tests {
             "Validated",
             Vec::new(),
             Utc::now(),
-        ));
+        ))
+        .with_agent_analysis(model_record(Utc::now()));
         let sarif = build_sarif(&result_with(finding));
         let encoded = serde_json::to_string(&sarif).expect("serialize SARIF");
         assert!(!encoded.contains("password=secret"));
         assert!(!encoded.contains("\"fingerprints\""));
         assert!(encoded.contains("scorchkit/agentAnalysis"));
         assert!(encoded.contains("codex-security"));
+        assert!(encoded.contains("scorchkit.model-analysis-provenance/v1"));
+        assert!(encoded.contains("finding_validation"));
+        assert!(encoded.contains("host_managed"));
     }
 
     #[test]

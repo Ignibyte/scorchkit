@@ -4,6 +4,11 @@ The `src/ai` module provides optional planning, finding analysis, attack-chain c
 remediation. Scanner evidence remains the source record. Provider output is a separate, labeled
 interpretation and cannot overwrite findings, evidence, workflow state, or authorization policy.
 
+This page documents the existing `scorchkit.ai/v1` Codex-first compatibility path. The separate
+[model-analysis architecture](model-analysis.md) adds exact provider/model role bindings,
+host/service/local execution, readiness, complete provenance, and deterministic eligibility without
+changing this behavior.
+
 ## Provider model
 
 `AiProvider` is the host-neutral boundary. Callers select a task through a typed request instead of
@@ -97,6 +102,15 @@ prompt. The provider never receives database credentials or the serialized engag
 - Disabled and unavailable providers return distinct typed errors.
 - AI process execution requires the engagement's `ExternalTool` capability for the relevant target
   and effect before the process starts.
+
+## Model-role boundary
+
+`[model_analysis]` is disabled independently of `[ai]`. It has six closed roles and never uses the
+legacy provider default as a fallback. A role is usable only when its one exact provider/model
+binding is valid, available, and has complete passing evaluation evidence for the current contract
+and corpus. Analysis is appended with provider/model/role/location provenance; it remains separate
+from scanner evidence and authority. See [model analysis](model-analysis.md) for the contract,
+service-data policy, readiness states, and configuration.
 
 ## Source layout
 

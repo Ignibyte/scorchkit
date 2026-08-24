@@ -14,6 +14,7 @@ pub mod error;
 pub mod events;
 pub mod evidence;
 pub mod finding;
+pub mod model_analysis;
 pub mod observation;
 pub mod risk_score;
 pub mod run_pipeline;
@@ -29,8 +30,8 @@ pub mod engine {
     pub use crate::{
         adapter, adapter_execution, application_dast, application_pentest, appsec_workflow,
         attack_path, compliance, compliance_framework, correlation, cve, error, events, evidence,
-        finding, observation, risk_score, run_pipeline, scan_result, service_fingerprint, severity,
-        shared_data, supply_chain, target,
+        finding, model_analysis, observation, risk_score, run_pipeline, scan_result,
+        service_fingerprint, severity, shared_data, supply_chain, target,
     };
     pub use scorchkit_policy::{policy, scope};
 }
@@ -108,6 +109,16 @@ pub use attack_path::{
 pub use error::{Result, ScorchError};
 pub use evidence::HttpEvidence;
 pub use finding::Finding;
+pub use model_analysis::{
+    ModelAnalysisInput, ModelAnalysisProvenance, ModelAnalysisRequest, ModelAnalysisResponse,
+    ModelAnalysisValidationError, ModelEligibilityKey, ModelEvaluationAnswer, ModelEvaluationCase,
+    ModelEvaluationClass, ModelEvaluationCorpus, ModelEvaluationOutcome, ModelEvaluationResult,
+    ModelEvaluationVerdict, ModelExecutionLocation, ModelReadiness, ModelReadinessState,
+    ModelRequestPayload, ModelResponsePayload, ModelRole, MAX_MODEL_ANALYSIS_INPUTS,
+    MAX_MODEL_ANALYSIS_REQUEST_BYTES, MAX_MODEL_ANALYSIS_SUMMARY_BYTES,
+    MAX_MODEL_ANALYSIS_VALUE_BYTES, MAX_MODEL_CONFIDENCE_BPS, MODEL_ANALYSIS_CONTRACT_V1,
+    MODEL_ANALYSIS_PROVENANCE_V1, MODEL_EVALUATION_CORPUS_V1,
+};
 pub use observation::{
     canonical_json_sha256, sha256_hex, AgentAnalysisRecord, CodeFlow, CodeFlowStep, CorrelationKey,
     EvidencePayload, EvidenceRecord, FindingIdentity, FindingRecordV2, HttpParameterIdentity,

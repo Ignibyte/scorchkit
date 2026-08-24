@@ -186,6 +186,15 @@ Planning, analysis, correlation, and remediation use the same typed `scorchkit.a
 response contract for both adapters. Invalid or mismatched provider output is rejected. AI failure
 does not alter deterministic scan evidence, rule-based correlation, or local remediation guidance.
 
+Provider-neutral model roles are a separate disabled-by-default layer. `[model_analysis]` binds one
+exact provider/model to each configured planning, finding-validation, correlation, attack-path,
+remediation, or verification role. Host, service, and local adapters share one typed contract;
+service calls add exact policy and credential-use authorization, no redirects, redaction,
+no-retention declaration, and hard resource bounds. A role remains unavailable until its exact
+binding passes all five built-in AppSec evaluation cases. Successful output is labeled with full
+provider/model/role/location provenance and never becomes scanner evidence or execution authority.
+See [model analysis](docs/architecture/model-analysis.md).
+
 Canonical source-to-runtime correlation is deterministic and separate from AI. It links typed
 finding-v2 identities into versioned application attack paths, requires source flow, redacted HTTP
 proof, a shared weakness and precise application facet, and comparable deployment provenance before
@@ -291,6 +300,7 @@ Read [CONSTITUTION.md](CONSTITUTION.md), [AGENTS.md](AGENTS.md), and the
 - [Agent integration](docs/architecture/agent.md)
 - [Codex plugin](docs/guide/codex-plugin.md)
 - [AI adapters](docs/architecture/ai.md)
+- [Model analysis](docs/architecture/model-analysis.md)
 - [Module development](docs/architecture/modules.md)
 - [External tool inventory](docs/tools-checklist.md)
 - [Tutorials](docs/tutorials/README.md)

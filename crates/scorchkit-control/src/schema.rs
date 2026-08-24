@@ -9,7 +9,7 @@ use crate::contract::{
 };
 use crate::error::{ControlErrorCodeV1, ControlErrorV1};
 use crate::event::{ControlEventV1, CONTROL_EVENT_SCHEMA_V1};
-use crate::resource::{ControlResultV1, ModuleViewV1};
+use crate::resource::{ControlResultV1, ModelReadinessViewV1, ModuleViewV1};
 
 /// Stable self-description schema.
 pub const CONTROL_DESCRIPTION_SCHEMA_V1: &str = "scorchkit.control.description/v1";
@@ -73,6 +73,7 @@ pub fn description_v1() -> Result<ControlApiDescriptionV1, ControlErrorV1> {
     push_schema::<ConfigPatchV1>(&mut schemas, "configuration_patch")?;
     push_schema::<ResolvedConfigurationV1>(&mut schemas, "configuration_result")?;
     push_schema::<ModuleViewV1>(&mut schemas, "module")?;
+    push_schema::<ModelReadinessViewV1>(&mut schemas, "model_readiness")?;
     Ok(ControlApiDescriptionV1 {
         schema_version: CONTROL_DESCRIPTION_SCHEMA_V1.to_string(),
         api_schema_version: CONTROL_API_SCHEMA_V1.to_string(),
@@ -106,6 +107,7 @@ fn operation_inventory() -> Vec<ControlOperationDescriptionV1> {
         ("get_engagement", "query", "read", false),
         ("get_finding", "query", "read", false),
         ("get_job", "query", "read", false),
+        ("get_model_readiness", "query", "read", false),
         ("get_project", "query", "read", false),
         ("get_project_report", "query", "read", false),
         ("list_evidence", "query", "read", false),
@@ -142,9 +144,9 @@ mod tests {
         assert_eq!(description.schema_version, CONTROL_DESCRIPTION_SCHEMA_V1);
         assert_eq!(description.api_schema_version, CONTROL_API_SCHEMA_V1);
         assert_eq!(description.event_schema_version, CONTROL_EVENT_SCHEMA_V1);
-        assert_eq!(description.operations.len(), 22);
+        assert_eq!(description.operations.len(), 23);
         assert!(description.operations.windows(2).all(|pair| pair[0].name < pair[1].name));
-        assert_eq!(description.schemas.len(), 12);
+        assert_eq!(description.schemas.len(), 13);
         assert!(description.schemas.iter().all(|entry| entry.schema.is_object()));
     }
 }

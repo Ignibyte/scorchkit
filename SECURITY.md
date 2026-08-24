@@ -47,6 +47,11 @@ infrastructure. The test suite never treats a timeout against an external addres
   evidence.
 - External processes have bounded time, output, filesystem ownership, and termination behavior.
 - Agent analysis never replaces or silently changes scanner evidence.
+- Model analysis resolves only one exact configured provider/model per role, requires complete
+  exact-key evaluation before production use, and remains labeled interpretation without evidence,
+  lifecycle, grant, or execution authority. Service-managed inference requires separate external-
+  tool and credential-use authorization, canonical redaction, no redirects, no retention, bounded
+  input/output/time, and an awaited audit decision before send.
 - Local run processors use versioned bounded contracts. Their target, module, capability, effect,
   and credential proposals may only narrow the host-built authorization ceiling; finding proposals
   remain separately labeled and cannot replace normalized scanner findings.
@@ -88,6 +93,12 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
   failures abort; optional failures retain only a redacted degraded outcome. Local notification
   processors are rejected in favor of the durable webhook queue. Legacy checkpoint/phased DAST and
   infra/cloud runners do not gain processor support.
+- Provider-neutral model analysis is disabled by default and does not replace the legacy `[ai]`
+  compatibility adapters. V1 supports exact host-managed and clean-environment local contract
+  processes plus credential-free HTTP(S) service endpoints with environment-indirect bearer
+  credentials. ScorchKit does not enroll a model, acquire provider access, select a fallback,
+  support provider retention, or grant model output scanner-evidence or policy status. Credential-
+  safe readiness is available through the control contract without invoking an adapter.
 - Scanner descriptors declare their strongest effect. DAST process authorization reads the same
   canonical tool-effect mapping: Hydra, Kerbrute, NetExec, onesixtyone, and SMBMap require
   `credential-test` and `credential-use`; Commix and Metasploit require `exploit`. The legacy

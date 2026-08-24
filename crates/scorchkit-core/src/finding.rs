@@ -482,6 +482,54 @@ mod tests {
     }
 
     #[test]
+    fn model_analysis_provenance_does_not_change_finding_identity_or_evidence() {
+        use super::super::model_analysis::{
+            ModelAnalysisInput, ModelAnalysisProvenance, ModelAnalysisRequest,
+            ModelAnalysisResponse, ModelExecutionLocation, ModelResponsePayload, ModelRole,
+            MODEL_ANALYSIS_CONTRACT_V1,
+        };
+
+        let original = Finding::new("scanner", Severity::High, "T", "D", "src/lib.rs:3")
+            .with_evidence("scanner proof");
+        let identity = original.canonical_appsec().identity;
+        let request = ModelAnalysisRequest::analysis(
+            "host",
+            "exact-model",
+            ModelRole::FindingValidation,
+            "workflow/v1",
+            vec![ModelAnalysisInput::new("1".repeat(64), "scanner proof").expect("input")],
+            "validate",
+        )
+        .expect("request");
+        let response = ModelAnalysisResponse {
+            schema: MODEL_ANALYSIS_CONTRACT_V1.to_string(),
+            provider: "host".to_string(),
+            model: "exact-model".to_string(),
+            role: ModelRole::FindingValidation,
+            payload: ModelResponsePayload::Analysis {
+                summary: "Supported".to_string(),
+                confidence_bps: 8_500,
+                evidence_digests: vec!["1".repeat(64)],
+            },
+        };
+        let provenance = ModelAnalysisProvenance::from_validated_response(
+            &request,
+            &response,
+            ModelExecutionLocation::HostManaged,
+            Utc::now(),
+        )
+        .expect("provenance");
+        let analysis = AgentAnalysisRecord::from_model(provenance, "Supported").expect("record");
+        analysis.validate().expect("valid record");
+        let enriched = original.with_agent_analysis(analysis);
+        let canonical = enriched.canonical_appsec();
+        assert_eq!(canonical.identity, identity);
+        assert_eq!(canonical.evidence.len(), 1);
+        assert_eq!(canonical.agent_analysis.len(), 1);
+        assert!(canonical.agent_analysis[0].model_provenance.is_some());
+    }
+
+    #[test]
     fn canonical_appsec_repairs_mutated_legacy_location_and_provenance() {
         let mut finding = Finding::new("semgrep", Severity::High, "Rule", "Desc", "opaque");
         finding.appsec.provenance.scanner_id.clear();

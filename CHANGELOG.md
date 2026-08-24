@@ -41,6 +41,14 @@ All notable changes to ScorchKit will be documented in this file.
   89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
 
 ### Added
+- **Provider-neutral model analysis (TICKET-030 / SK-052)** — Added six exact model roles with
+  disabled-by-default readiness, one provider/model binding per role, shared host/service/local
+  request and response contracts, complete labeled provenance, and a deterministic five-class
+  AppSec evaluation corpus. Service adapters require policy and credential-use authorization,
+  environment-indirect bearer credentials, no redirects, canonical redaction, no retention, and
+  bounded input/output/time. Model records remain append-only analysis rather than scanner evidence
+  or authority, survive storage/control/MCP and report projection, and fail closed on durable child
+  corruption.
 - **Typed run preprocessors and lifecycle hooks (TICKET-029 / SK-051)** — Promoted DAST and code
   lifecycle hooks into versioned provider-neutral processor contracts with unique identities,
   deterministic phase ordering, declared capabilities, required/optional failure behavior, and

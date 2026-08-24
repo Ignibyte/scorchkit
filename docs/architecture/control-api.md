@@ -2,7 +2,7 @@
 
 ScorchKit exposes one versioned provider-neutral application-service contract for configuration,
 engagements, projects, targets, DAST jobs, canonical findings/evidence, application modules,
-reports, and ordered events. The stable DTOs and generated JSON Schemas live in the
+model-role readiness, reports, and ordered events. The stable DTOs and generated JSON Schemas live in the
 `scorchkit-control` package; composed authorization, execution, storage validation, and transports
 remain in the root package.
 
@@ -62,6 +62,17 @@ compare schema, identity, collection time, parent, and scan/project relationship
 divergent row fails the complete control query with `canonical_projection_mismatch`; partial data
 is never returned. Finding pages use immutable `(first_seen, id)` ordering, evidence pages use
 `(collected_at, id)`, and the cursor row itself is revalidated before either continuation query.
+Append-preserved agent/model analysis children are bounded and independently checked against their
+raw document, schema, identity, parent, and timestamp before being reattached to the canonical
+finding returned through control and MCP.
+
+## Model readiness
+
+`GetModelReadiness` is a side-effect-free query that returns all six closed analysis roles. Each
+entry reports `disabled`, `unconfigured`, `invalid`, `unavailable`, `evaluation_required`, or
+`ready` with provider, exact model, execution ownership, and a stable reason when safe. Adapter
+paths, endpoints, environment-variable names, and credential values are never projected. Readiness
+does not execute a model or authorize a later effect.
 
 ## Jobs and events
 

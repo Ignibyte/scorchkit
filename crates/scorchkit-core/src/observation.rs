@@ -546,7 +546,7 @@ impl EvidenceRecord {
 }
 
 /// Explicitly labeled analysis produced by an agent or model.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentAnalysisRecord {
     /// Analysis schema.
     pub schema: String,
@@ -562,6 +562,9 @@ pub struct AgentAnalysisRecord {
     /// Evidence identities considered by the analysis.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence_ids: Vec<String>,
+    /// Complete model provenance for `scorchkit.model-analysis/v1` records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_provenance: Option<crate::model_analysis::ModelAnalysisProvenance>,
     /// Time the analysis was produced.
     pub created_at: DateTime<Utc>,
 }
@@ -590,14 +593,129 @@ impl AgentAnalysisRecord {
             model,
             summary,
             evidence_ids,
+            model_provenance: None,
             created_at,
         }
     }
 
+    /// Create a provenance-rich model-analysis record without changing scanner evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a model validation error when the provenance is malformed.
+    pub fn from_model(
+        provenance: crate::model_analysis::ModelAnalysisProvenance,
+        summary: impl Into<String>,
+    ) -> Result<Self, crate::model_analysis::ModelAnalysisValidationError> {
+        provenance.validate()?;
+        let summary = redact_text(&summary.into());
+        crate::model_analysis::validate_model_summary(&summary)?;
+        let evidence_ids = provenance.input_evidence_digests.clone();
+        let provider = provenance.provider.clone();
+        let model = Some(provenance.model.clone());
+        let created_at = provenance.created_at;
+        let encoded = serde_json::to_value(&provenance)
+            .map_or_else(|_| "null".to_string(), |value| canonical_json(&value));
+        let mut parts = vec![encoded, summary.clone()];
+        parts.extend(evidence_ids.iter().cloned());
+        let identity = digest_parts(
+            crate::model_analysis::MODEL_ANALYSIS_CONTRACT_V1,
+            parts.iter().map(String::as_str),
+        );
+        Ok(Self {
+            schema: crate::model_analysis::MODEL_ANALYSIS_CONTRACT_V1.to_string(),
+            identity,
+            provider,
+            model,
+            summary,
+            evidence_ids,
+            model_provenance: Some(provenance),
+            created_at,
+        })
+    }
+
+    /// Validate either the legacy agent record or the provenance-rich model record.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed mismatch when duplicated labels, time, evidence, schema, or identity differ
+    /// from the canonical record.
+    pub fn validate(&self) -> Result<(), crate::model_analysis::ModelAnalysisValidationError> {
+        let canonical = if let Some(provenance) = &self.model_provenance {
+            let record = Self::from_model(provenance.clone(), self.summary.clone())?;
+            if self.schema != crate::model_analysis::MODEL_ANALYSIS_CONTRACT_V1
+                || self.provider != provenance.provider
+                || self.model.as_deref() != Some(provenance.model.as_str())
+                || self.evidence_ids != provenance.input_evidence_digests
+                || self.created_at != provenance.created_at
+            {
+                return Err(crate::model_analysis::ModelAnalysisValidationError::Mismatch(
+                    "model analysis provenance projection",
+                ));
+            }
+            record
+        } else {
+            if self.schema != AGENT_ANALYSIS_SCHEMA_V1 {
+                return Err(crate::model_analysis::ModelAnalysisValidationError::UnsupportedSchema);
+            }
+            Self::new(
+                self.provider.clone(),
+                self.model.clone(),
+                self.summary.clone(),
+                self.evidence_ids.clone(),
+                self.created_at,
+            )
+        };
+        if self.identity != canonical.identity || self.summary != canonical.summary {
+            return Err(crate::model_analysis::ModelAnalysisValidationError::Mismatch(
+                "agent analysis identity",
+            ));
+        }
+        Ok(())
+    }
+
     /// Restore the canonical schema and identity after compatibility deserialization.
     #[must_use]
-    pub fn normalized(self) -> Self {
-        Self::new(self.provider, self.model, self.summary, self.evidence_ids, self.created_at)
+    pub fn normalized(mut self) -> Self {
+        let canonical = self.model_provenance.clone().map_or_else(
+            || {
+                Ok(Self::new(
+                    self.provider.clone(),
+                    self.model.clone(),
+                    self.summary.clone(),
+                    self.evidence_ids.clone(),
+                    self.created_at,
+                ))
+            },
+            |provenance| Self::from_model(provenance, self.summary.clone()),
+        );
+        canonical.unwrap_or_else(|_| {
+            self.summary = redact_text(&self.summary);
+            self.evidence_ids.sort();
+            self.evidence_ids.dedup();
+            self
+        })
+    }
+
+    /// Credential-safe provider/model/role/location label for human reports.
+    #[must_use]
+    pub fn report_label(&self) -> String {
+        let provider = redact_text(&self.provider);
+        let model = self
+            .model
+            .as_deref()
+            .map_or_else(String::new, |model| format!("/{}", redact_text(model)));
+        self.model_provenance.as_ref().map_or_else(
+            || format!("{provider}{model}"),
+            |provenance| {
+                format!(
+                    "{}{model} {}@{}",
+                    provider,
+                    provenance.role.as_str(),
+                    provenance.execution_location.as_str()
+                )
+            },
+        )
     }
 }
 
@@ -1069,6 +1187,61 @@ pub(crate) fn normalized_redaction_fields(fields: impl IntoIterator<Item = Strin
 mod tests {
     use super::*;
 
+    fn model_analysis_fixture() -> AgentAnalysisRecord {
+        let provenance = crate::model_analysis::ModelAnalysisProvenance {
+            schema: crate::model_analysis::MODEL_ANALYSIS_PROVENANCE_V1.to_string(),
+            provider: "fixture-host".to_string(),
+            model: "exact-model".to_string(),
+            role: crate::model_analysis::ModelRole::FindingValidation,
+            contract_version: crate::model_analysis::MODEL_ANALYSIS_CONTRACT_V1.to_string(),
+            input_evidence_digests: vec!["1".repeat(64)],
+            workflow_version: "workflow/v1".to_string(),
+            created_at: Utc::now(),
+            confidence_bps: 8_000,
+            execution_location: crate::model_analysis::ModelExecutionLocation::HostManaged,
+        };
+        AgentAnalysisRecord::from_model(provenance, "Canonical summary").expect("model analysis")
+    }
+
+    #[test]
+    fn model_analysis_projection_and_identity_dimensions_fail_independently() {
+        let valid = model_analysis_fixture();
+        valid.validate().expect("valid model analysis");
+        let expected = Err(crate::model_analysis::ModelAnalysisValidationError::Mismatch(
+            "model analysis provenance projection",
+        ));
+
+        let mut changed = valid.clone();
+        changed.schema = AGENT_ANALYSIS_SCHEMA_V1.to_string();
+        assert_eq!(changed.validate(), expected);
+        let mut changed = valid.clone();
+        changed.provider = "other-provider".to_string();
+        assert_eq!(changed.validate(), expected);
+        let mut changed = valid.clone();
+        changed.model = Some("other-model".to_string());
+        assert_eq!(changed.validate(), expected);
+        let mut changed = valid.clone();
+        changed.evidence_ids = vec!["2".repeat(64)];
+        assert_eq!(changed.validate(), expected);
+        let mut changed = valid.clone();
+        changed.created_at += chrono::Duration::seconds(1);
+        assert_eq!(changed.validate(), expected);
+
+        let identity_error = Err(crate::model_analysis::ModelAnalysisValidationError::Mismatch(
+            "agent analysis identity",
+        ));
+        let mut changed = valid.clone();
+        changed.identity = "0".repeat(64);
+        assert_eq!(changed.validate(), identity_error);
+        let mut changed = AgentAnalysisRecord::from_model(
+            valid.model_provenance.expect("provenance"),
+            "password=secret",
+        )
+        .expect("redacted model analysis");
+        changed.summary = "password=secret".to_string();
+        assert_eq!(changed.validate(), identity_error);
+    }
+
     #[test]
     fn cross_scanner_cwe_and_location_produce_same_identity() {
         let now = Utc::now();
@@ -1204,6 +1377,20 @@ mod tests {
         let encoded = serde_json::to_string(&first).expect("serialize structured evidence");
         assert!(!encoded.contains("secret"));
         assert!(encoded.contains("REDACTED"));
+    }
+
+    #[test]
+    fn analysis_report_labels_redact_untrusted_legacy_identities() {
+        let record = AgentAnalysisRecord::new(
+            "password=provider-fixture-value",
+            Some("api_key=model-fixture-value".to_string()),
+            "summary",
+            Vec::new(),
+            Utc::now(),
+        );
+        let label = record.report_label();
+        assert!(!label.contains("fixture-value"));
+        assert!(label.contains("REDACTED"));
     }
 
     #[test]
