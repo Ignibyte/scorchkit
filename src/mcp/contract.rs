@@ -228,10 +228,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn direct_result_adapter_preserves_text_and_adds_the_structured_contract() {
+    #[tokio::test]
+    async fn direct_result_adapter_preserves_text_and_adds_the_structured_contract() {
         let server = ScorchKitServer::new_stateless(Arc::new(crate::config::AppConfig::default()));
-        let legacy = server.do_list_modules();
+        let legacy = server.do_list_modules().await.expect("list control modules");
         let result = ScorchKitServer::mcp_tool_result(
             McpCallContext::test("list_modules"),
             Ok(legacy.clone()),

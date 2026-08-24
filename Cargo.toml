@@ -28,6 +28,13 @@ mcp = [
   "dep:zeroize",
   "scorchkit-cli/mcp",
 ]
+control-api = [
+  "storage",
+  "dep:axum",
+  "dep:subtle",
+  "dep:zeroize",
+  "scorchkit-cli/control-api",
+]
 infra = ["dep:ipnet", "dep:hickory-resolver", "scorchkit-cli/infra"]
 # SHA-256 is always available for supply-chain and evidence integrity; infra reuses it for
 # content-addressed CVE cache filenames.
@@ -104,6 +111,7 @@ scorchkit-cli = { version = "=3.0.0", path = "crates/scorchkit-cli" }
 scorchkit-cloud = { version = "=3.0.0", path = "crates/scorchkit-cloud" }
 scorchkit-code = { version = "=3.0.0", path = "crates/scorchkit-code" }
 scorchkit-config = { version = "=3.0.0", path = "crates/scorchkit-config" }
+scorchkit-control = { version = "=3.0.0", path = "crates/scorchkit-control" }
 scorchkit-core = { version = "=3.0.0", path = "crates/scorchkit-core" }
 scorchkit-executor = { version = "=3.0.0", path = "crates/scorchkit-executor" }
 scorchkit-infra = { version = "=3.0.0", path = "crates/scorchkit-infra" }
@@ -187,7 +195,7 @@ features = ["default-https-client", "rt-tokio"]
 [dependencies.axum]
 version = "0.8"
 default-features = false
-features = ["http1", "tokio"]
+features = ["http1", "tokio", "json"]
 optional = true
 
 [dependencies.azure_core]

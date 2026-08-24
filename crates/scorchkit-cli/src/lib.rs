@@ -307,6 +307,14 @@ pub enum Commands {
         remote: bool,
     },
 
+    /// Start the bearer-authenticated loopback control API.
+    #[cfg(feature = "control-api")]
+    ControlApi {
+        /// Database URL override (takes precedence over config and `DATABASE_URL`).
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+
     /// Run a unified assessment: DAST + SAST + Infra + Cloud combined.
     ///
     /// At least one of `--url`, `--code`, `--infra`, or `--cloud` is
@@ -742,5 +750,16 @@ mod tests {
         let remote = Cli::try_parse_from(["scorchkit", "serve", "--remote"])
             .expect("remote serve arguments");
         assert!(matches!(remote.command, Commands::Serve { remote: true }));
+    }
+}
+
+#[cfg(all(test, feature = "control-api"))]
+mod control_api_tests {
+    use super::*;
+
+    #[test]
+    fn control_api_listener_is_an_explicit_subcommand() {
+        let cli = Cli::try_parse_from(["scorchkit", "control-api"]).expect("control API arguments");
+        assert!(matches!(cli.command, Commands::ControlApi { database_url: None }));
     }
 }

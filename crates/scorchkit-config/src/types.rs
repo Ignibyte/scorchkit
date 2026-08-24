@@ -34,6 +34,9 @@ pub struct AppConfig {
     pub ai: AiConfig,
     pub report: ReportConfig,
     pub database: DatabaseConfig,
+    /// Optional bearer-authenticated loopback control API.
+    #[serde(default)]
+    pub control_api: crate::control_api::ControlApiConfig,
     /// Local and authenticated remote MCP transport configuration.
     #[serde(default)]
     pub mcp: crate::mcp::McpConfig,

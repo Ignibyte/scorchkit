@@ -7,10 +7,12 @@ use colored::{ColoredString, Colorize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::control_adapter::LocalControlClient;
 use crate::engine::error::{Result, ScorchError};
 use crate::report::terminal::escape_terminal_text;
 use crate::storage::intelligence::TargetProfile;
 use crate::storage::{findings, projects, scans};
+use scorchkit_control::{ControlCommandV1, ControlQueryV1, ControlResultV1};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct TargetProfileDisplay {
@@ -103,6 +105,251 @@ fn target_profile_display(profile: &TargetProfile) -> TargetProfileDisplay {
             .then(|| escape_terminal_text(&profile.technologies.join(", "))),
         waf: profile.waf.as_deref().map(escape_terminal_text),
     }
+}
+
+/// Create a project through the shared control application service.
+///
+/// # Errors
+///
+/// Returns an error when authorization, validation, or durable creation fails.
+pub(super) async fn control_create(
+    control: &LocalControlClient,
+    name: &str,
+    description: Option<&str>,
+) -> Result<()> {
+    let result = control
+        .command(ControlCommandV1::CreateProject {
+            name: name.to_string(),
+            description: description.unwrap_or("").to_string(),
+        })
+        .await?;
+    let ControlResultV1::Project(project) = result else {
+        return Err(ScorchError::Config(
+            "control service returned an unexpected project result".to_string(),
+        ));
+    };
+    println!("{} Project created.", "success:".green().bold());
+    println!("      ID: {}", project.id.to_string().dimmed());
+    println!("    Name: {}", escape_terminal_text(&project.name).cyan());
+    if let Some(description) = project_description_line(&project.description) {
+        println!("{description}");
+    }
+    Ok(())
+}
+
+/// List projects through bounded control queries.
+///
+/// # Errors
+///
+/// Returns an error when a bounded control query or report projection fails.
+pub(super) async fn control_list(control: &LocalControlClient) -> Result<()> {
+    let projects = control.projects().await?;
+    if projects.is_empty() {
+        println!("{}", "No projects found.".dimmed());
+        return Ok(());
+    }
+    println!("{}", "Projects".bold().underline());
+    println!();
+    for project in projects {
+        let result =
+            control.query(ControlQueryV1::GetProjectReport { project_id: project.id }).await?;
+        let ControlResultV1::Report(report) = result else {
+            return Err(ScorchError::Config(
+                "control service returned an unexpected report result".to_string(),
+            ));
+        };
+        println!(
+            "  {} {} ({} scan{}, {} finding{})",
+            escape_terminal_text(&project.name).cyan().bold(),
+            project.id.to_string().dimmed(),
+            report.scan_count,
+            if report.scan_count == 1 { "" } else { "s" },
+            report.finding_count,
+            if report.finding_count == 1 { "" } else { "s" },
+        );
+        if !project.description.is_empty() {
+            println!("    {}", escape_terminal_text(&project.description).dimmed());
+        }
+    }
+    println!();
+    Ok(())
+}
+
+/// Show project control state without exposing a storage handle.
+///
+/// # Errors
+///
+/// Returns an error when the project is absent or a canonical control read fails.
+pub(super) async fn control_show(control: &LocalControlClient, project_ref: &str) -> Result<()> {
+    let project = control.project(project_ref).await?;
+    let targets = control.targets(project.id).await?;
+    let result = control.query(ControlQueryV1::GetProjectReport { project_id: project.id }).await?;
+    let ControlResultV1::Report(report) = result else {
+        return Err(ScorchError::Config(
+            "control service returned an unexpected report result".to_string(),
+        ));
+    };
+    println!("{}\n", "Project Details".bold().underline());
+    println!("        ID: {}", project.id.to_string().dimmed());
+    println!("      Name: {}", escape_terminal_text(&project.name).cyan().bold());
+    println!(
+        "      Desc: {}",
+        if project.description.is_empty() {
+            "-".to_string()
+        } else {
+            escape_terminal_text(&project.description)
+        }
+    );
+    println!("   Created: {}", project.created_at.format("%Y-%m-%d %H:%M UTC"));
+    println!("   Updated: {}", project.updated_at.format("%Y-%m-%d %H:%M UTC"));
+    println!("   Targets: {}", report.target_count);
+    println!("     Scans: {}", report.scan_count);
+    println!("  Findings: {}", report.finding_count);
+    if !targets.is_empty() {
+        println!("\n  {}", "Targets".bold());
+        for target in targets {
+            let label = if target.label.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", escape_terminal_text(&target.label))
+            };
+            println!(
+                "    {} {}{}",
+                target.id.to_string().dimmed(),
+                escape_terminal_text(&target.url).cyan(),
+                label
+            );
+        }
+    }
+    println!();
+    Ok(())
+}
+
+/// Delete a project through the shared control command.
+///
+/// # Errors
+///
+/// Returns an error when lookup, policy authorization, or durable deletion fails.
+pub(super) async fn control_delete(
+    control: &LocalControlClient,
+    project_ref: &str,
+    force: bool,
+) -> Result<()> {
+    let project = control.project(project_ref).await?;
+    if !force {
+        println!(
+            "{} This will delete project '{}' and ALL associated data (targets, scans, findings).",
+            "warning:".yellow().bold(),
+            escape_terminal_text(&project.name),
+        );
+        println!("Re-run with --force to confirm.");
+        return Ok(());
+    }
+    let result = control.command(ControlCommandV1::DeleteProject { id: project.id }).await?;
+    if matches!(result, ControlResultV1::Acknowledged { changed: true, .. }) {
+        println!(
+            "{} Project '{}' deleted.",
+            "success:".green().bold(),
+            escape_terminal_text(&project.name)
+        );
+    }
+    Ok(())
+}
+
+/// Add a target through the policy-authorized control command.
+///
+/// # Errors
+///
+/// Returns an error when project lookup, target authorization, or storage fails.
+pub(super) async fn control_target_add(
+    control: &LocalControlClient,
+    project_ref: &str,
+    url: &str,
+    label: Option<&str>,
+) -> Result<()> {
+    let project = control.project(project_ref).await?;
+    let result = control
+        .command(ControlCommandV1::AddTarget {
+            project_id: project.id,
+            url: url.to_string(),
+            label: label.unwrap_or("").to_string(),
+        })
+        .await?;
+    let ControlResultV1::Target(target) = result else {
+        return Err(ScorchError::Config(
+            "control service returned an unexpected target result".to_string(),
+        ));
+    };
+    println!(
+        "{} Target added to '{}'.",
+        "success:".green().bold(),
+        escape_terminal_text(&project.name)
+    );
+    println!("    ID: {}", target.id.to_string().dimmed());
+    println!("   URL: {}", escape_terminal_text(&target.url).cyan());
+    Ok(())
+}
+
+/// Remove a target through the policy-authorized control command.
+///
+/// # Errors
+///
+/// Returns an error when IDs, policy authorization, ownership, or storage are invalid.
+pub(super) async fn control_target_remove(
+    control: &LocalControlClient,
+    project_ref: &str,
+    target_id_str: &str,
+) -> Result<()> {
+    let project = control.project(project_ref).await?;
+    let target_id = Uuid::parse_str(target_id_str).map_err(|error| {
+        ScorchError::Config(format!("invalid target UUID '{target_id_str}': {error}"))
+    })?;
+    let result = control
+        .command(ControlCommandV1::RemoveTarget { project_id: project.id, target_id })
+        .await?;
+    if matches!(result, ControlResultV1::Acknowledged { changed: true, .. }) {
+        println!("{} Target removed.", "success:".green().bold());
+    } else {
+        println!("{} Target not found.", "warning:".yellow().bold());
+    }
+    Ok(())
+}
+
+/// List project targets through bounded control queries.
+///
+/// # Errors
+///
+/// Returns an error when project lookup or a bounded target query fails.
+pub(super) async fn control_target_list(
+    control: &LocalControlClient,
+    project_ref: &str,
+) -> Result<()> {
+    let project = control.project(project_ref).await?;
+    let targets = control.targets(project.id).await?;
+    if targets.is_empty() {
+        println!("{} No targets for '{}'.", "note:".dimmed(), escape_terminal_text(&project.name));
+        return Ok(());
+    }
+    println!(
+        "{} for '{}'\n",
+        "Targets".bold().underline(),
+        escape_terminal_text(&project.name).cyan()
+    );
+    for target in targets {
+        let label = if target.label.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", escape_terminal_text(&target.label))
+        };
+        println!(
+            "  {} {}{}",
+            target.id.to_string().dimmed(),
+            escape_terminal_text(&target.url).cyan(),
+            label
+        );
+    }
+    println!();
+    Ok(())
 }
 
 /// Create a new project.

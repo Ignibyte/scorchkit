@@ -16,12 +16,15 @@ use rmcp::ServiceExt;
 use sqlx::PgPool;
 
 use crate::config::AppConfig;
+use crate::control::ControlService;
 use crate::engine::error::ScorchError;
-use crate::runner::job::{JobStore, ScanJobService};
+use crate::runner::job::ScanJobService;
 use crate::runner::job_executor::CancellationToken;
-use crate::storage::jobs::PostgresJobStore;
 use crate::storage::webhooks::PostgresWebhookStore;
 use crate::webhooks::WebhookService;
+use scorchkit_control::{
+    ControlErrorCodeV1, ControlRequestV1, ControlResponseOutcomeV1, ControlResultV1,
+};
 
 const RECOVERY_INTERVAL_SECONDS: u64 = 5;
 
@@ -37,6 +40,8 @@ pub struct ScorchKitServer {
     pub(crate) pool: Option<PgPool>,
     /// Provider-neutral job control plane used by stateless and stateful sessions.
     pub(crate) jobs: ScanJobService,
+    /// Shared application-service boundary for overlapping MCP control operations.
+    pub(crate) control: ControlService,
     /// Optional durable webhook service for lifecycle enqueue and background delivery.
     pub(crate) webhooks: Option<Arc<WebhookService>>,
     webhook_configuration_error: Option<String>,
@@ -54,23 +59,28 @@ impl ScorchKitServer {
     /// Create a new server instance with the given config and database pool.
     #[must_use]
     pub fn new(config: Arc<AppConfig>, pool: PgPool) -> Self {
-        let store: Arc<dyn JobStore> = Arc::new(PostgresJobStore::new(pool.clone()));
-        let jobs = ScanJobService::new(Arc::clone(&config), store);
-        let (jobs, webhooks, webhook_configuration_error) = match WebhookService::new(
+        let (webhooks, webhook_configuration_error) = match WebhookService::new(
             &config.webhooks,
             Arc::new(PostgresWebhookStore::new(pool.clone())),
         ) {
             Ok(webhooks) if webhooks.is_enabled() => {
                 let webhooks = Arc::new(webhooks);
-                (jobs.with_webhooks(Arc::clone(&webhooks)), Some(webhooks), None)
+                (Some(webhooks), None)
             }
-            Ok(_) => (jobs, None, None),
-            Err(error) => (jobs, None, Some(error.to_string())),
+            Ok(_) => (None, None),
+            Err(error) => (None, Some(error.to_string())),
         };
+        let control = ControlService::persistent(
+            Arc::clone(&config),
+            pool.clone(),
+            webhooks.as_ref().map(Arc::clone),
+        );
+        let jobs = control.job_service().clone();
         Self {
             config,
             pool: Some(pool),
             jobs,
+            control,
             webhooks,
             webhook_configuration_error,
             transport_principal: McpTransportPrincipal::LocalProcess,
@@ -80,7 +90,8 @@ impl ScorchKitServer {
     /// Create a stateless server backed by process-local jobs and no database.
     #[must_use]
     pub fn new_stateless(config: Arc<AppConfig>) -> Self {
-        let jobs = ScanJobService::in_memory(Arc::clone(&config));
+        let control = ControlService::in_memory(Arc::clone(&config));
+        let jobs = control.job_service().clone();
         let webhook_configuration_error = (!config.webhooks.is_empty()).then(|| {
             "webhook delivery requires an explicitly configured durable database".to_string()
         });
@@ -88,6 +99,7 @@ impl ScorchKitServer {
             config,
             pool: None,
             jobs,
+            control,
             webhooks: None,
             webhook_configuration_error,
             transport_principal: McpTransportPrincipal::LocalProcess,
@@ -103,6 +115,32 @@ impl ScorchKitServer {
         self.pool.as_ref().ok_or_else(|| {
             "database unavailable: start MCP with an explicit database URL".to_string()
         })
+    }
+
+    /// Dispatch one existing MCP operation through the shared control application service.
+    pub(crate) async fn execute_control(
+        &self,
+        request: ControlRequestV1,
+    ) -> Result<ControlResultV1, String> {
+        let response = match &self.transport_principal {
+            McpTransportPrincipal::LocalProcess => self.control.execute_local(request).await,
+            McpTransportPrincipal::AuthenticatedBearer { subject } => {
+                let engagement_id =
+                    self.config.engagement.as_ref().map(|engagement| engagement.id).ok_or_else(
+                        || "authenticated MCP control operation requires an engagement".to_string(),
+                    )?;
+                self.control.execute_authenticated(subject.clone(), engagement_id, request).await
+            }
+        };
+        match response.result {
+            ControlResponseOutcomeV1::Success(result) => Ok(*result),
+            ControlResponseOutcomeV1::Error(error)
+                if error.code == ControlErrorCodeV1::StorageUnavailable =>
+            {
+                Err("database unavailable: start MCP with an explicit database URL".to_string())
+            }
+            ControlResponseOutcomeV1::Error(error) => Err(error.to_string()),
+        }
     }
 
     fn require_valid_webhook_host(&self) -> crate::engine::error::Result<()> {

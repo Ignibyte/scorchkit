@@ -57,6 +57,7 @@ fn local_and_ci_gates_share_the_canonical_helpers() {
     let manifest = read("Cargo.toml");
 
     assert!(runner.contains("bash bin/feature-states.sh"));
+    assert!(runner.contains("bash bin/release.sh --selftest"));
     assert!(runner.contains("cargo clippy --workspace --all-targets"));
     assert!(runner.contains("cargo test --workspace --all-features"));
     assert!(runner.contains("cargo doc --workspace --all-features"));
@@ -83,6 +84,8 @@ fn local_and_ci_gates_share_the_canonical_helpers() {
     assert!(mutation_runner.contains("cargo mutants --workspace"));
     assert!(mutation_runner.contains("--test-workspace true"));
     assert!(mutation_runner.contains("crates/scorchkit-policy/src/policy.rs"));
+    assert!(mutation_runner.contains("--recheck | recheck"));
+    assert!(mutation_runner.contains("exact mutation recheck inventory does not match"));
     assert!(!mutation_runner.contains("unset CARGO_TARGET_DIR DATABASE_URL"));
     assert!(
         !mutants.contains("exclude_re"),
@@ -105,6 +108,7 @@ fn local_and_ci_gates_share_the_canonical_helpers() {
     assert!(ci.contains("bash bin/feature-states.sh"));
     assert!(ci.contains("bash bin/pipeline.sh check"));
     assert!(ci.contains("bash bin/gate.sh --fast"));
+    assert!(!ci.contains("rust-toolchain@stable"));
     assert!(ci.contains("bash bin/mutants.sh --shard"));
     assert!(ci.contains("POSTGRES_DB: scorchkit_mutation"));
     assert!(ci.contains("SCORCHKIT_MUTATION_DATABASE_URL:"));

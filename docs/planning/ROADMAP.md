@@ -1,8 +1,8 @@
 # ScorchKit roadmap
 
-**Status:** SK-046 is complete; SK-047 is next; SK-049 through SK-057 are documented post-release candidates
+**Status:** SK-049 is complete; SK-050 is next; SK-051 through SK-057 are documented platform candidates
 **Started:** 2026-08-14  
-**Last reviewed:** 2026-08-22
+**Last reviewed:** 2026-08-23
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
 preferred host
 
@@ -151,6 +151,8 @@ file-mode observations while the index retains authoritative modes.
 | SK-044 | Added authenticated remote MCP through a trusted same-host TLS proxy with principal-to-engagement binding, isolated stateful sessions, bounded request guards, and credential scrubbing. | Ten inspection findings repaired; 84.55% line coverage; 1,928 strict cases; PostgreSQL and CLI/MCP contracts green; canonical DIFF caught 117/117 viable mutations at 100% MSI. |
 | SK-045 | Added Windows suspended-spawn Job Object ownership and native CI while preserving Unix process groups and one bounded provider-neutral child lifecycle for one-shot and Interactsh execution. | Seven inspection findings repaired; Windows-target workspace Clippy green; 84.58% line coverage; 1,931 strict cases; 100 PostgreSQL tests and CLI/MCP contracts green; canonical DIFF caught 16/16 viable mutations at 100% MSI. |
 | SK-046 | Replaced reachable unmaintained parser and progress dependencies, upgraded SQLx with an exact PostgreSQL-only graph, and removed the disabled-MySQL RSA audit exception. | Unignored Audit/Deny/Machete green; HTML, progress, peer-auth, PostgreSQL, CLI, and MCP contracts green; 84.59% line coverage; 1,937 strict cases; canonical DIFF caught 7/7 viable mutations at 100% MSI. |
+| SK-047 | Preserved the owner-stopped broad mutation work as incomplete discovery evidence and repaired only its exact reproduced survivor set without another broad campaign or unsupported floor change. | Completed 13-candidate baseline caught 1 and reproduced 12 misses; direct TLS, rate-limit, and SSRF tests made the exact recheck catch all 12; sealed evidence accounts for 13/13 viable at 100% focused MSI; 84.71% line coverage and 1,945 strict cases passed. |
+| SK-048 | Added reproducible raw binaries for four native targets, exact Rust/features, target-header validation, canonical manifest/checksums, per-binary CycloneDX SBOMs, signed SLSA provenance, draft-first publication, hard operational budgets, and v2.1.0 upgrade/restore proof. | Five inspection findings repaired; local Linux double-build bytes matched; exact tool downloads and live upgrade/failure/restore passed; 82.13% line coverage and 1,954 strict cases passed; canonical DIFF completed an explicit empty mutation selection at 100% MSI without a broad campaign. |
 
 The sealed Codex Security scan `efe30eaf-9b1b-4572-949a-0e8391d48247` reviewed 603 changed paths and
 closed 192/192 semantic rows. Its eight high-confidence findings have code fixes and regression
@@ -160,34 +162,33 @@ evidence.
 
 ## Current validation evidence
 
-Evidence produced through the TICKET-024 pre-completion worktree:
+Evidence produced through the TICKET-026 pre-completion worktree:
 
 | Signal | Last result | Final requirement |
 |---|---:|---:|
 | Compiler | all targets, workspace packages, and features passed | pass after final edits |
 | Strict Clippy | zero diagnostics across every derived feature state and workspace package | pass after final edits and every feature state |
-| All-feature tests | Workspace library, package, integration, and doctest suites passed; strict all-feature Clippy had zero diagnostics | pass after final edits with PostgreSQL |
-| Canonical line coverage | 84.59% | at least 62%; retain the measured floor before the next ratchet decision |
-| SK-046 DIFF mutation selection | 9 mutations evaluated: 7 caught, 0 missed, and 2 compiler-unviable; 100% MSI at the unchanged 95% floor | retain the completed raw outcome set and remain at or above 95% |
-| Nextest strictness | 1,937 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
+| All-feature tests | Workspace library, package, integration, and doctest suites passed; strict feature-matrix Clippy had zero diagnostics | pass after final edits with PostgreSQL |
+| Canonical line coverage | 82.13% | at least the unchanged 62% floor |
+| SK-048 DIFF mutation selection | Completed with explicit empty evidence: 0 viable, missed, timed out, or unviable mutations and 100% MSI; no broad campaign ran | remain at or above the unchanged 95% floor |
+| Nextest strictness | 1,954 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
 | PostgreSQL integration | 77 MCP, 12 storage, and 11 storage-integration tests passed | pass |
 | CLI/MCP contracts | 24 CLI, 2 code-scan, 77 MCP, and 12 scan-plan tests passed | pass |
-| Delivery receipt | TICKET-024 pre-completion DIFF gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive DIFF receipt for the exact completed tree |
+| Delivery receipt | TICKET-026 pre-completion DIFF gate passed 19 applicable lanes with no failures and 3 named web-only skips | post-archive DIFF receipt for the exact completed tree |
 
 The test count is historical evidence, not a promised final count. The gate output after all source and
 documentation edits is authoritative.
 
 ## Baseline blockers
 
-None. The feature-readiness baseline and SK-028 through SK-046 are closed above.
+None. The feature-readiness baseline and SK-028 through SK-049 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. TICKET-024 retired the named dependency debt; SK-047 is the
-next quality candidate.
+The pipeline permits one active ticket. TICKET-027 closed the provider-neutral control boundary;
+SK-050 is the next platform candidate.
 Each later row has a specified candidate intake under `docs/planning/intake/` and becomes a numbered
-ticket only when promoted. SK-049 through SK-057 begin only after the remaining SK-047 through SK-048
-queue is complete. Backlog status is not a waiver of a safety invariant.
+ticket only when promoted. Backlog status is not a waiver of a safety invariant.
 
 | Order | Batch | Planned outcome | Depends on | Planning artifact |
 |---:|---|---|---|---|
@@ -198,9 +199,9 @@ queue is complete. Backlog status is not a waiver of a safety invariant.
 | 5 | SK-044 (completed) | Add authenticated remote MCP with principal-to-engagement binding, host validation, and an explicit TLS policy. | SK-032, SK-035 | [TICKET-022](tickets/closed/TICKET-022-authenticated-remote-mcp.md) |
 | 6 | SK-045 (completed) | Add Windows Job Object process ownership before enabling Windows builds. | SK-028, SK-034 | [TICKET-023](tickets/closed/TICKET-023-windows-process-owner.md) |
 | 7 | SK-046 (completed) | Replace reachable unmaintained dependencies and remove the reviewed disabled-MySQL advisory exception. | upstream availability or replacement | [TICKET-024](tickets/closed/TICKET-024-dependency-debt.md) |
-| 8 | SK-047 | Complete the scheduled full mutation inventory once, repair named survivors through focused scopes, and raise quality floors only from measured green evidence. | SK-027 | [intake](intake/INTAKE-quality-ratchet.md) |
-| 9 | SK-048 | Add reproducible ScorchKit releases, signed artifacts, SBOM/provenance, upgrade and rollback tests, and performance/chaos budgets. | SK-033, SK-035, SK-046 | [intake](intake/INTAKE-reproducible-releases.md) |
-| 10 | SK-049 | Add a versioned provider-neutral control API and self-description contract for configuration, engagements, jobs, findings, evidence, modules, reports, and event streams. | SK-029, SK-032, SK-033, SK-044, SK-048 | [intake](intake/INTAKE-control-api.md) |
+| 8 | SK-047 (completed) | Preserve the stopped broad campaign as incomplete discovery evidence and close the exact reproduced survivor set without another broad run or an unsupported floor change. | SK-027 | [TICKET-025](tickets/closed/TICKET-025-quality-ratchet.md) |
+| 9 | SK-048 (completed) | Add reproducible ScorchKit releases, signed artifacts, SBOM/provenance, upgrade and rollback tests, and performance/chaos budgets. | SK-033, SK-035, SK-046 | [TICKET-026](tickets/closed/TICKET-026-reproducible-releases.md) |
+| 10 | SK-049 (completed) | Add a versioned provider-neutral control API and self-description contract for configuration, engagements, jobs, findings, evidence, modules, reports, and event streams. | SK-029, SK-032, SK-033, SK-044, SK-048 | [TICKET-027](tickets/closed/TICKET-027-control-api.md) |
 | 11 | SK-050 | Add a capability-declared extension manifest, SDK, and isolated runtime for first-party and third-party application-security modules. | SK-034, SK-048, SK-049 | [intake](intake/INTAKE-extension-runtime.md) |
 | 12 | SK-051 | Promote the existing event bus and lifecycle hooks into a typed run pipeline for preprocessing, planning proposals, normalization, enrichment, correlation, reporting, and notification. | SK-028, SK-043, SK-049, SK-050 | [intake](intake/INTAKE-typed-run-pipeline.md) |
 | 13 | SK-052 | Add provider-neutral model roles, host and service adapters, provenance, readiness reporting, and evaluations without granting a model execution authority or scanner-evidence status. | SK-030, SK-031, SK-042, SK-049, SK-050 | [intake](intake/INTAKE-model-analysis.md) |
@@ -332,9 +333,10 @@ changes; they may not be lowered to obtain green.
 
 ### Scheduled evidence after feature readiness
 
-- `SK-047`: run the complete full mutation inventory in planned local-scratch shards, preserve one
-  merged compact result, require at least 95% viable MSI, and use survivors to open focused repair
-  tickets rather than rerunning the full inventory after each edit;
+- `SK-047` disposition: the owner stopped the broad campaign after two complete shards and 138
+  outcomes from a third. Those artifacts remain incomplete discovery evidence, not a FULL result;
+  the completed exact candidate baseline and survivor-only repair closed 13/13 viable candidates at
+  the unchanged 95% floor without running another broad campaign;
 - advisory, license, and unused-dependency refresh;
 - authorized lab-only smoke scans for every effect class;
 - performance, resource-limit, cancellation, and failure-injection benchmarks.

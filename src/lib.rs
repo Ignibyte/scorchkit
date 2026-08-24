@@ -65,6 +65,7 @@ pub mod cli;
 #[cfg(feature = "cloud")]
 pub mod cloud;
 pub mod config;
+pub mod control;
 pub mod engine;
 pub mod facade;
 #[cfg(feature = "infra")]
@@ -106,6 +107,7 @@ pub use engine::severity::Severity;
 pub use engine::target::Target;
 pub use facade::Engine;
 pub use scorchkit_code::SupplyChainProfile;
+pub use scorchkit_control as control_contract;
 pub use scorchkit_core::{
     AdapterExecutionAssessment, AdapterExecutionGap, AdapterExecutionGapKind,
     AdapterExecutionStatus, AdapterInputIdentity, AdvisoryIdentity, ApplicationChangeSet,

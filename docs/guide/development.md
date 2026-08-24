@@ -138,6 +138,19 @@ bash bin/mutants.sh --inspect
 DATABASE_URL=postgresql://USER@localhost/DATABASE bash bin/gate.sh --diff
 ```
 
+After an approved mutation run has already produced a bounded candidate list, validate it once and
+repair only the reproduced misses instead of repeating broad discovery:
+
+```bash
+DATABASE_URL=postgresql://USER@localhost/DATABASE \
+  bash bin/mutants.sh --recheck PATH_TO_EXACT_NAMES
+```
+
+Names from a stopped or partial run are candidates, not a passing result or authoritative survivor
+set. The exact-name runner fails on blank, duplicate, missing, extra, stale, unsafe-path, or
+inventory-mismatched entries. A focused-repair delivery must be explicitly approved and sealed
+under `CONSTITUTION.md` section 19; ordinary feature work still uses the DIFF gate.
+
 The gate applies its Rust checks to every workspace package. For direct checks, use
 `cargo test --workspace --all-features` and
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`.

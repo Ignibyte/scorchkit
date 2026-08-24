@@ -1,9 +1,9 @@
 ---
 title: INTAKE-control-api
-status: candidate
+status: promoted
 created: 2026-08-21
-ticket:
-pipeline_spec:
+ticket: TICKET-027
+pipeline_spec: docs/planning/pipeline/active/control-api.spec.md
 ---
 
 # Versioned provider-neutral control API

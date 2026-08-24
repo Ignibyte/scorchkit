@@ -1,9 +1,9 @@
 ---
 title: INTAKE-reproducible-releases
-status: candidate
+status: promoted
 created: 2026-08-17
-ticket:
-pipeline_spec:
+ticket: TICKET-026
+pipeline_spec: docs/planning/pipeline/completed/reproducible-releases.spec.md
 ---
 
 # Reproducible signed releases provenance and rollback

@@ -21,6 +21,8 @@ feroxbuster = "feroxbuster"
 gosec = "gosec"
 gitleaks = "gitleaks"
 iMatix = "iMatix"
+# Standard filename suffix for in-toto provenance statements.
+intoto = "intoto"
 nikto = "nikto"
 nuclei = "nuclei"
 prowler = "prowler"

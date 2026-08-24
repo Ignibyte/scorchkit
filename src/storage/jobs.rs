@@ -146,15 +146,78 @@ impl JobStore for PostgresJobStore {
             .collect()
     }
 
+    async fn list_page(&self, after: Option<Uuid>, limit: usize) -> Result<Vec<ScanJob>> {
+        if !(1..=1_000).contains(&limit) {
+            return Err(ScorchError::Database("scan job page limit must be 1-1000".to_string()));
+        }
+        let cursor = if let Some(id) = after {
+            Some(
+                sqlx::query_as::<_, (chrono::DateTime<chrono::Utc>, Uuid)>(
+                    "SELECT created_at, id FROM scan_jobs WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|error| {
+                    ScorchError::Database(format!("load scan job cursor failed: {error}"))
+                })?
+                .ok_or_else(|| {
+                    ScorchError::Database("scan job cursor was not found".to_string())
+                })?,
+            )
+        } else {
+            None
+        };
+        let rows = sqlx::query(
+            "SELECT document FROM scan_jobs
+             WHERE ($1::timestamptz IS NULL OR (created_at, id) > ($1, $2))
+             ORDER BY created_at, id LIMIT $3",
+        )
+        .bind(cursor.map(|value| value.0))
+        .bind(cursor.map(|value| value.1))
+        .bind(
+            i64::try_from(limit)
+                .map_err(|_| ScorchError::Database("scan job page limit overflow".to_string()))?,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| ScorchError::Database(format!("list scan job page failed: {error}")))?;
+        rows.into_iter()
+            .map(|row| {
+                row.try_get::<serde_json::Value, _>("document")
+                    .map_err(|error| {
+                        ScorchError::Database(format!("read scan job document failed: {error}"))
+                    })
+                    .and_then(decode_document)
+            })
+            .collect()
+    }
+
     async fn list_recoverable(&self, now: chrono::DateTime<chrono::Utc>) -> Result<Vec<ScanJob>> {
+        self.list_recoverable_bounded(now, 1_000).await
+    }
+
+    async fn list_recoverable_bounded(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        limit: usize,
+    ) -> Result<Vec<ScanJob>> {
+        if !(1..=1_001).contains(&limit) {
+            return Err(ScorchError::Database(
+                "recoverable scan job limit must be 1-1001".to_string(),
+            ));
+        }
         let rows = sqlx::query(
             "SELECT document FROM scan_jobs
              WHERE state IN ('queued', 'running', 'cancelling')
                AND (lease_expires_at IS NULL OR lease_expires_at <= $1)
              ORDER BY created_at, id
-             LIMIT 1000",
+             LIMIT $2",
         )
         .bind(now)
+        .bind(i64::try_from(limit).map_err(|_| {
+            ScorchError::Database("recoverable scan job limit overflow".to_string())
+        })?)
         .fetch_all(&self.pool)
         .await
         .map_err(|error| {

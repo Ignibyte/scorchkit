@@ -1,9 +1,9 @@
 ---
 title: INTAKE-quality-ratchet
-status: candidate
+status: promoted
 created: 2026-08-17
-ticket:
-pipeline_spec:
+ticket: TICKET-025
+pipeline_spec: docs/planning/pipeline/active/quality-ratchet.spec.md
 ---
 
 # Quality ratchet and scheduled full mutation evidence
@@ -16,9 +16,11 @@ Repeating a broad mutation scan after each repair would waste hours without impr
 
 ## Proposed outcome
 
-ScorchKit will have one completed, preserved full mutation inventory, focused tickets for any named
-survivors, a reviewed blind-file ledger, and coverage/mutation floors raised only from completed
-green evidence.
+The original proposal was one completed, preserved full mutation inventory followed by focused
+repairs. On 2026-08-23 the repository owner stopped the remaining broad shards, approved repair of
+the exact observed candidates only, and directed the pipeline to SK-048. TICKET-025 therefore
+preserves the stopped work as incomplete discovery evidence, closes the exact reproduced survivor
+set, and leaves both quality floors unchanged.
 
 ## Candidate EARS requirements
 
@@ -31,6 +33,8 @@ green evidence.
 
 ## Scope notes
 
-- In: scheduled full mutation evidence, survivor repair ledger, blind-file review, measured coverage
-  ratchet toward 80 percent, gate contracts.
-- Out: full rescans after every mutation fix, lower floors, wider exclusions, retries or silent skips.
+- Delivered: two complete shards and one partial shard preserved as non-passing discovery evidence;
+  a completed exact 13-candidate baseline; direct repair of its 12 misses; one exact 12-name
+  recheck; focused evidence and delivery contracts.
+- Canceled by owner direction: the remaining broad shards, a merged FULL claim, and an 80 percent
+  coverage ratchet. Lower floors, wider exclusions, retries, and silent skips remained out of scope.

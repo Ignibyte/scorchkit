@@ -45,6 +45,7 @@ engagement and therefore authorizes no scan.
 | `report` | artifact directory and evidence/remediation inclusion |
 | `database` | connection URL, pool size, and migration behavior |
 | `mcp` | optional authenticated remote transport, bounds, and principal bindings |
+| `control_api` | opt-in authenticated loopback control listener, binding, and resource bounds |
 | `wordlists` | optional discovery and enumeration files |
 | `hooks` | bounded local lifecycle processes |
 | `audit_log` | local JSONL event sink |
@@ -120,6 +121,32 @@ bounds. Rotate a token by changing its environment value and restarting the host
 
 This profile does not terminate TLS directly and does not support a non-loopback cleartext hop,
 OIDC/OAuth, multiple selectable engagements, tenants, or RBAC.
+
+## Local control API
+
+The control listener is absent by default and starts only with `scorchkit control-api` in a build
+that includes `control-api`:
+
+```toml
+[control_api]
+bind = "127.0.0.1:7444"
+subject = "local-operator"
+engagement_id = "00000000-0000-0000-0000-000000000001"
+token_env = "SCORCHKIT_CONTROL_TOKEN"
+max_body_bytes = 262144
+max_response_bytes = 4194304
+max_concurrent_requests = 16
+max_journal_events = 4096
+max_event_bytes = 262144
+max_subscribers = 32
+default_page_size = 50
+```
+
+`bind` must be loopback, and the UUID must equal the enabled, unexpired `[engagement]`. The bearer
+value is 32–4096 printable non-whitespace ASCII bytes resolved from `token_env`, hashed, and
+zeroized before binding. The adapter accepts only loopback Host values and exposes fixed v1
+description, control, and event routes. Non-loopback values fail startup and should use the
+authenticated remote MCP profile until team identity and isolation are implemented.
 
 ## Durable webhooks
 

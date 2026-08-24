@@ -425,8 +425,16 @@ pub trait JobStore: Send + Sync {
     async fn get(&self, id: Uuid) -> Result<Option<ScanJob>>;
     /// List at most 1,000 jobs in deterministic creation order.
     async fn list(&self) -> Result<Vec<ScanJob>>;
+    /// List one bounded stable page after an optional job cursor.
+    async fn list_page(&self, after: Option<Uuid>, limit: usize) -> Result<Vec<ScanJob>>;
     /// List one bounded batch of expired nonterminal jobs in deterministic order.
     async fn list_recoverable(&self, now: DateTime<Utc>) -> Result<Vec<ScanJob>>;
+    /// List one explicitly bounded recoverable batch for an application command.
+    async fn list_recoverable_bounded(
+        &self,
+        now: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<ScanJob>>;
     /// Replace one job only if its current revision equals `expected_revision`.
     async fn compare_and_swap(&self, expected_revision: u64, job: &ScanJob) -> Result<bool>;
     /// Read the append-only revision audit trail for one job.
@@ -495,7 +503,46 @@ impl JobStore for InMemoryJobStore {
         Ok(self.state.read().await.jobs.values().take(JOB_LIST_LIMIT).cloned().collect())
     }
 
+    async fn list_page(&self, after: Option<Uuid>, limit: usize) -> Result<Vec<ScanJob>> {
+        if !(1..=JOB_LIST_LIMIT).contains(&limit) {
+            return Err(ScorchError::Job(format!(
+                "scan job page limit must be 1-{JOB_LIST_LIMIT}"
+            )));
+        }
+        let state = self.state.read().await;
+        let cursor = after
+            .map(|id| {
+                state
+                    .jobs
+                    .iter()
+                    .find_map(|(key, job)| (job.id == id).then_some(*key))
+                    .ok_or_else(|| ScorchError::Job("scan job cursor was not found".to_string()))
+            })
+            .transpose()?;
+        Ok(state
+            .jobs
+            .iter()
+            .filter(|(key, _)| cursor.is_none_or(|cursor| **key > cursor))
+            .take(limit)
+            .map(|(_, job)| job.clone())
+            .collect())
+    }
+
     async fn list_recoverable(&self, now: DateTime<Utc>) -> Result<Vec<ScanJob>> {
+        self.list_recoverable_bounded(now, JOB_LIST_LIMIT).await
+    }
+
+    async fn list_recoverable_bounded(
+        &self,
+        now: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<ScanJob>> {
+        if !(1..=JOB_LIST_LIMIT.saturating_add(1)).contains(&limit) {
+            return Err(ScorchError::Job(format!(
+                "recoverable scan job limit must be 1-{}",
+                JOB_LIST_LIMIT.saturating_add(1)
+            )));
+        }
         Ok(self
             .state
             .read()
@@ -506,7 +553,7 @@ impl JobStore for InMemoryJobStore {
                 !job.state.is_terminal()
                     && job.lease_expires_at.is_none_or(|deadline| deadline <= now)
             })
-            .take(JOB_LIST_LIMIT)
+            .take(limit)
             .cloned()
             .collect())
     }

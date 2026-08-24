@@ -728,6 +728,25 @@ mod tests {
         assert!(findings.is_empty());
     }
 
+    /// The expiring-soon warning starts below 30 whole days, not at the boundary.
+    #[test]
+    fn check_certificate_expiring_soon_boundary_is_exclusive() {
+        let mut cert = fixture_cert(false, false, "SHA-256 with RSA", vec!["example.com"]);
+        cert.days_until_expiry = 30;
+        let at_boundary = check_certificate(&cert, "tls_infra", "example.com", "example.com:443");
+        assert!(at_boundary.iter().all(|finding| !finding.title.contains("Expiring Soon")));
+
+        cert.days_until_expiry = 29;
+        let inside_boundary =
+            check_certificate(&cert, "tls_infra", "example.com", "example.com:443");
+        let warning = inside_boundary
+            .iter()
+            .find(|finding| finding.title.contains("Expiring Soon"))
+            .expect("29 remaining days must emit the warning");
+        assert_eq!(warning.severity, Severity::Medium);
+        assert!(warning.evidence.as_deref().is_some_and(|evidence| evidence.contains("29")));
+    }
+
     /// Expired cert yields a Critical finding with `module_id` = caller.
     #[test]
     fn check_certificate_expired_tagged_with_caller_module_id() {

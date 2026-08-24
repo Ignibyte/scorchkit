@@ -331,6 +331,19 @@ mod tests {
         assert!(contains_ssrf_indicator(body, payload));
     }
 
+    /// Every metadata marker independently proves the response came from the metadata service.
+    #[test]
+    fn test_contains_ssrf_indicator_accepts_each_metadata_marker_independently() {
+        let payload = "http://169.254.169.254/latest/meta-data/";
+
+        for marker in ["ami-id", "instance-id", "security-credentials", "iam"] {
+            assert!(
+                contains_ssrf_indicator(marker, payload),
+                "metadata marker {marker} must be sufficient"
+            );
+        }
+    }
+
     /// Verify that `contains_ssrf_indicator` returns false when the response
     /// body contains no internal resource indicators.
     #[test]
@@ -390,6 +403,111 @@ mod tests {
         );
 
         let findings = SsrfModule.run(&context).await.expect("selected SSRF run");
+
+        assert!(findings.is_empty());
+        assert_eq!(requests.calls_async().await, SSRF_PAYLOADS.len());
+    }
+
+    #[test]
+    fn module_metadata_preserves_the_ssrf_name() {
+        let module = SsrfModule;
+
+        assert_eq!(module.name(), "SSRF Detection");
+        assert_eq!(module.id(), "ssrf");
+        assert_eq!(module.category(), ModuleCategory::Scanner);
+    }
+
+    #[tokio::test]
+    async fn application_pentest_rejects_each_incompatible_ssrf_dimension() {
+        let server = httpmock::MockServer::start_async().await;
+        for incompatible_dimension in ["class", "method", "location"] {
+            let target =
+                crate::engine::target::Target::parse(&server.url("/?url=/safe")).expect("target");
+            let context = crate::engine::scan_context::ScanContext::new(
+                target,
+                std::sync::Arc::new(crate::config::AppConfig::default()),
+                reqwest::Client::new(),
+                Vec::new(),
+            );
+            let mut scenario = crate::application_pentest::test_scenario(
+                scorchkit_core::ApplicationPentestScenarioClass::Ssrf,
+                "GET",
+                Some(scorchkit_core::HttpParameterIdentity::new("url", "query")),
+            );
+            match incompatible_dimension {
+                "class" => {
+                    scenario.class = scorchkit_core::ApplicationPentestScenarioClass::Injection;
+                }
+                "method" => scenario.operation.method = "POST".to_string(),
+                "location" => {
+                    scenario.operation.parameter.as_mut().expect("parameter").location =
+                        "body".to_string();
+                }
+                _ => unreachable!("closed incompatibility fixture"),
+            }
+            context.shared_data.publish_application_pentest_scenario(scenario);
+
+            let error = SsrfModule.run(&context).await.expect_err("incompatible SSRF scenario");
+            assert!(error.to_string().contains("incompatible with its executor"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_param_mutates_only_the_named_query_parameter() {
+        let server = httpmock::MockServer::start_async().await;
+        let mut expected_requests = Vec::new();
+        for &(payload, _) in SSRF_PAYLOADS {
+            expected_requests.push(
+                server
+                    .mock_async(|when, then| {
+                        when.path("/").query_param("url", payload).query_param("next", "/other");
+                        then.status(200).body("normal response");
+                    })
+                    .await,
+            );
+        }
+        let target = crate::engine::target::Target::parse(&server.url("/?url=/safe&next=/other"))
+            .expect("target");
+        let context = crate::engine::scan_context::ScanContext::new(
+            target,
+            std::sync::Arc::new(crate::config::AppConfig::default()),
+            reqwest::Client::new(),
+            Vec::new(),
+        );
+        let mut findings = Vec::new();
+
+        test_ssrf_param(&context, &server.url("/?url=/safe&next=/other"), "url", &mut findings)
+            .await
+            .expect("SSRF parameter test");
+
+        assert!(findings.is_empty());
+        for request in expected_requests {
+            assert_eq!(request.calls_async().await, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_own_params_delegates_every_payload_for_a_url_parameter() {
+        let server = httpmock::MockServer::start_async().await;
+        let requests = server
+            .mock_async(|when, then| {
+                when.any_request();
+                then.status(200).body("normal response");
+            })
+            .await;
+        let target =
+            crate::engine::target::Target::parse(&server.url("/?url=/safe")).expect("target");
+        let context = crate::engine::scan_context::ScanContext::new(
+            target,
+            std::sync::Arc::new(crate::config::AppConfig::default()),
+            reqwest::Client::new(),
+            Vec::new(),
+        );
+        let mut findings = Vec::new();
+
+        test_own_params(&context, &server.url("/?url=/safe"), &mut findings)
+            .await
+            .expect("own SSRF parameter test");
 
         assert!(findings.is_empty());
         assert_eq!(requests.calls_async().await, SSRF_PAYLOADS.len());

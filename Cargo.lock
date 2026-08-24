@@ -887,6 +887,8 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "serde_core",
+ "serde_json",
+ "serde_path_to_error",
  "sync_wrapper",
  "tokio",
  "tower",
@@ -4533,6 +4535,7 @@ dependencies = [
  "schemars_derive",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -4594,6 +4597,7 @@ dependencies = [
  "scorchkit-cloud",
  "scorchkit-code",
  "scorchkit-config",
+ "scorchkit-control",
  "scorchkit-core",
  "scorchkit-executor",
  "scorchkit-infra",
@@ -4672,6 +4676,17 @@ dependencies = [
  "tempfile",
  "toml",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "scorchkit-control"
+version = "3.0.0"
+dependencies = [
+ "chrono",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 

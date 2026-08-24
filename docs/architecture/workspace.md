@@ -1,6 +1,6 @@
 # Cargo workspace boundaries
 
-ScorchKit is a Cargo workspace with 13 internal library packages and one root composition package.
+ScorchKit is a Cargo workspace with 14 internal library packages and one root composition package.
 The root `scorchkit` package remains the public library and binary. Existing `scorchkit::...` paths
 are compatibility re-exports of package-owned types where a stable contract has moved.
 
@@ -11,6 +11,7 @@ are compatibility re-exports of package-owned types where a stable contract has 
 | `scorchkit-policy` | engagement, scope, capability, effect, and decision types | clients, contexts, or effect execution |
 | `scorchkit-core` | targets, findings, evidence, results, events, correlation, CVE, compliance, and scanner-adapter contracts | CLI, MCP, storage, or agent adapters |
 | `scorchkit-config` | application configuration, credentials, CVE configuration, bounded webhook destinations, and provider-neutral remote MCP shape | effect authorization, HTTP hosting, or delivery execution |
+| `scorchkit-control` | versioned control requests, results, errors, schemas, events, cursors, and monotonic run configuration | composition, authorization, storage, transports, or agent providers |
 | `scorchkit-executor` | bounded scheduling plus durable job, webhook queue, and store contracts | family orchestration, HTTP, or PostgreSQL queries |
 | `scorchkit-tools` | bounded subprocess invocation, output, cancellation, and process ownership | scanner-specific argument construction |
 | `scorchkit-web` | DAST/recon category and descriptor vocabulary | contexts, registries, or concrete scanners |
@@ -37,6 +38,7 @@ flowchart LR
     ROOT["scorchkit composition"] --> POLICY["scorchkit-policy"]
     ROOT --> CORE["scorchkit-core"]
     ROOT --> CONFIG["scorchkit-config"]
+    ROOT --> CONTROL["scorchkit-control"]
     ROOT --> EXECUTOR["scorchkit-executor"]
     ROOT --> TOOLS["scorchkit-tools"]
     ROOT --> LEAVES["family, storage, MCP, CLI, and agent packages"]
@@ -51,18 +53,18 @@ flowchart LR
 ```
 
 The four scanner-family packages depend on `scorchkit-core` for the common adapter descriptor.
-Storage, MCP, CLI, and agent packages remain independent leaves. No lower package may depend on the
+Control, storage, MCP, CLI, and agent packages remain independent leaves. No lower package may depend on the
 root `scorchkit` package. Exact allowed edges are enforced in `tests/workspace_architecture.rs`.
 
 ## Compatibility and features
 
 The root facade preserves existing import paths and type identity. For example,
 `scorchkit::Finding` and `scorchkit_core::Finding` are the same Rust type. The same rule applies to
-policy, configuration, scheduler, job, process, family-category, storage, MCP, CLI, and agent
+policy, configuration, control, scheduler, job, process, family-category, storage, MCP, CLI, and agent
 contracts covered by the architecture test.
 
-Root feature names and defaults remain unchanged. The root forwards `storage`, `mcp`, `infra`, and
-`cloud` only to packages that need those parser or configuration variants. Package extraction does
+Root defaults remain inert. The root forwards `storage`, `mcp`, `control-api`, `infra`, and `cloud`
+only to packages that need those parser or configuration variants. Package extraction does
 not authorize a target or enable a stronger effect class.
 
 ## Workspace quality contract

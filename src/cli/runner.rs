@@ -309,6 +309,11 @@ pub async fn execute(cli: Cli) -> Result<()> {
         #[cfg(feature = "mcp")]
         Commands::Serve { remote } => crate::cli::serve::run_serve(&config, remote).await,
 
+        #[cfg(feature = "control-api")]
+        Commands::ControlApi { database_url } => {
+            crate::cli::control_api::run_control_api(&config, database_url.as_deref()).await
+        }
+
         #[cfg(feature = "infra")]
         Commands::Infra { target, profile, modules, skip, quiet } => {
             run_infra(
@@ -645,15 +650,20 @@ async fn run_project_command(
     command: args::ProjectCommands,
 ) -> Result<()> {
     let pool = crate::storage::connect_from_config(&config.database, None).await?;
+    let service =
+        crate::control::ControlService::persistent(Arc::clone(config), pool.clone(), None);
+    let control = crate::cli::control_adapter::LocalControlClient::new(config, service);
 
     match command {
         args::ProjectCommands::Create { name, description } => {
-            crate::cli::project::create(&pool, &name, description.as_deref()).await
+            crate::cli::project::control_create(&control, &name, description.as_deref()).await
         }
-        args::ProjectCommands::List => crate::cli::project::list(&pool).await,
-        args::ProjectCommands::Show { project } => crate::cli::project::show(&pool, &project).await,
+        args::ProjectCommands::List => crate::cli::project::control_list(&control).await,
+        args::ProjectCommands::Show { project } => {
+            crate::cli::project::control_show(&control, &project).await
+        }
         args::ProjectCommands::Delete { project, force } => {
-            crate::cli::project::delete(&pool, &project, force).await
+            crate::cli::project::control_delete(&control, &project, force).await
         }
         args::ProjectCommands::Status { project } => {
             crate::cli::project::status(&pool, &project).await
@@ -662,7 +672,7 @@ async fn run_project_command(
             crate::cli::project::intelligence(&pool, &project).await
         }
         args::ProjectCommands::Target { command: target_cmd } => {
-            run_target_command(&pool, target_cmd).await
+            run_target_command(&control, target_cmd).await
         }
         args::ProjectCommands::Scans { project } => {
             crate::cli::project::list_scans(&pool, &project).await
@@ -673,16 +683,19 @@ async fn run_project_command(
 
 /// Dispatch target subcommands.
 #[cfg(feature = "storage")]
-async fn run_target_command(pool: &sqlx::PgPool, command: args::TargetCommands) -> Result<()> {
+async fn run_target_command(
+    control: &crate::cli::control_adapter::LocalControlClient,
+    command: args::TargetCommands,
+) -> Result<()> {
     match command {
         args::TargetCommands::Add { project, url, label } => {
-            crate::cli::project::target_add(pool, &project, &url, label.as_deref()).await
+            crate::cli::project::control_target_add(control, &project, &url, label.as_deref()).await
         }
         args::TargetCommands::Remove { project, id } => {
-            crate::cli::project::target_remove(pool, &project, &id).await
+            crate::cli::project::control_target_remove(control, &project, &id).await
         }
         args::TargetCommands::List { project } => {
-            crate::cli::project::target_list(pool, &project).await
+            crate::cli::project::control_target_list(control, &project).await
         }
     }
 }
@@ -694,12 +707,23 @@ async fn run_finding_command(
     command: args::FindingCommands,
 ) -> Result<()> {
     let pool = crate::storage::connect_from_config(&config.database, None).await?;
+    let service =
+        crate::control::ControlService::persistent(Arc::clone(config), pool.clone(), None);
+    let control = crate::cli::control_adapter::LocalControlClient::new(config, service);
 
     match command {
         args::FindingCommands::List { project, severity, status } => {
-            crate::cli::finding::list(&pool, &project, severity.as_deref(), status.as_deref()).await
+            crate::cli::finding::control_list(
+                &control,
+                &project,
+                severity.as_deref(),
+                status.as_deref(),
+            )
+            .await
         }
-        args::FindingCommands::Show { id } => crate::cli::finding::show(&pool, &id).await,
+        args::FindingCommands::Show { id } => {
+            crate::cli::finding::control_show(&control, &id).await
+        }
         args::FindingCommands::Status { id, status, note } => {
             crate::cli::finding::update_status(&pool, &id, &status, note.as_deref()).await
         }

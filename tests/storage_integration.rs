@@ -108,6 +108,9 @@ async fn postgres_job_store_matches_compare_and_swap_contract() {
     assert!(store.compare_and_swap(1, &interrupted).await.expect("interrupt root job"));
     let successor = ScanJob::successor(&interrupted, uuid::Uuid::new_v4());
     store.create(&successor).await.expect("create unique successor");
+    let continuation = store.list_page(Some(job.id), 1_000).await.expect("list job continuation");
+    assert!(continuation.iter().any(|candidate| candidate.id == successor.id));
+    assert!(store.list_page(Some(uuid::Uuid::new_v4()), 10).await.is_err());
     let competing_successor = ScanJob::successor(&interrupted, uuid::Uuid::new_v4());
     assert!(
         store.create(&competing_successor).await.is_err(),

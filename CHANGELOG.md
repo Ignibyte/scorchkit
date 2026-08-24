@@ -5,6 +5,13 @@ All notable changes to ScorchKit will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Bounded mutation survivor repair (TICKET-025 / SK-047)** — Stopped the remaining scheduled
+  broad shards at the repository owner's direction and preserved two complete shards plus one
+  partial shard as incomplete discovery evidence. Added fail-closed exact-name mutation selection,
+  reproduced 12 misses from 13 observed candidates, and added direct TLS-boundary, rate-limit, and
+  SSRF truth-table regressions. The one final exact recheck caught all 12 repaired misses; sealed
+  evidence accounts for all 13 candidates at 100% focused MSI without another broad campaign or a
+  coverage-floor change.
 - **Dependency and advisory debt retirement (TICKET-024 / SK-046)** — Upgraded the HTML parser to
   `scraper` 0.27, progress rendering to `indicatif` 0.18, and every SQLx declaration to 0.9 with
   defaults disabled and an exact PostgreSQL-only feature graph. Removed `fxhash`, `number_prefix`,
@@ -34,6 +41,20 @@ All notable changes to ScorchKit will be documented in this file.
   89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
 
 ### Added
+- **Versioned provider-neutral control API (TICKET-027 / SK-049)** — Added a stable
+  `scorchkit.control/v1` contract and generated self-description, monotonic four-layer run
+  configuration, one shared application service for library/CLI/MCP/HTTP operations, canonical
+  finding/evidence read validation, journaled job events with replay, and an explicit
+  bearer-authenticated loopback HTTP/SSE adapter. All requests, pages, results, events,
+  concurrency, and subscribers are bounded; no listener starts by default and non-loopback control
+  hosting remains unsupported.
+- **Reproducible signed release qualification (TICKET-026 / SK-048)** — Added exact Rust 1.96.0
+  release inputs and four native double-build targets, raw target-header validation, a strict
+  canonical release manifest, per-binary CycloneDX 1.6 SBOMs, SLSA/in-toto provenance, checksums,
+  checksum-pinned Syft/Cosign/Sigstore trust material, keyless bundle verification, and a
+  least-privilege draft-first GitHub workflow. Added 150 MiB/two-second/45-minute operational
+  ceilings plus a v2.1.0 config/PostgreSQL upgrade, injected-failure, pre-verified snapshot, and
+  separate-database restore contract. No live release was created while implementing the path.
 - **Windows Job Object process ownership (TICKET-023 / SK-045)** — Enabled Windows builds without
   weakening the external-process boundary. One-shot tools and long-lived Interactsh sessions now
   share a platform-owned child abstraction: Unix retains process groups, while Windows creates

@@ -7,10 +7,13 @@ use colored::{ColoredString, Colorize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::control_adapter::LocalControlClient;
 use crate::engine::error::{Result, ScorchError};
+use crate::engine::finding::Finding;
 use crate::report::terminal::escape_terminal_text;
 use crate::storage::findings;
 use crate::storage::models::{TrackedFinding, VulnStatus};
+use scorchkit_control::{ControlQueryV1, ControlResultV1, FindingViewV1};
 
 #[derive(Debug, PartialEq, Eq)]
 enum FindingFilter<'a> {
@@ -51,6 +54,109 @@ async fn load_filtered_findings(
     }
 }
 
+fn decoded_finding(view: &FindingViewV1) -> Result<Finding> {
+    serde_json::from_value(view.canonical.clone()).map_err(|error| {
+        ScorchError::Config(format!("validated control finding could not be decoded: {error}"))
+    })
+}
+
+/// List canonical findings through the shared control service.
+///
+/// # Errors
+///
+/// Returns an error when lookup, filtering, canonical validation, or pagination fails.
+pub(super) async fn control_list(
+    control: &LocalControlClient,
+    project_ref: &str,
+    severity: Option<&str>,
+    status: Option<&str>,
+) -> Result<()> {
+    let project = control.project(project_ref).await?;
+    let filter = parse_finding_filter(severity, status)?;
+    let mut values = control.findings(project.id).await?;
+    match filter {
+        FindingFilter::Severity(severity) => {
+            values.retain(|view| {
+                view.canonical.get("severity").and_then(serde_json::Value::as_str) == Some(severity)
+            });
+        }
+        FindingFilter::Status(status) => {
+            values.retain(|view| view.status == status.as_db_str());
+        }
+        FindingFilter::All => {}
+    }
+    if values.is_empty() {
+        println!("{} No findings for '{}'.", "note:".dimmed(), escape_terminal_text(&project.name));
+        return Ok(());
+    }
+    println!(
+        "{} for '{}' ({} total)\n",
+        "Findings".bold().underline(),
+        escape_terminal_text(&project.name).cyan(),
+        values.len(),
+    );
+    for view in values {
+        let finding = decoded_finding(&view)?;
+        println!(
+            "  {} {} {} [{}] ({})",
+            view.id.to_string().dimmed(),
+            colorize_severity(&finding.severity.to_string()),
+            escape_terminal_text(&finding.title),
+            colorize_status(&view.status),
+            format!("seen {}x", view.seen_count).dimmed(),
+        );
+        println!("    {}", escape_terminal_text(&finding.affected_target).dimmed());
+    }
+    println!();
+    Ok(())
+}
+
+/// Show one canonical finding through the shared control service.
+///
+/// # Errors
+///
+/// Returns an error when the ID is invalid, absent, or fails canonical validation.
+pub(super) async fn control_show(control: &LocalControlClient, id_str: &str) -> Result<()> {
+    let id = Uuid::parse_str(id_str).map_err(|error| {
+        ScorchError::Config(format!("invalid finding UUID '{id_str}': {error}"))
+    })?;
+    let result = control.query(ControlQueryV1::GetFinding { id }).await?;
+    let ControlResultV1::Finding(view) = result else {
+        return Err(ScorchError::Config(
+            "control service returned an unexpected finding result".to_string(),
+        ));
+    };
+    let finding = decoded_finding(&view)?;
+    println!("{}\n", "Finding Details".bold().underline());
+    println!("          ID: {}", view.id.to_string().dimmed());
+    println!("       Title: {}", escape_terminal_text(&finding.title).bold());
+    println!("    Severity: {}", colorize_severity(&finding.severity.to_string()));
+    println!("      Status: {}", colorize_status(&view.status));
+    println!("      Module: {}", escape_terminal_text(&finding.module_id).cyan());
+    println!("      Target: {}", escape_terminal_text(&finding.affected_target));
+    println!("  First seen: {}", view.first_seen.format("%Y-%m-%d %H:%M UTC"));
+    println!("   Last seen: {}", view.last_seen.format("%Y-%m-%d %H:%M UTC"));
+    println!("  Seen count: {}", view.seen_count);
+    println!("\n  {}\n  {}", "Description".bold(), escape_terminal_text(&finding.description));
+    if let Some(evidence) = finding.evidence.as_deref() {
+        println!("\n  {}\n  {}", "Evidence".bold(), escape_terminal_text(evidence));
+    }
+    if let Some(remediation) = finding.remediation.as_deref() {
+        println!("\n  {}\n  {}", "Remediation".bold(), escape_terminal_text(remediation));
+    }
+    if let Some(owasp) = finding.owasp_category.as_deref() {
+        println!("\n  OWASP: {}", escape_terminal_text(owasp));
+    }
+    if let Some(cwe) = finding.cwe_id {
+        println!("     CWE: CWE-{cwe}");
+    }
+    if let Some(note) = view.status_note.as_deref() {
+        println!("\n  {}\n  {}", "Status Note".bold(), escape_terminal_text(note));
+    }
+    println!();
+    Ok(())
+}
+
 /// List findings for a project with optional filters.
 ///
 /// # Errors
@@ -69,7 +175,7 @@ pub async fn list(
     let finding_list = load_filtered_findings(pool, project.id, filter).await?;
 
     if finding_list.is_empty() {
-        println!("{} No findings for '{}'.", "note:".dimmed(), project.name);
+        println!("{} No findings for '{}'.", "note:".dimmed(), escape_terminal_text(&project.name));
         return Ok(());
     }
 

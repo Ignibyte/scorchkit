@@ -50,8 +50,14 @@ infrastructure. The test suite never treats a timeout against an external addres
 - Remote MCP transport requires bearer authentication, exact principal-to-engagement binding,
   loopback backend ownership, host/origin validation, bounded input and sessions, and an explicit
   TLS-termination policy before listening.
+- The local control API is absent by default and requires an environment-backed bearer, exact
+  principal-to-engagement binding, loopback bind and Host, constant-time credential verification,
+  credential scrubbing, and bounded bodies, responses, concurrency, journals, and subscribers.
 - Webhook events are redacted before durable enqueue, and every delivery requires an exact
   `webhook-delivery`/`active-safe` grant for the configured URL, redirects, and resolved addresses.
+- Release publication requires one immutable semantic-version tag and revision, exact native
+  target/toolchain/features, header-verified bounded binaries, per-subject hashes and SBOMs, signed
+  provenance, and complete readback verification before a draft becomes public.
 
 The current implementation has direct regression coverage for absence denial, HTTP redirects and
 DNS answers, project membership, stored schedule snapshots, CVE-provider endpoints and cache paths,
@@ -83,6 +89,10 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
   Every binding must name the exact enabled, unexpired configured engagement. Each principal owns
   a separate bounded session manager, so session IDs do not cross valid credentials. Direct TLS,
   non-loopback backends, OAuth/OIDC, multi-engagement selection, tenants, and RBAC are not supported.
+- `scorchkit control-api` is the only control HTTP startup path. It binds loopback directly, has no
+  remote/public mode, and authenticates before routing or body parsing. Canonical findings and
+  evidence are normalized and checked against duplicated durable projections before response
+  serialization; divergence fails the complete query.
 - Durable CLI and MCP job hosts may deliver configured webhooks through PostgreSQL. Queue records
   contain a destination identity, redacted event payload, and engagement snapshot, never the
   destination URL or authorization value. Each direct and redirected request uses the shared
@@ -100,6 +110,12 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
   compiled only by tests until provider authentication and service requests use a policy-owned
   transport. Production cloud scans expose five bounded external-tool adapters and require exact
   cloud, credential-use, and external-tool grants.
+- Release qualification supports four raw native targets and the exact `infra,cloud,mcp` feature
+  set. GitHub workflow actions, Rust, Syft, Cosign, and the local Sigstore trusted root are pinned;
+  only the aggregate job receives OIDC and release-write permissions. Upgrade proof starts at
+  v2.1.0, uses disposable databases, verifies a snapshot before restore into a separate database,
+  and never performs a destructive down migration. Implementing the workflow does not authorize a
+  live tag or publication.
 
 ## Vulnerability reports
 

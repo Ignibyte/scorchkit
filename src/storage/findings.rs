@@ -30,6 +30,18 @@ struct FindingWrite<'a> {
     remediation: Option<String>,
 }
 
+/// Canonical finding plus its verified durable metadata.
+pub(crate) struct ValidatedFinding {
+    pub(crate) row: TrackedFinding,
+    pub(crate) canonical: serde_json::Value,
+}
+
+/// Canonical evidence plus its verified durable metadata.
+pub(crate) struct ValidatedEvidence {
+    pub(crate) row: FindingEvidence,
+    pub(crate) canonical: serde_json::Value,
+}
+
 impl<'a> FindingWrite<'a> {
     fn prepare(finding: &'a Finding) -> Result<Self> {
         let appsec = finding.canonical_appsec();
@@ -524,7 +536,7 @@ async fn update_tracked_finding(
              fingerprint = $3, identity_schema = $4, stable_identity = $5, \
              correlation_keys = $6, module_id = $7, severity = $8, title = $9, \
              description = $10, affected_target = $11, \
-             evidence = COALESCE($12, evidence), remediation = $13, \
+             evidence = $12, remediation = $13, \
              owasp_category = $14, cwe_id = $15, raw_finding = $16, confidence = $17 \
          WHERE id = $1",
     )
@@ -791,6 +803,282 @@ pub async fn get_finding(pool: &PgPool, id: Uuid) -> Result<Option<TrackedFindin
         .map_err(|e| ScorchError::Database(format!("get finding: {e}")))
 }
 
+/// Get and validate one canonical finding at the public durable boundary.
+///
+/// # Errors
+///
+/// Returns an error when storage fails or any canonical/duplicated projection differs.
+pub(crate) async fn get_validated_finding(
+    pool: &PgPool,
+    id: Uuid,
+) -> Result<Option<ValidatedFinding>> {
+    let Some(row) = get_finding(pool, id).await? else {
+        return Ok(None);
+    };
+    validate_finding_row(pool, row).await.map(Some)
+}
+
+/// List one bounded stable page of validated project findings.
+///
+/// # Errors
+///
+/// Returns an error for an invalid cursor/limit, database failure, or any corrupt row.
+pub(crate) async fn list_validated_findings_page(
+    pool: &PgPool,
+    project_id: Uuid,
+    after: Option<Uuid>,
+    limit: usize,
+) -> Result<Vec<ValidatedFinding>> {
+    let limit = validated_page_limit(limit)?;
+    let cursor = if let Some(id) = after {
+        let cursor = get_validated_finding(pool, id)
+            .await?
+            .filter(|finding| finding.row.project_id == project_id)
+            .ok_or_else(|| ScorchError::Database("finding cursor was not found".to_string()))?;
+        Some((cursor.row.first_seen, cursor.row.id))
+    } else {
+        None
+    };
+    let rows = sqlx::query_as::<_, TrackedFinding>(
+        "SELECT * FROM tracked_findings \
+         WHERE project_id = $1 \
+           AND ($2::timestamptz IS NULL OR (first_seen, id) < ($2, $3)) \
+         ORDER BY first_seen DESC, id DESC LIMIT $4",
+    )
+    .bind(project_id)
+    .bind(cursor.map(|value| value.0))
+    .bind(cursor.map(|value| value.1))
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| ScorchError::Database(format!("list validated finding page: {error}")))?;
+    let mut validated = Vec::with_capacity(rows.len());
+    for row in rows {
+        validated.push(validate_finding_row(pool, row).await?);
+    }
+    Ok(validated)
+}
+
+/// List all validated findings up to one explicit aggregate ceiling.
+///
+/// # Errors
+///
+/// Returns an error instead of producing an incomplete aggregate when the ceiling is exceeded.
+pub(crate) async fn list_validated_findings_bounded(
+    pool: &PgPool,
+    project_id: Uuid,
+    maximum: usize,
+) -> Result<Vec<ValidatedFinding>> {
+    if !(1..=10_000).contains(&maximum) {
+        return Err(ScorchError::Database(
+            "validated finding aggregate limit must be 1-10000".to_string(),
+        ));
+    }
+    let query_limit = i64::try_from(maximum.saturating_add(1)).map_err(|_| {
+        ScorchError::Database("validated finding aggregate limit overflow".to_string())
+    })?;
+    let rows = sqlx::query_as::<_, TrackedFinding>(
+        "SELECT * FROM tracked_findings WHERE project_id = $1 \
+         ORDER BY last_seen DESC, id DESC LIMIT $2",
+    )
+    .bind(project_id)
+    .bind(query_limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| ScorchError::Database(format!("list validated findings: {error}")))?;
+    if rows.len() > maximum {
+        return Err(ScorchError::Database(format!(
+            "project findings exceed the bounded {maximum}-record report limit"
+        )));
+    }
+    let mut validated = Vec::with_capacity(rows.len());
+    for row in rows {
+        validated.push(validate_finding_row(pool, row).await?);
+    }
+    Ok(validated)
+}
+
+/// List one bounded stable page of validated evidence.
+///
+/// # Errors
+///
+/// Returns an error for an invalid cursor/limit, missing parent, database failure, or corruption.
+pub(crate) async fn list_validated_evidence_page(
+    pool: &PgPool,
+    finding_id: Uuid,
+    after: Option<Uuid>,
+    limit: usize,
+) -> Result<Vec<ValidatedEvidence>> {
+    let limit = validated_page_limit(limit)?;
+    let parent = get_validated_finding(pool, finding_id).await?.ok_or_else(|| {
+        ScorchError::Database("evidence parent finding was not found".to_string())
+    })?;
+    let cursor = if let Some(id) = after {
+        let cursor = sqlx::query_as::<_, FindingEvidence>(
+            "SELECT * FROM finding_evidence WHERE tracked_finding_id = $1 AND id = $2",
+        )
+        .bind(finding_id)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| ScorchError::Database(format!("load evidence cursor: {error}")))?
+        .ok_or_else(|| ScorchError::Database("evidence cursor was not found".to_string()))?;
+        let cursor = validate_evidence_row(pool, &parent, cursor).await?;
+        Some((cursor.row.collected_at, cursor.row.id))
+    } else {
+        None
+    };
+    let rows = sqlx::query_as::<_, FindingEvidence>(
+        "SELECT * FROM finding_evidence \
+         WHERE tracked_finding_id = $1 \
+           AND ($2::timestamptz IS NULL OR (collected_at, id) > ($2, $3)) \
+         ORDER BY collected_at, id LIMIT $4",
+    )
+    .bind(finding_id)
+    .bind(cursor.map(|value| value.0))
+    .bind(cursor.map(|value| value.1))
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| ScorchError::Database(format!("list validated evidence page: {error}")))?;
+    let mut validated = Vec::with_capacity(rows.len());
+    for row in rows {
+        validated.push(validate_evidence_row(pool, &parent, row).await?);
+    }
+    Ok(validated)
+}
+
+async fn validate_finding_row(pool: &PgPool, row: TrackedFinding) -> Result<ValidatedFinding> {
+    let declared_appsec = row
+        .raw_finding
+        .get("appsec")
+        .cloned()
+        .map(serde_json::from_value::<FindingRecordV2>)
+        .transpose()
+        .map_err(|error| canonical_mismatch(format!("invalid raw finding appsec: {error}")))?;
+    let finding: Finding = serde_json::from_value(row.raw_finding.clone())
+        .map_err(|error| canonical_mismatch(format!("invalid raw finding: {error}")))?;
+    let write = FindingWrite::prepare(&finding)?;
+    if let Some(declared) = declared_appsec {
+        let declared = serde_json::to_value(declared)
+            .map_err(|error| canonical_mismatch(format!("serialize declared finding: {error}")))?;
+        let normalized = serde_json::to_value(&write.appsec)
+            .map_err(|error| canonical_mismatch(format!("serialize canonical finding: {error}")))?;
+        if declared != normalized {
+            return Err(canonical_mismatch(
+                "raw finding is not canonical at the durable read boundary",
+            ));
+        }
+    }
+    let expected_cwe = finding.cwe_id.map(u32::cast_signed);
+    let projections_match = row.fingerprint == write.legacy_fingerprint
+        && row.identity_schema == write.appsec.identity.schema
+        && row.stable_identity == write.appsec.identity.value
+        && row.correlation_keys == write.correlation_keys
+        && row.module_id == finding.module_id
+        && row.severity == finding.severity.to_string()
+        && row.title == write.title
+        && row.description == write.description
+        && row.affected_target == write.affected_target
+        && row.evidence == write.evidence
+        && row.remediation == write.remediation
+        && row.owasp_category == finding.owasp_category
+        && row.cwe_id == expected_cwe
+        && row.confidence.to_bits() == finding.confidence.to_bits()
+        && row.seen_count > 0
+        && row.first_seen <= row.last_seen
+        && row.found_at.timestamp_micros() == row.first_seen.timestamp_micros()
+        && VulnStatus::from_db(&row.status).is_some();
+    if !projections_match {
+        return Err(canonical_mismatch(
+            "finding canonical document and duplicated projection differ",
+        ));
+    }
+    validate_scan_project(pool, row.scan_id, row.project_id).await?;
+    let canonical = serde_json::to_value(&finding)
+        .map_err(|error| canonical_mismatch(format!("serialize validated finding: {error}")))?;
+    let validated = ValidatedFinding { row, canonical };
+    for declared in &write.appsec.evidence {
+        let evidence = sqlx::query_as::<_, FindingEvidence>(
+            "SELECT * FROM finding_evidence \
+             WHERE tracked_finding_id = $1 AND scan_id = $2 AND evidence_identity = $3",
+        )
+        .bind(validated.row.id)
+        .bind(validated.row.scan_id)
+        .bind(&declared.identity)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| ScorchError::Database(format!("load declared finding evidence: {error}")))?
+        .ok_or_else(|| canonical_mismatch("canonical finding evidence row is missing"))?;
+        let evidence = validate_evidence_row(pool, &validated, evidence).await?;
+        let declared = serde_json::to_value(declared.clone().normalized()).map_err(|error| {
+            canonical_mismatch(format!("serialize declared finding evidence: {error}"))
+        })?;
+        if evidence.canonical != declared {
+            return Err(canonical_mismatch(
+                "canonical finding and declared evidence document differ",
+            ));
+        }
+    }
+    Ok(validated)
+}
+
+async fn validate_evidence_row(
+    pool: &PgPool,
+    parent: &ValidatedFinding,
+    row: FindingEvidence,
+) -> Result<ValidatedEvidence> {
+    if row.tracked_finding_id != parent.row.id {
+        return Err(canonical_mismatch("evidence parent finding projection differs"));
+    }
+    let declared: EvidenceRecord = serde_json::from_value(row.raw_evidence.clone())
+        .map_err(|error| canonical_mismatch(format!("invalid raw evidence: {error}")))?;
+    let normalized = declared.clone().normalized();
+    let canonical = serde_json::to_value(&normalized)
+        .map_err(|error| canonical_mismatch(format!("serialize canonical evidence: {error}")))?;
+    if row.raw_evidence != canonical
+        || row.evidence_schema != normalized.schema
+        || row.evidence_identity != normalized.identity
+        || row.collected_at.timestamp_micros()
+            != normalized.provenance.collected_at.timestamp_micros()
+    {
+        return Err(canonical_mismatch(
+            "evidence canonical document and duplicated projection differ",
+        ));
+    }
+    validate_scan_project(pool, row.scan_id, parent.row.project_id).await?;
+    Ok(ValidatedEvidence { row, canonical })
+}
+
+async fn validate_scan_project(pool: &PgPool, scan_id: Uuid, project_id: Uuid) -> Result<()> {
+    let stored_project =
+        sqlx::query_scalar::<_, Uuid>("SELECT project_id FROM scan_records WHERE id = $1")
+            .bind(scan_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| {
+                ScorchError::Database(format!("validate finding scan project: {error}"))
+            })?;
+    if stored_project != Some(project_id) {
+        return Err(canonical_mismatch("finding or evidence scan/project projection differs"));
+    }
+    Ok(())
+}
+
+fn validated_page_limit(limit: usize) -> Result<i64> {
+    if !(1..=201).contains(&limit) {
+        return Err(ScorchError::Database(
+            "validated control page limit must be 1-201".to_string(),
+        ));
+    }
+    i64::try_from(limit)
+        .map_err(|_| ScorchError::Database("validated control page limit overflow".to_string()))
+}
+
+fn canonical_mismatch(message: impl Into<String>) -> ScorchError {
+    ScorchError::Database(format!("canonical projection mismatch: {}", message.into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -962,5 +1250,294 @@ mod tests {
             legacy_fingerprint_parts("scanner", "Rule", "src/lib.rs:7"),
             "c4826eac151b1a297d89b40dd98157d6a328d4018a487a82545934290115813f"
         );
+    }
+
+    struct CanonicalFixture {
+        project: Uuid,
+        scan: Uuid,
+        finding: Uuid,
+        evidence: Uuid,
+    }
+
+    async fn canonical_fixture(pool: &PgPool) -> CanonicalFixture {
+        let project = crate::storage::projects::create_project(
+            pool,
+            &format!("control-canonical-{}", Uuid::new_v4()),
+            "canonical validation fixture",
+        )
+        .await
+        .expect("create canonical project");
+        let now = chrono::Utc::now();
+        let scan = crate::storage::scans::save_scan(
+            pool,
+            project.id,
+            "https://example.com/items?id=1",
+            "quick",
+            now,
+            Some(now),
+            &["fixture".to_string()],
+            &[],
+            &serde_json::json!({}),
+        )
+        .await
+        .expect("create canonical scan");
+        let finding = Finding::new(
+            "fixture",
+            Severity::High,
+            "Canonical fixture",
+            "Canonical description",
+            "https://example.com/items?id=1",
+        )
+        .with_evidence("canonical evidence")
+        .with_remediation("canonical remediation")
+        .with_owasp("A03:2021")
+        .with_cwe(89)
+        .with_confidence(0.75);
+        save_findings(pool, project.id, scan.id, &[finding]).await.expect("save canonical finding");
+        let finding = list_findings(pool, project.id)
+            .await
+            .expect("list fixture findings")
+            .into_iter()
+            .next()
+            .expect("fixture finding");
+        let evidence = list_evidence(pool, finding.id)
+            .await
+            .expect("list fixture evidence")
+            .into_iter()
+            .next()
+            .expect("fixture evidence");
+        CanonicalFixture {
+            project: project.id,
+            scan: scan.id,
+            finding: finding.id,
+            evidence: evidence.id,
+        }
+    }
+
+    fn assert_canonical_mismatch<T>(result: Result<T>) {
+        let Err(error) = result else {
+            panic!("corrupt canonical projection was accepted");
+        };
+        assert!(error.to_string().contains("canonical projection mismatch"));
+    }
+
+    async fn assert_finding_corruptions(pool: &PgPool) {
+        let corruptions = [
+            "UPDATE tracked_findings SET raw_finding = '{}'::jsonb WHERE id = $1",
+            "UPDATE tracked_findings SET fingerprint = fingerprint || '-corrupt' WHERE id = $1",
+            "UPDATE tracked_findings SET identity_schema = identity_schema || '-corrupt' WHERE id = $1",
+            "UPDATE tracked_findings SET stable_identity = stable_identity || '-corrupt' WHERE id = $1",
+            "UPDATE tracked_findings SET correlation_keys = '{\"corrupt\":true}'::jsonb WHERE id = $1",
+            "UPDATE tracked_findings SET module_id = module_id || '-corrupt' WHERE id = $1",
+            "UPDATE tracked_findings SET severity = 'critical' WHERE id = $1",
+            "UPDATE tracked_findings SET title = title || '-corrupt' WHERE id = $1",
+            "UPDATE tracked_findings SET description = description || '-corrupt' WHERE id = $1",
+            "UPDATE tracked_findings SET affected_target = affected_target || '/corrupt' WHERE id = $1",
+            "UPDATE tracked_findings SET evidence = evidence || '-corrupt' WHERE id = $1",
+            "UPDATE tracked_findings SET remediation = remediation || '-corrupt' WHERE id = $1",
+            "UPDATE tracked_findings SET owasp_category = 'A01:2021' WHERE id = $1",
+            "UPDATE tracked_findings SET cwe_id = 79 WHERE id = $1",
+            "UPDATE tracked_findings SET confidence = 0.125 WHERE id = $1",
+            "UPDATE tracked_findings SET found_at = found_at + interval '1 second' WHERE id = $1",
+            "UPDATE tracked_findings SET seen_count = 0 WHERE id = $1",
+            "UPDATE tracked_findings SET status = 'corrupt' WHERE id = $1",
+            "UPDATE tracked_findings SET first_seen = last_seen + interval '1 second' WHERE id = $1",
+        ];
+        for corruption in corruptions {
+            let fixture = canonical_fixture(pool).await;
+            sqlx::query(corruption)
+                .bind(fixture.finding)
+                .execute(pool)
+                .await
+                .expect("corrupt finding projection");
+            assert_canonical_mismatch(get_validated_finding(pool, fixture.finding).await);
+            crate::storage::projects::delete_project(pool, fixture.project)
+                .await
+                .expect("delete corrupt finding project");
+        }
+    }
+
+    async fn assert_evidence_corruptions(pool: &PgPool) {
+        let corruptions = [
+            "UPDATE finding_evidence SET raw_evidence = '{}'::jsonb WHERE id = $1",
+            "UPDATE finding_evidence SET evidence_identity = evidence_identity || '-corrupt' WHERE id = $1",
+            "UPDATE finding_evidence SET evidence_schema = evidence_schema || '-corrupt' WHERE id = $1",
+            "UPDATE finding_evidence SET collected_at = collected_at + interval '1 second' WHERE id = $1",
+        ];
+        for corruption in corruptions {
+            let fixture = canonical_fixture(pool).await;
+            sqlx::query(corruption)
+                .bind(fixture.evidence)
+                .execute(pool)
+                .await
+                .expect("corrupt evidence projection");
+            assert_canonical_mismatch(
+                list_validated_evidence_page(pool, fixture.finding, None, 2).await,
+            );
+            crate::storage::projects::delete_project(pool, fixture.project)
+                .await
+                .expect("delete corrupt evidence project");
+        }
+    }
+
+    async fn assert_relationship_corruptions(pool: &PgPool) {
+        let finding = canonical_fixture(pool).await;
+        let other_project = crate::storage::projects::create_project(
+            pool,
+            &format!("control-canonical-other-{}", Uuid::new_v4()),
+            "relationship fixture",
+        )
+        .await
+        .expect("create other project");
+        sqlx::query("UPDATE tracked_findings SET project_id = $2 WHERE id = $1")
+            .bind(finding.finding)
+            .bind(other_project.id)
+            .execute(pool)
+            .await
+            .expect("corrupt scan/project relationship");
+        assert_canonical_mismatch(get_validated_finding(pool, finding.finding).await);
+        crate::storage::projects::delete_project(pool, other_project.id)
+            .await
+            .expect("delete other project");
+        crate::storage::projects::delete_project(pool, finding.project)
+            .await
+            .expect("delete relationship project");
+
+        let evidence = canonical_fixture(pool).await;
+        let other = canonical_fixture(pool).await;
+        sqlx::query("UPDATE finding_evidence SET scan_id = $2 WHERE id = $1")
+            .bind(evidence.evidence)
+            .bind(other.scan)
+            .execute(pool)
+            .await
+            .expect("corrupt evidence scan/project relationship");
+        assert_canonical_mismatch(
+            list_validated_evidence_page(pool, evidence.finding, None, 2).await,
+        );
+        crate::storage::projects::delete_project(pool, evidence.project)
+            .await
+            .expect("delete evidence relationship project");
+        crate::storage::projects::delete_project(pool, other.project)
+            .await
+            .expect("delete other evidence project");
+    }
+
+    #[tokio::test]
+    async fn canonical_control_reads_fail_closed_for_independent_projection_corruption() {
+        let Ok(database_url) = std::env::var("DATABASE_URL") else {
+            return;
+        };
+        let pool = crate::storage::connect(&database_url)
+            .await
+            .expect("connect canonical validation database");
+        crate::storage::migrate::run_migrations(&pool)
+            .await
+            .expect("migrate canonical validation database");
+
+        let round_trip = canonical_fixture(&pool).await;
+        assert!(get_validated_finding(&pool, round_trip.finding)
+            .await
+            .expect("validate canonical finding")
+            .is_some());
+        assert_eq!(
+            list_validated_evidence_page(&pool, round_trip.finding, None, 2)
+                .await
+                .expect("validate canonical evidence")
+                .len(),
+            1
+        );
+        crate::storage::projects::delete_project(&pool, round_trip.project)
+            .await
+            .expect("delete round-trip project");
+        assert_finding_corruptions(&pool).await;
+        assert_evidence_corruptions(&pool).await;
+        assert_relationship_corruptions(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn control_finding_cursor_is_stable_when_unseen_findings_are_rediscovered() {
+        let Ok(database_url) = std::env::var("DATABASE_URL") else {
+            return;
+        };
+        let pool = crate::storage::connect(&database_url)
+            .await
+            .expect("connect stable-pagination database");
+        crate::storage::migrate::run_migrations(&pool)
+            .await
+            .expect("migrate stable-pagination database");
+
+        let project = crate::storage::projects::create_project(
+            &pool,
+            &format!("control-page-{}", Uuid::new_v4()),
+            "stable finding page fixture",
+        )
+        .await
+        .expect("create stable-pagination project");
+        let now = chrono::Utc::now();
+        let scan = crate::storage::scans::save_scan(
+            &pool,
+            project.id,
+            "https://example.com/",
+            "quick",
+            now,
+            Some(now),
+            &["fixture".to_string()],
+            &[],
+            &serde_json::json!({}),
+        )
+        .await
+        .expect("create stable-pagination scan");
+        let findings = [
+            Finding::new(
+                "fixture",
+                Severity::High,
+                "Stable page A",
+                "first page fixture",
+                "https://example.com/a",
+            ),
+            Finding::new(
+                "fixture",
+                Severity::Medium,
+                "Stable page B",
+                "second page fixture",
+                "https://example.com/b",
+            ),
+        ];
+        save_findings(&pool, project.id, scan.id, &findings)
+            .await
+            .expect("save stable-pagination findings");
+
+        let first = list_validated_findings_page(&pool, project.id, None, 1)
+            .await
+            .expect("first finding page");
+        assert_eq!(first.len(), 1);
+        let first_id = first[0].row.id;
+        let all = list_findings(&pool, project.id).await.expect("list finding fixtures");
+        let unseen_id =
+            all.iter().find(|finding| finding.id != first_id).expect("unseen finding").id;
+        sqlx::query(
+            "UPDATE tracked_findings SET last_seen = now() + interval '1 hour' WHERE id = $1",
+        )
+        .bind(unseen_id)
+        .execute(&pool)
+        .await
+        .expect("rediscover unseen finding");
+
+        let second = list_validated_findings_page(&pool, project.id, Some(first_id), 1)
+            .await
+            .expect("second finding page");
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].row.id, unseen_id);
+        sqlx::query("UPDATE tracked_findings SET first_seen = first_seen + interval '1 second' WHERE id = $1")
+            .bind(first_id)
+            .execute(&pool)
+            .await
+            .expect("corrupt finding cursor projection");
+        assert_canonical_mismatch(
+            list_validated_findings_page(&pool, project.id, Some(first_id), 1).await,
+        );
+        crate::storage::projects::delete_project(&pool, project.id)
+            .await
+            .expect("delete stable-pagination project");
     }
 }

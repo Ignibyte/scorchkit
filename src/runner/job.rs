@@ -159,6 +159,15 @@ impl ScanJobService {
         self.store.list().await
     }
 
+    /// List one bounded stable page after an optional job cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the cursor is unknown, the limit is invalid, or storage fails.
+    pub async fn list_page(&self, after: Option<Uuid>, limit: usize) -> Result<Vec<ScanJob>> {
+        self.store.list_page(after, limit).await
+    }
+
     /// Execute one queued DAST job in the current task.
     ///
     /// The caller owns process lifetime. MCP may spawn this future; CLI runs it in the foreground.
@@ -264,9 +273,18 @@ impl ScanJobService {
     /// Returns an error when storage cannot list or update an abandoned job.
     pub async fn recover_interrupted(&self) -> Result<Vec<ScanJob>> {
         let jobs = self.store.list_recoverable(Utc::now()).await?;
+        let ids: Vec<_> = jobs.into_iter().map(|job| job.id).collect();
+        self.recover_interrupted_ids(&ids).await
+    }
+
+    /// Mark only the named abandoned jobs as interrupted.
+    ///
+    /// Callers that apply a command-specific authorization filter use this exact-set seam so a
+    /// newly recoverable job cannot enter the mutation batch after authorization.
+    pub(crate) async fn recover_interrupted_ids(&self, ids: &[Uuid]) -> Result<Vec<ScanJob>> {
         let mut recovered = Vec::new();
-        for job in jobs {
-            if let Some(interrupted) = self.try_recover(job.id).await? {
+        for id in ids {
+            if let Some(interrupted) = self.try_recover(*id).await? {
                 recovered.push(interrupted);
             }
         }

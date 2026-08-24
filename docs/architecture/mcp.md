@@ -19,15 +19,19 @@ local MCP host                 remote MCP client
       |                               |
       +--------- ScorchKitServer -----+
                        |        |
-              ScanJobService   optional PostgreSQL
+              ControlService   optional PostgreSQL
+                    |
+              ScanJobService
                        |        |
                  policy-gated Engine
                        |
              DAST / SAST / infra / cloud executors
 ```
 
-The MCP host is not an authorization authority. `ScorchKitServer` holds one immutable `AppConfig`,
-and effectful tool handlers construct `Engine::new` from its configured engagement. No engagement,
+The MCP host is not an authorization authority. `ScorchKitServer` holds one immutable `AppConfig`
+and one shared `ControlService`; overlapping job, project, target, finding-read, and module handlers
+adapt that service. Other effectful tool handlers construct `Engine::new` from the configured
+engagement. No engagement,
 target mismatch, missing capability, or insufficient effect class returns an error before the scan
 resource is created.
 

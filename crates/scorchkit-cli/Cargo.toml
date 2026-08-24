@@ -8,6 +8,7 @@ license = "MIT"
 [features]
 default = []
 cloud = []
+control-api = ["storage"]
 infra = []
 mcp = []
 storage = []

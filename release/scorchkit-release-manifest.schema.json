@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Ignibyte/scorch_kit/blob/main/release/scorchkit-release-manifest.schema.json",
+  "title": "ScorchKit release manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name",
+    "version",
+    "tag",
+    "source",
+    "build",
+    "artifacts"
+  ],
+  "properties": {
+    "schema": {
+      "const": "scorchkit.release-manifest/v1"
+    },
+    "name": {
+      "const": "scorchkit"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "revision"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toolchain", "features", "source_date_epoch"],
+      "properties": {
+        "toolchain": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "features": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "source_date_epoch": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "target", "size", "sha256", "sbom"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^scorchkit-[A-Za-z0-9_.-]+$"
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 157286400
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "sbom": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "sha256", "format", "spec_version"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^scorchkit-[A-Za-z0-9_.-]+\\.cdx\\.json$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "format": {
+                "const": "CycloneDX"
+              },
+              "spec_version": {
+                "const": "1.6"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

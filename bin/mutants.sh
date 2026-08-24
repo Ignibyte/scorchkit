@@ -9,6 +9,7 @@ cd "$ROOT_DIR" || exit 2
 
 MODE="full"
 SHARD=""
+RECHECK_NAMES=""
 case "${1:---full}" in
     --diff | diff) MODE="diff" ;;
     --full | full) MODE="full" ;;
@@ -18,8 +19,12 @@ case "${1:---full}" in
         MODE="shard"
         SHARD="${2:-}"
         ;;
+    --recheck | recheck)
+        MODE="recheck"
+        RECHECK_NAMES="${2:-}"
+        ;;
     *)
-        echo "usage: bin/mutants.sh [--diff|--full|--inspect|--selftest|--shard NUM/DEN]" >&2
+        echo "usage: bin/mutants.sh [--diff|--full|--inspect|--selftest|--shard NUM/DEN|--recheck NAMES]" >&2
         exit 2
         ;;
 esac
@@ -40,6 +45,21 @@ if [ "$MODE" = "shard" ]; then
     fi
     if [ "${BASH_REMATCH[1]}" -ge "${BASH_REMATCH[2]}" ]; then
         echo "mutation shard numerator must be smaller than its denominator" >&2
+        exit 2
+    fi
+fi
+
+recheck_names_are_valid() {
+    local names="$1"
+    [ -n "$names" ] && [ -f "$names" ] && [ ! -L "$names" ] \
+        && awk 'NF == 0 { invalid = 1 } END { exit (invalid || NR == 0) }' "$names" \
+        && [ "$(LC_ALL=C sort -u "$names" | wc -l | tr -d ' ')" \
+            -eq "$(wc -l < "$names" | tr -d ' ')" ]
+}
+
+if [ "$MODE" = "recheck" ]; then
+    if ! recheck_names_are_valid "$RECHECK_NAMES"; then
+        echo "mutation recheck names must be nonempty, unique, and contain no blank lines" >&2
         exit 2
     fi
 fi
@@ -135,7 +155,7 @@ ensure_mutation_outcomes() {
 }
 
 mutation_outcomes_selftest() {
-    local selftest_root
+    local selftest_root valid_names blank_names duplicate_names empty_names
     selftest_root="$(mktemp -d "${TMPDIR:-/tmp}/scorchkit-mutants-selftest.XXXXXX")" || return 1
 
     ensure_mutation_outcomes diff 0 "$selftest_root/empty" \
@@ -151,6 +171,23 @@ mutation_outcomes_selftest() {
         || ensure_mutation_outcomes diff 1 "$selftest_root/failed"; then
         rm -rf -- "$selftest_root"
         echo "mutation outcomes selftest failed: non-success result was normalized" >&2
+        return 1
+    fi
+    valid_names="$selftest_root/valid-names.txt"
+    blank_names="$selftest_root/blank-names.txt"
+    duplicate_names="$selftest_root/duplicate-names.txt"
+    empty_names="$selftest_root/empty-names.txt"
+    printf '%s\n' 'src/lib.rs:1:1: replace example' > "$valid_names"
+    printf '%s\n\n' 'src/lib.rs:1:1: replace example' > "$blank_names"
+    printf '%s\n%s\n' 'src/lib.rs:1:1: replace example' \
+        'src/lib.rs:1:1: replace example' > "$duplicate_names"
+    : > "$empty_names"
+    if ! recheck_names_are_valid "$valid_names" \
+        || recheck_names_are_valid "$blank_names" \
+        || recheck_names_are_valid "$duplicate_names" \
+        || recheck_names_are_valid "$empty_names"; then
+        rm -rf -- "$selftest_root"
+        echo "mutation outcomes selftest failed: exact-name validation is unsafe" >&2
         return 1
     fi
     if is_local_scratch "$ROOT_DIR" || ! is_local_scratch /tmp; then
@@ -340,6 +377,45 @@ COMMAND=(cargo mutants --workspace --all-features --test-workspace true \
 case "$MODE" in
     diff) COMMAND+=(--in-diff "$DIFF_FILE") ;;
     shard) COMMAND+=(--shard "$SHARD") ;;
+    recheck)
+        RECHECK_REGEX="^("
+        RECHECK_SEPARATOR=""
+        while IFS= read -r mutant_name; do
+            escaped_name="$(printf '%s' "$mutant_name" \
+                | sed 's/[][\\.^$*+?(){}|]/\\&/g')"
+            RECHECK_REGEX="${RECHECK_REGEX}${RECHECK_SEPARATOR}${escaped_name}"
+            RECHECK_SEPARATOR="|"
+        done < "$RECHECK_NAMES"
+        RECHECK_REGEX="${RECHECK_REGEX})$"
+        mapfile -t RECHECK_FILES < <(cut -d : -f 1 "$RECHECK_NAMES" | LC_ALL=C sort -u)
+        RECHECK_LIST_COMMAND=(cargo mutants --list --json --workspace --all-features \
+            --test-workspace true)
+        for source_file in "${RECHECK_FILES[@]}"; do
+            if [[ "$source_file" == /* ]] || [[ "$source_file" == *"../"* ]] \
+                || [[ "$source_file" == *"/.." ]] || [ ! -f "$source_file" ]; then
+                echo "mutation recheck name contains an invalid source path" >&2
+                exit 2
+            fi
+            COMMAND+=(--file "$source_file")
+            RECHECK_LIST_COMMAND+=(--file "$source_file")
+        done
+        COMMAND+=(--re "$RECHECK_REGEX")
+        RECHECK_LIST_COMMAND+=(--re "$RECHECK_REGEX")
+
+        RECHECK_INVENTORY="$RUN_ROOT/recheck-mutants.json"
+        RECHECK_EXPECTED="$RUN_ROOT/recheck-expected.txt"
+        RECHECK_ACTUAL="$RUN_ROOT/recheck-actual.txt"
+        if ! TMPDIR="$RUN_TMP" "${RECHECK_LIST_COMMAND[@]}" > "$RECHECK_INVENTORY"; then
+            echo "cargo-mutants could not inventory the exact recheck" >&2
+            exit 1
+        fi
+        LC_ALL=C sort "$RECHECK_NAMES" > "$RECHECK_EXPECTED"
+        jq -r '.[].name' "$RECHECK_INVENTORY" | LC_ALL=C sort > "$RECHECK_ACTUAL"
+        if ! cmp -s "$RECHECK_EXPECTED" "$RECHECK_ACTUAL"; then
+            echo "exact mutation recheck inventory does not match the requested names" >&2
+            exit 1
+        fi
+        ;;
 esac
 
 # cargo-mutants requires a separate target directory for each worker. A relative
@@ -436,8 +512,13 @@ jq -n \
     > "$OUT_DIR/summary.json"
 
 GIT_DIR="$(git rev-parse --absolute-git-dir)"
-EVIDENCE_DIR="$GIT_DIR/scorchkit-mutants-last"
-if [[ "$EVIDENCE_DIR" != "$GIT_DIR"/scorchkit-mutants-last ]]; then
+EVIDENCE_NAME="${SCORCHKIT_MUTATION_EVIDENCE_NAME:-scorchkit-mutants-last}"
+if ! [[ "$EVIDENCE_NAME" =~ ^scorchkit-mutants-[A-Za-z0-9._-]+$ ]]; then
+    echo "refusing an invalid mutation evidence name" >&2
+    exit 2
+fi
+EVIDENCE_DIR="$GIT_DIR/$EVIDENCE_NAME"
+if [[ "$EVIDENCE_DIR" != "$GIT_DIR"/scorchkit-mutants-* ]]; then
     echo "refusing an unexpected mutation evidence path" >&2
     exit 2
 fi

@@ -38,7 +38,15 @@ ScorchKit supports Linux, macOS, and Windows. External tools are owned as Unix p
 Linux/macOS and kill-on-close Job Objects on Windows, with the same bounded descendant cleanup
 contract on every supported host. Individual scanner binaries may have narrower platform support.
 
-Install the current stable Rust toolchain, then build the smallest binary that fits the workflow:
+The repository also owns a reproducible release path for raw Linux x86-64, macOS x86-64/Arm64,
+and Windows x86-64 binaries. It double-builds each native target with pinned Rust and production
+features, then binds exact binary headers/digests, per-binary CycloneDX SBOMs, SLSA provenance,
+checksums, and keyless Sigstore bundles before draft publication. See the
+[release qualification and recovery guide](docs/guide/releases.md). No release workflow grants
+target authorization or changes scanner effects.
+
+Install `rustup`; the checkout selects its exact pinned Rust toolchain. Then build the smallest
+binary that fits the workflow:
 
 ```bash
 git clone https://github.com/Ignibyte/scorchkit.git
@@ -48,15 +56,15 @@ cargo build --locked --release
 
 The core binary at `target/release/scorchkit` supports web, code, supply-chain, reporting, and local
 AI-adapter commands. Build the supported production feature set when you also need infrastructure,
-cloud compatibility, PostgreSQL-backed state, or local/remote MCP:
+cloud compatibility, PostgreSQL-backed state, local/remote MCP, or the loopback control API:
 
 ```bash
-cargo build --locked --release --features "infra cloud mcp"
+cargo build --locked --release --features "infra cloud mcp control-api"
 target/release/scorchkit --help
 target/release/scorchkit doctor --deep
 ```
 
-The `mcp` feature includes storage. PostgreSQL is required for projects, schedules, durable jobs,
+The `mcp` and `control-api` features include storage. PostgreSQL is required for projects, schedules, durable jobs,
 and MCP persistence; direct scans do not need a database. `--all-features` is a repository-validation
 mode, not the recommended operator build, because it also compiles quarantined native cloud SDK
 modules that are not in the production registry.
@@ -238,6 +246,10 @@ capability, and effect authorization source.
   loopback-only backend behind a same-host TLS reverse proxy with exact Host/Origin and HTTPS
   forwarding assertions, bounded requests/sessions, and bearer principal-to-engagement bindings.
   Direct TLS, public backend listeners, OAuth/OIDC, tenants, and RBAC remain unsupported.
+- The provider-neutral control API is opt-in through `scorchkit control-api`. It requires an
+  environment-backed bearer and exact engagement binding, accepts only a loopback bind and Host,
+  and exposes bounded v1 description, command/query, and replayable SSE event routes. Remote or
+  public control hosting is not supported.
 
 See [SECURITY.md](SECURITY.md) for the enforced boundary and current limitations.
 

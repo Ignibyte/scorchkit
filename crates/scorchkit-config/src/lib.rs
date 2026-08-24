@@ -4,6 +4,7 @@ mod types;
 
 #[cfg(feature = "cloud")]
 pub mod cloud_credentials;
+pub mod control_api;
 pub mod cve;
 pub mod mcp;
 pub mod network_credentials;
@@ -11,6 +12,7 @@ pub mod webhook;
 
 #[cfg(feature = "cloud")]
 pub use cloud_credentials::CloudCredentials;
+pub use control_api::ControlApiConfig;
 pub use cve::{CompositeConfig, CompositeSource, CveBackendKind, CveConfig, NvdConfig};
 pub use mcp::{McpConfig, RemoteMcpConfig, RemoteMcpPrincipalBinding, RemoteMcpTlsTermination};
 pub use network_credentials::NetworkCredentials;

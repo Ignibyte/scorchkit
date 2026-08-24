@@ -9,6 +9,10 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
+use scorchkit_control::{
+    ControlCommandV1, ControlQueryV1, ControlRequestV1, ControlResultV1, FindingViewV1,
+    ModuleViewV1, PageRequestV1, ProjectViewV1, TargetViewV1,
+};
 use uuid::Uuid;
 
 use super::contract::{McpCallContext, McpToolCallResult};
@@ -32,6 +36,8 @@ use crate::facade::Engine;
 use crate::runner::job::{DastJobRequest, ScanJob, ScanJobState};
 use crate::runner::orchestrator::Orchestrator;
 use crate::storage::{context, findings, metrics, projects, scans, schedules};
+
+const MAX_LEGACY_CONTROL_ITEMS: usize = 10_000;
 
 fn redacted_top_finding(finding: &crate::engine::finding::Finding) -> serde_json::Value {
     serde_json::json!({
@@ -440,6 +446,56 @@ fn job_id(value: &str) -> Result<Uuid, String> {
     Uuid::parse_str(value).map_err(|error| format!("invalid scan job UUID '{value}': {error}"))
 }
 
+fn legacy_finding_projection(finding: FindingViewV1) -> Result<serde_json::Value, String> {
+    let canonical = finding.canonical;
+    let object = canonical
+        .as_object()
+        .ok_or_else(|| "validated control finding is not a JSON object".to_string())?;
+    let required = |field: &str| {
+        object
+            .get(field)
+            .cloned()
+            .ok_or_else(|| format!("validated control finding has no {field}"))
+    };
+    let module_id = required("module_id")?;
+    let severity = required("severity")?;
+    let title = required("title")?;
+    let description = required("description")?;
+    let affected_target = required("affected_target")?;
+    let confidence = required("confidence")?;
+    let optional = |field: &str| object.get(field).cloned().unwrap_or(serde_json::Value::Null);
+    let evidence = optional("evidence");
+    let remediation = optional("remediation");
+    let owasp_category = optional("owasp_category");
+    let cwe_id = optional("cwe_id");
+    Ok(serde_json::json!({
+        "id": finding.id,
+        "scan_id": finding.scan_id,
+        "project_id": finding.project_id,
+        "fingerprint": finding.fingerprint,
+        "identity_schema": finding.identity_schema,
+        "stable_identity": finding.stable_identity,
+        "correlation_keys": finding.correlation_keys,
+        "module_id": module_id,
+        "severity": severity,
+        "title": title,
+        "description": description,
+        "affected_target": affected_target,
+        "evidence": evidence,
+        "remediation": remediation,
+        "owasp_category": owasp_category,
+        "cwe_id": cwe_id,
+        "raw_finding": canonical,
+        "confidence": confidence,
+        "first_seen": finding.first_seen,
+        "last_seen": finding.last_seen,
+        "seen_count": finding.seen_count,
+        "status": finding.status,
+        "status_note": finding.status_note,
+        "found_at": finding.found_at,
+    }))
+}
+
 fn completed_job_result(job: ScanJob) -> Result<String, String> {
     match job.state {
         ScanJobState::Succeeded => serde_json::to_string_pretty(
@@ -452,12 +508,166 @@ fn completed_job_result(job: ScanJob) -> Result<String, String> {
 
 /// Public business logic methods — called by both `#[tool]` wrappers and tests.
 impl ScorchKitServer {
+    fn control_engagement_id(&self) -> Result<Uuid, String> {
+        self.config.engagement.as_ref().map(|engagement| engagement.id).ok_or_else(|| {
+            "no engagement authorization configured for control operation".to_string()
+        })
+    }
+
+    async fn control_query(&self, query: ControlQueryV1) -> Result<ControlResultV1, String> {
+        self.execute_control(ControlRequestV1::query(
+            query,
+            self.config.engagement.as_ref().map(|engagement| engagement.id),
+        ))
+        .await
+    }
+
+    async fn control_command(&self, command: ControlCommandV1) -> Result<ControlResultV1, String> {
+        self.execute_control(ControlRequestV1::command(command, self.control_engagement_id()?))
+            .await
+    }
+
+    async fn control_projects(&self) -> Result<Vec<ProjectViewV1>, String> {
+        let mut projects = Vec::new();
+        let mut cursor = None;
+        loop {
+            let result = self
+                .control_query(ControlQueryV1::ListProjects {
+                    page: PageRequestV1 {
+                        cursor,
+                        limit: self.config.control_api.default_page_size,
+                    },
+                })
+                .await?;
+            let ControlResultV1::Projects(page) = result else {
+                return Err("control service returned an unexpected project result".to_string());
+            };
+            projects.extend(page.items);
+            if projects.len() > MAX_LEGACY_CONTROL_ITEMS {
+                return Err(
+                    "control project result exceeds the MCP compatibility limit".to_string()
+                );
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                return Ok(projects);
+            }
+        }
+    }
+
+    async fn resolve_control_project(&self, reference: &str) -> Result<ProjectViewV1, String> {
+        if let Ok(id) = Uuid::parse_str(reference) {
+            let result = self.control_query(ControlQueryV1::GetProject { id }).await?;
+            let ControlResultV1::Project(project) = result else {
+                return Err("control service returned an unexpected project result".to_string());
+            };
+            return Ok(project);
+        }
+        self.control_projects()
+            .await?
+            .into_iter()
+            .find(|project| project.name == reference)
+            .ok_or_else(|| format!("project '{reference}' not found"))
+    }
+
+    async fn control_targets(&self, project_id: Uuid) -> Result<Vec<TargetViewV1>, String> {
+        let mut targets = Vec::new();
+        let mut cursor = None;
+        loop {
+            let result = self
+                .control_query(ControlQueryV1::ListTargets {
+                    project_id,
+                    page: PageRequestV1 {
+                        cursor,
+                        limit: self.config.control_api.default_page_size,
+                    },
+                })
+                .await?;
+            let ControlResultV1::Targets(page) = result else {
+                return Err("control service returned an unexpected target result".to_string());
+            };
+            targets.extend(page.items);
+            if targets.len() > MAX_LEGACY_CONTROL_ITEMS {
+                return Err("control target result exceeds the MCP compatibility limit".to_string());
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                return Ok(targets);
+            }
+        }
+    }
+
+    async fn control_findings(&self, project_id: Uuid) -> Result<Vec<FindingViewV1>, String> {
+        let mut findings = Vec::new();
+        let mut cursor = None;
+        loop {
+            let result = self
+                .control_query(ControlQueryV1::ListFindings {
+                    project_id,
+                    page: PageRequestV1 {
+                        cursor,
+                        limit: self.config.control_api.default_page_size,
+                    },
+                })
+                .await?;
+            let ControlResultV1::Findings(page) = result else {
+                return Err("control service returned an unexpected finding result".to_string());
+            };
+            findings.extend(page.items);
+            if findings.len() > MAX_LEGACY_CONTROL_ITEMS {
+                return Err(
+                    "control finding result exceeds the MCP compatibility limit".to_string()
+                );
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                return Ok(findings);
+            }
+        }
+    }
+
+    async fn control_modules(&self, family: &str) -> Result<Vec<ModuleViewV1>, String> {
+        let mut modules = Vec::new();
+        let mut cursor = None;
+        loop {
+            let response = self
+                .execute_control(ControlRequestV1::query(
+                    ControlQueryV1::ListModules {
+                        family: Some(family.to_string()),
+                        page: PageRequestV1 {
+                            cursor,
+                            limit: self.config.control_api.default_page_size,
+                        },
+                    },
+                    self.config.engagement.as_ref().map(|engagement| engagement.id),
+                ))
+                .await?;
+            let ControlResultV1::Modules(page) = response else {
+                return Err("control service returned an unexpected module result".to_string());
+            };
+            modules.extend(page.items);
+            if modules.len() > MAX_LEGACY_CONTROL_ITEMS {
+                return Err("control module result exceeds the MCP compatibility limit".to_string());
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                return Ok(modules);
+            }
+        }
+    }
+
     /// List the default application-security scan catalog as JSON.
-    #[must_use]
-    pub fn do_list_modules(&self) -> String {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the shared control query or legacy serialization fails.
+    pub async fn do_list_modules(&self) -> Result<String, String> {
+        let selected: std::collections::BTreeSet<_> =
+            self.control_modules("web").await?.into_iter().map(|module| module.id).collect();
         let modules = crate::runner::orchestrator::application_modules();
         let info: Vec<serde_json::Value> = modules
             .iter()
+            .filter(|module| selected.contains(module.id()))
             .map(|m| {
                 serde_json::json!({
                     "id": m.id(),
@@ -470,7 +680,7 @@ impl ScorchKitServer {
                 })
             })
             .collect();
-        serde_json::to_string_pretty(&info).unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"))
+        serde_json::to_string_pretty(&info).map_err(|error| error.to_string())
     }
 
     /// Check which external tools are installed as JSON.
@@ -824,15 +1034,19 @@ impl ScorchKitServer {
     ///
     /// Returns an error when authorization, request validation, or initial persistence fails.
     pub async fn do_scan_job_start(&self, params: ScanParams) -> Result<String, String> {
-        let job = self.submit_scan_job(params).await?;
-        let response = serde_json::to_string_pretty(&job).map_err(|error| error.to_string())?;
-        let jobs = self.jobs.clone();
-        tokio::spawn(async move {
-            if let Err(error) = jobs.run(job.id).await {
-                tracing::warn!(job_id = %job.id, %error, "scan job runner stopped");
-            }
-        });
-        Ok(response)
+        let result = self
+            .control_command(ControlCommandV1::StartJob {
+                target: params.target,
+                profile: params.profile,
+                modules: params.modules.as_deref().map(comma_separated),
+                skip: params.skip.as_deref().map_or_else(Vec::new, comma_separated),
+            })
+            .await?;
+        let ControlResultV1::Job(job) = result else {
+            return Err("control service returned an unexpected scan job result".to_string());
+        };
+        let stored = self.jobs.get(job.id).await.map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&stored).map_err(|error| error.to_string())
     }
 
     /// Return the complete persisted state of one scan job.
@@ -841,8 +1055,12 @@ impl ScorchKitServer {
     ///
     /// Returns an error when the UUID is invalid or the job does not exist.
     pub async fn do_scan_job_status(&self, params: ScanJobRefParams) -> Result<String, String> {
-        let job =
-            self.jobs.get(job_id(&params.job_id)?).await.map_err(|error| error.to_string())?;
+        let id = job_id(&params.job_id)?;
+        let result = self.control_query(ControlQueryV1::GetJob { id }).await?;
+        if !matches!(result, ControlResultV1::Job(_)) {
+            return Err("control service returned an unexpected scan job result".to_string());
+        }
+        let job = self.jobs.get(id).await.map_err(|error| error.to_string())?;
         serde_json::to_string_pretty(&job).map_err(|error| error.to_string())
     }
 
@@ -852,8 +1070,12 @@ impl ScorchKitServer {
     ///
     /// Returns an error when the UUID is invalid, missing, or no longer cancellable.
     pub async fn do_scan_job_cancel(&self, params: ScanJobRefParams) -> Result<String, String> {
-        let job =
-            self.jobs.cancel(job_id(&params.job_id)?).await.map_err(|error| error.to_string())?;
+        let id = job_id(&params.job_id)?;
+        let result = self.control_command(ControlCommandV1::CancelJob { id }).await?;
+        if !matches!(result, ControlResultV1::Job(_)) {
+            return Err("control service returned an unexpected scan job result".to_string());
+        }
+        let job = self.jobs.get(id).await.map_err(|error| error.to_string())?;
         serde_json::to_string_pretty(&job).map_err(|error| error.to_string())
     }
 
@@ -863,16 +1085,14 @@ impl ScorchKitServer {
     ///
     /// Returns an error when the job is not interrupted or current authorization differs.
     pub async fn do_scan_job_resume(&self, params: ScanJobRefParams) -> Result<String, String> {
-        let job =
-            self.jobs.resume(job_id(&params.job_id)?).await.map_err(|error| error.to_string())?;
-        let response = serde_json::to_string_pretty(&job).map_err(|error| error.to_string())?;
-        let jobs = self.jobs.clone();
-        tokio::spawn(async move {
-            if let Err(error) = jobs.run(job.id).await {
-                tracing::warn!(job_id = %job.id, %error, "resumed scan job runner stopped");
-            }
-        });
-        Ok(response)
+        let result = self
+            .control_command(ControlCommandV1::ResumeJob { id: job_id(&params.job_id)? })
+            .await?;
+        let ControlResultV1::Job(job) = result else {
+            return Err("control service returned an unexpected scan job result".to_string());
+        };
+        let stored = self.jobs.get(job.id).await.map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&stored).map_err(|error| error.to_string())
     }
 
     async fn submit_scan_job(&self, params: ScanParams) -> Result<ScanJob, String> {
@@ -894,10 +1114,16 @@ impl ScorchKitServer {
     /// Returns an error if the project name already exists or the database fails.
     pub async fn do_project_create(&self, params: ProjectCreateParams) -> Result<String, String> {
         let desc = params.description.as_deref().unwrap_or("");
-        let project = projects::create_project(self.require_pool()?, &params.name, desc)
-            .await
-            .map_err(|e| e.to_string())?;
-        serde_json::to_string_pretty(&project).map_err(|e| e.to_string())
+        let result = self
+            .control_command(ControlCommandV1::CreateProject {
+                name: params.name,
+                description: desc.to_string(),
+            })
+            .await?;
+        let ControlResultV1::Project(project) = result else {
+            return Err("control service returned an unexpected project result".to_string());
+        };
+        serde_json::to_string_pretty(&project).map_err(|error| error.to_string())
     }
 
     /// List all projects.
@@ -906,9 +1132,8 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the database query fails.
     pub async fn do_project_list(&self) -> Result<String, String> {
-        let project_list =
-            projects::list_projects(self.require_pool()?).await.map_err(|e| e.to_string())?;
-        serde_json::to_string_pretty(&project_list).map_err(|e| e.to_string())
+        serde_json::to_string_pretty(&self.control_projects().await?)
+            .map_err(|error| error.to_string())
     }
 
     /// Show project details.
@@ -917,26 +1142,24 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database fails.
     pub async fn do_project_show(&self, params: ProjectRefParams) -> Result<String, String> {
-        let project = resolve_project(self.require_pool()?, &params.project)
-            .await
-            .map_err(|e| e.to_string())?;
-        let targets = projects::list_targets(self.require_pool()?, project.id)
-            .await
-            .map_err(|e| e.to_string())?;
+        let project = self.resolve_control_project(&params.project).await?;
+        let targets = self.control_targets(project.id).await?;
+        let report =
+            self.control_query(ControlQueryV1::GetProjectReport { project_id: project.id }).await?;
+        let ControlResultV1::Report(report) = report else {
+            return Err("control service returned an unexpected project report".to_string());
+        };
         let scan_list =
             scans::list_scans(self.require_pool()?, project.id).await.map_err(|e| e.to_string())?;
-        let finding_list = findings::list_findings(self.require_pool()?, project.id)
-            .await
-            .map_err(|e| e.to_string())?;
 
         let result = serde_json::json!({
             "project": project,
             "targets": targets,
-            "scan_count": scan_list.len(),
-            "finding_count": finding_list.len(),
+            "scan_count": report.scan_count,
+            "finding_count": report.finding_count,
             "recent_scans": scan_list.iter().take(5).collect::<Vec<_>>(),
         });
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+        serde_json::to_string_pretty(&result).map_err(|error| error.to_string())
     }
 
     /// Delete a project.
@@ -945,22 +1168,28 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database fails.
     pub async fn do_project_delete(&self, params: ProjectDeleteParams) -> Result<String, String> {
-        let project = resolve_project(self.require_pool()?, &params.project)
-            .await
-            .map_err(|e| e.to_string())?;
+        let project = self.resolve_control_project(&params.project).await?;
 
         if !params.force {
-            return Ok(format!(
-                "{{\"warning\": \"This will delete project '{}' and ALL associated data. \
-                 Set force=true to confirm.\"}}",
-                project.name
-            ));
+            return serde_json::to_string_pretty(&serde_json::json!({
+                "warning": format!(
+                    "This will delete project '{}' and ALL associated data. Set force=true to confirm.",
+                    project.name
+                ),
+            }))
+            .map_err(|error| error.to_string());
         }
 
-        projects::delete_project(self.require_pool()?, project.id)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(format!("{{\"deleted\": true, \"project\": \"{}\"}}", project.name))
+        let result =
+            self.control_command(ControlCommandV1::DeleteProject { id: project.id }).await?;
+        if !matches!(result, ControlResultV1::Acknowledged { changed: true, affected: 1 }) {
+            return Err("control service did not confirm project deletion".to_string());
+        }
+        serde_json::to_string_pretty(&serde_json::json!({
+            "deleted": true,
+            "project": project.name,
+        }))
+        .map_err(|error| error.to_string())
     }
 
     /// Scan within a project, persisting results.
@@ -1035,32 +1264,30 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database fails.
     pub async fn do_project_findings(&self, params: FindingListParams) -> Result<String, String> {
-        let project = resolve_project(self.require_pool()?, &params.project)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let finding_list = match (params.severity.as_deref(), params.status.as_deref()) {
-            (Some(sev), _) => findings::find_by_severity(self.require_pool()?, project.id, sev)
-                .await
-                .map_err(|e| e.to_string())?,
-            (_, Some(st)) => {
-                let vuln_status =
-                    crate::storage::models::VulnStatus::from_db(st).ok_or_else(|| {
-                        format!(
-                            "invalid status '{st}'. \
-                             Valid: new, acknowledged, false_positive, remediated, verified"
-                        )
-                    })?;
-                findings::find_by_status(self.require_pool()?, project.id, vuln_status)
-                    .await
-                    .map_err(|e| e.to_string())?
+        let project = self.resolve_control_project(&params.project).await?;
+        let mut finding_list = self.control_findings(project.id).await?;
+        if let Some(severity) = params.severity.as_deref() {
+            if !matches!(severity, "critical" | "high" | "medium" | "low" | "info") {
+                return Err(format!("invalid severity '{severity}'"));
             }
-            _ => findings::list_findings(self.require_pool()?, project.id)
-                .await
-                .map_err(|e| e.to_string())?,
-        };
-
-        serde_json::to_string_pretty(&finding_list).map_err(|e| e.to_string())
+            finding_list.retain(|finding| {
+                finding.canonical.get("severity").and_then(serde_json::Value::as_str)
+                    == Some(severity)
+            });
+        } else if let Some(status) = params.status.as_deref() {
+            if crate::storage::models::VulnStatus::from_db(status).is_none() {
+                return Err(format!(
+                    "invalid status '{status}'. Valid: new, acknowledged, false_positive, \
+                     remediated, verified"
+                ));
+            }
+            finding_list.retain(|finding| finding.status == status);
+        }
+        let projected = finding_list
+            .into_iter()
+            .map(legacy_finding_projection)
+            .collect::<Result<Vec<_>, _>>()?;
+        serde_json::to_string_pretty(&projected).map_err(|error| error.to_string())
     }
 
     /// Show a single finding.
@@ -1071,11 +1298,12 @@ impl ScorchKitServer {
     pub async fn do_finding_show(&self, params: FindingRefParams) -> Result<String, String> {
         let id = Uuid::parse_str(&params.id)
             .map_err(|e| format!("invalid finding UUID '{}': {e}", params.id))?;
-        let finding = findings::get_finding(self.require_pool()?, id)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("finding '{}' not found", params.id))?;
-        serde_json::to_string_pretty(&finding).map_err(|e| e.to_string())
+        let result = self.control_query(ControlQueryV1::GetFinding { id }).await?;
+        let ControlResultV1::Finding(finding) = result else {
+            return Err("control service returned an unexpected finding result".to_string());
+        };
+        serde_json::to_string_pretty(&legacy_finding_projection(finding)?)
+            .map_err(|error| error.to_string())
     }
 
     /// Update a finding's lifecycle status.
@@ -1119,14 +1347,19 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database fails.
     pub async fn do_target_add(&self, params: TargetAddParams) -> Result<String, String> {
-        let project = resolve_project(self.require_pool()?, &params.project)
-            .await
-            .map_err(|e| e.to_string())?;
+        let project = self.resolve_control_project(&params.project).await?;
         let label = params.label.as_deref().unwrap_or("");
-        let target = projects::add_target(self.require_pool()?, project.id, &params.url, label)
-            .await
-            .map_err(|e| e.to_string())?;
-        serde_json::to_string_pretty(&target).map_err(|e| e.to_string())
+        let result = self
+            .control_command(ControlCommandV1::AddTarget {
+                project_id: project.id,
+                url: params.url,
+                label: label.to_string(),
+            })
+            .await?;
+        let ControlResultV1::Target(target) = result else {
+            return Err("control service returned an unexpected target result".to_string());
+        };
+        serde_json::to_string_pretty(&target).map_err(|error| error.to_string())
     }
 
     /// List targets for a project.
@@ -1135,13 +1368,9 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project is not found or the database fails.
     pub async fn do_target_list(&self, params: ProjectRefParams) -> Result<String, String> {
-        let project = resolve_project(self.require_pool()?, &params.project)
-            .await
-            .map_err(|e| e.to_string())?;
-        let targets = projects::list_targets(self.require_pool()?, project.id)
-            .await
-            .map_err(|e| e.to_string())?;
-        serde_json::to_string_pretty(&targets).map_err(|e| e.to_string())
+        let project = self.resolve_control_project(&params.project).await?;
+        serde_json::to_string_pretty(&self.control_targets(project.id).await?)
+            .map_err(|error| error.to_string())
     }
 
     /// Remove a target from a project.
@@ -1150,15 +1379,13 @@ impl ScorchKitServer {
     ///
     /// Returns an error if the project/target is not found or the database fails.
     pub async fn do_target_remove(&self, params: TargetRemoveParams) -> Result<String, String> {
-        let project = resolve_project(self.require_pool()?, &params.project)
-            .await
-            .map_err(|e| e.to_string())?;
+        let project = self.resolve_control_project(&params.project).await?;
         let target_id = Uuid::parse_str(&params.id)
             .map_err(|e| format!("invalid target UUID '{}': {e}", params.id))?;
-        let removed = projects::remove_target(self.require_pool()?, project.id, target_id)
-            .await
-            .map_err(|e| e.to_string())?;
-        if removed {
+        let result = self
+            .control_command(ControlCommandV1::RemoveTarget { project_id: project.id, target_id })
+            .await?;
+        if matches!(result, ControlResultV1::Acknowledged { changed: true, affected: 1 }) {
             Ok(format!("{{\"removed\": true, \"id\": \"{target_id}\"}}"))
         } else {
             Err(format!("target '{}' not found", params.id))
@@ -1928,7 +2155,7 @@ impl ScorchKitServer {
         contracts, categories, descriptions, and external tool requirements. Compatibility \
         network, enterprise, and cloud modules are excluded. Returns a JSON array.")]
     async fn list_modules(&self, context: McpCallContext) -> McpToolCallResult {
-        Self::mcp_tool_result(context, Ok(self.do_list_modules()))
+        Self::mcp_tool_result(context, self.do_list_modules().await)
     }
 
     #[tool(description = "Check which external security tools (nmap, nuclei, sqlmap, etc.) are \
@@ -2355,6 +2582,7 @@ mod tests {
         let policy = EngagementPolicy::default()
             .allow_scope(ScopeRule::Exact("localhost".to_string()))
             .allow_capability(Capability::DastScan)
+            .allow_capability(Capability::LocalState)
             .allow_effect(EffectClass::ActiveSafe);
         let engagement = Engagement::new("mcp-job-wrapper-test", policy);
         let config = AppConfig { engagement: Some(engagement), ..AppConfig::default() };
@@ -2363,7 +2591,7 @@ mod tests {
 
     fn job_request(server: &ScorchKitServer) -> DastJobRequest {
         DastJobRequest::new(
-            "http://localhost:1",
+            "http://localhost:1/",
             "quick",
             server.config.engagement.clone().expect("job engagement"),
         )

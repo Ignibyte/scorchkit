@@ -244,23 +244,20 @@ async fn application_context_redacts_registered_target_query_values_and_labels()
     let Some(pool) = get_pool_or_skip().await else {
         return;
     };
-    let server = test_server(pool);
+    let server = test_server(pool.clone());
     let project = unique_name("mcp-appsec-context");
-    server
-        .do_project_create(ProjectCreateParams {
-            name: project.clone(),
-            description: Some("application workflow context fixture".to_string()),
-        })
-        .await
-        .expect("create context project");
-    server
-        .do_target_add(TargetAddParams {
-            project: project.clone(),
-            url: "https://example.com/app?token=registered-target-fixture-secret".to_string(),
-            label: Some("api_key=registered-label-fixture-secret".to_string()),
-        })
-        .await
-        .expect("register context target");
+    let stored =
+        storage::projects::create_project(&pool, &project, "application workflow context fixture")
+            .await
+            .expect("create context project");
+    storage::projects::add_target(
+        &pool,
+        stored.id,
+        "https://example.com/app?token=registered-target-fixture-secret",
+        "api_key=registered-label-fixture-secret",
+    )
+    .await
+    .expect("seed legacy context target");
     let mut params = workflow_context_params();
     params.project = Some(project);
     let context_json = server.do_application_context(params).await.expect("project context");
@@ -271,6 +268,7 @@ async fn application_context_redacts_registered_target_query_values_and_labels()
     assert!(context.registered_targets[0].label.is_some());
     assert!(!context_json.contains("registered-target-fixture-secret"));
     assert!(!context_json.contains("registered-label-fixture-secret"));
+    storage::projects::delete_project(&pool, stored.id).await.expect("delete context project");
 }
 
 #[tokio::test]
@@ -422,7 +420,7 @@ async fn test_server_creation() {
 #[tokio::test]
 async fn test_tool_list_modules() {
     let server = test_server_without_database();
-    let result = server.do_list_modules();
+    let result = server.do_list_modules().await.expect("list modules");
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
     assert_eq!(parsed.len(), 67);
     assert!(parsed
@@ -833,21 +831,24 @@ async fn test_tool_project_show() {
 async fn test_tool_project_delete() {
     let Some(pool) = get_pool_or_skip().await else { return };
     let server = test_server(pool.clone());
-    let name = unique_name("mcp-delete");
+    let name = format!("{}-quoted-\"name", unique_name("mcp-delete"));
 
     storage::projects::create_project(&pool, &name, "").await.unwrap();
 
     // Without force — warning
     let result =
         server.do_project_delete(ProjectDeleteParams { project: name.clone(), force: false }).await;
-    assert!(result.is_ok());
-    assert!(result.unwrap().contains("warning"));
+    let warning: serde_json::Value =
+        serde_json::from_str(&result.expect("warning JSON")).expect("valid warning JSON");
+    assert!(warning["warning"].as_str().is_some_and(|value| value.contains(&name)));
 
     // With force — delete
     let result =
         server.do_project_delete(ProjectDeleteParams { project: name.clone(), force: true }).await;
-    assert!(result.is_ok());
-    assert!(result.unwrap().contains("deleted"));
+    let deleted: serde_json::Value =
+        serde_json::from_str(&result.expect("deleted JSON")).expect("valid deletion JSON");
+    assert_eq!(deleted["deleted"], true);
+    assert_eq!(deleted["project"], name);
 
     let gone = storage::projects::get_project_by_name(&pool, &name).await.unwrap();
     assert!(gone.is_none());
@@ -1118,7 +1119,7 @@ async fn test_tool_target_add() {
         .await;
     assert!(result.is_ok(), "target_add should succeed");
     let json: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
-    assert_eq!(json["url"], "https://example.com");
+    assert_eq!(json["url"], "https://example.com/");
 
     // Cleanup
     let project = storage::projects::get_project_by_name(&pool, &name).await.unwrap().unwrap();

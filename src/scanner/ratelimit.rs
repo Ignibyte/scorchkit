@@ -173,8 +173,69 @@ const LOGIN_PATHS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     // Unit tests for the rate limit testing module's constant data integrity.
+
+    async fn run_login_fixture(block_on_tenth_post: bool) -> Vec<Finding> {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind rate-limit fixture");
+        let address = listener.local_addr().expect("rate-limit fixture address");
+        let server = tokio::spawn(async move {
+            for request_index in 0..=10 {
+                let (mut socket, _) = listener.accept().await.expect("accept rate-limit request");
+                let mut request = [0_u8; 4096];
+                let read = socket.read(&mut request).await.expect("read rate-limit request");
+                assert!(read > 0, "rate-limit fixture request must not be empty");
+                let body = if block_on_tenth_post && request_index == 10 {
+                    "rate limit"
+                } else {
+                    "normal"
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.expect("write rate-limit response");
+            }
+        });
+
+        let target = crate::engine::target::Target::parse(&format!("http://{address}"))
+            .expect("rate-limit target");
+        let context = crate::engine::scan_context::ScanContext::new(
+            target,
+            std::sync::Arc::new(crate::config::AppConfig::default()),
+            reqwest::Client::new(),
+            Vec::new(),
+        );
+        let findings = RateLimitModule.run(&context).await.expect("rate-limit scan");
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("rate-limit fixture must complete promptly")
+            .expect("rate-limit fixture server");
+        findings
+    }
+
+    #[tokio::test]
+    async fn ten_unblocked_attempts_report_missing_rate_limit() {
+        let findings = run_login_fixture(false).await;
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Medium);
+        assert!(findings[0].title.contains("No Rate Limiting"));
+        assert!(findings[0].evidence.as_deref().is_some_and(|evidence| evidence.contains("10")));
+    }
+
+    #[tokio::test]
+    async fn rate_limit_text_on_tenth_attempt_reports_active_protection() {
+        let findings = run_login_fixture(true).await;
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Info);
+        assert!(findings[0].title.contains("Rate Limiting Active"));
+        assert!(findings[0].evidence.as_deref().is_some_and(|evidence| evidence.contains("10")));
+    }
 
     /// Verify that `LOGIN_PATHS` is non-empty and contains well-known authentication
     /// endpoint paths.

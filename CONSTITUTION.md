@@ -181,3 +181,39 @@ fixed scope, and approved the local commit. The exact repair scope is those 61 s
 functions across four files. The sealed current-tree recheck caught all 61, reconstructing 233/233
 viable outcomes with four pre-repair mutation-input snapshots and no repeated broad sweep. The next
 broad inventory remains scheduled work.
+
+### 2026-08-23 amendment — TICKET-025 stopped-campaign repair
+
+This amendment affects §§0, 3, and 15 only for the owner-approved TICKET-025 repair. The scheduled
+FULL campaign completed shards `0/4` and `1/4`, then stopped shard `2/4` after 138 outcomes; shard
+`3/4` never started. These artifacts are incomplete discovery evidence and may never be reported as
+a completed FULL result, mutation score, or delivery proof.
+
+The owner approved all and only the 13 unique survivor names observed before the stop as the
+candidate scope and directed ScorchKit to move to SK-048 afterward. The fresh completed exact-name
+baseline caught one candidate and reproduced 12 misses, making those 12 the authoritative repair
+scope. A valid TICKET-025 FOCUSED-REPAIR receipt requires that completed 13-name baseline, snapshots
+of every mutation input changed by the repair, a completed current-tree recheck of exactly the 12
+baseline misses, zero final misses, at least 95% viable MSI across all 13 candidates, and every
+non-mutation delivery lane. No other mutation selection, merged FULL claim, coverage-floor change,
+exclusion, retry, skip, ignore, suppression, or synthetic outcome is authorized. This one-ticket
+exception does not make any incomplete broad output passing evidence and does not change the
+ordinary DIFF/FULL requirement for later tickets.
+
+### 2026-08-23 amendment — TICKET-027 stopped repeat mutation repair
+
+This amendment affects §§0, 3, and 15 only for the owner-approved TICKET-027 repair. The owner
+stopped a repeat DIFF campaign after it had recorded 26 outcomes, including 18 misses, because the
+prior completed run had already identified the original six survivors. The interrupted DIFF is
+incomplete discovery evidence and may never be reported as a completed DIFF result, mutation score,
+or delivery proof. The 12 later misses are not part of the approved repair scope.
+
+The owner approved all and only the original six survivor names in `src/cli/control_adapter.rs` and
+`src/cli/control_api.rs`, directed ScorchKit to repair them, and directed work to move to SK-050
+without another broad mutation run. A fresh completed exact-name pre-repair baseline reproduced all
+six misses. A valid TICKET-027 FOCUSED-REPAIR receipt requires that six-name baseline, snapshots of
+all three mutation inputs changed by the repair, a completed current-tree recheck of exactly those
+six names with zero misses, at least 95% viable MSI across the six candidates, and every
+non-mutation delivery lane. No other mutation selection, merged DIFF/FULL claim, coverage-floor
+change, exclusion, retry, skip, ignore, suppression, or synthetic outcome is authorized. This
+one-ticket exception does not change the ordinary DIFF/FULL requirement for later tickets.

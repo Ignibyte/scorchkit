@@ -50,6 +50,11 @@ repeat saves within one scan deduplicate, while later scans and different eviden
 Agent analysis has its own child table and cannot overwrite or masquerade as scanner evidence. See
 `docs/architecture/application-security-evidence.md`.
 
+Public control reads do not serialize these duplicated rows directly. They reconstruct the
+canonical raw finding or evidence, normalize it, compare every duplicated projection and
+scan/project relationship, and fail the whole query on divergence. See
+`docs/architecture/control-api.md`.
+
 `scan_records.execution_evidence` stores the stable `scorchkit.scan-execution-evidence.v1`
 projection: exact execution status, typed module outcomes, and the optional canonical application
 supply-chain assessment. Legacy callers continue to write an empty object; production scan callers

@@ -1,0 +1,23 @@
+[scan]
+timeout_seconds = 420
+max_concurrent_modules = 3
+user_agent = "ScorchKit/2.1.0 release-upgrade-fixture"
+follow_redirects = false
+max_redirects = 4
+rate_limit = 7
+profile = "standard"
+scope_include = ["https://fixture.example.test/app/**"]
+scope_exclude = ["https://fixture.example.test/app/logout"]
+insecure = false
+
+[database]
+max_connections = 7
+migrate_on_startup = false
+
+[report]
+output_dir = "release-fixture-reports"
+include_evidence = true
+include_remediation = false
+
+[audit_log]
+enabled = false

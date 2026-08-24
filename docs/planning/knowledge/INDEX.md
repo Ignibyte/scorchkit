@@ -126,6 +126,17 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-transitive-platform-feature-contract-001` | When an upgraded dependency obtains local identity or platform configuration through a transitive crate with defaults off, declare the minimum platform feature and test the semantic value. | `AAR-024-dependency-debt` |
 | `PR-scorchkit-config-parser-error-layering-001` | Exercise each wrapped configuration-parser rejection layer with credential-shaped input and assert redacted, compatible public diagnostics. | `AAR-024-dependency-debt` |
 | `PR-scorchkit-validation-evidence-before-receipt-001` | Populate tracked validation evidence before the receipt-producing gate, transition immediately after green, and reserve final archive outcomes for the required delivery rerun. | `AAR-024-dependency-debt` |
+| `PR-scorchkit-partial-mutation-candidate-reproduction-001` | Treat names from an incomplete mutation run as candidates; execute one completed exact pre-repair selection and let its misses define the repair/recheck set. | `AAR-025-quality-ratchet` |
+| `PR-scorchkit-shell-validator-accumulate-state-001` | Stream validators with finalization blocks accumulate invalid state and decide success once at the end, with empty, blank, duplicate, and valid fixtures. | `AAR-025-quality-ratchet` |
+| `PR-scorchkit-release-target-header-binding-001` | Bind release target names and digests to bounded executable-format and architecture checks at build, assembly, and readback. | `AAR-026-reproducible-releases` |
+| `PR-scorchkit-release-toolchain-effect-pin-001` | Select the exact release toolchain for metadata resolution, component/target installation, and compilation rather than inferring it from a later working directory. | `AAR-026-reproducible-releases` |
+| `PR-scorchkit-expected-failure-transition-proof-001` | Expected-failure integration tests observe the intended committed marker or state transition in addition to a failure status. | `AAR-026-reproducible-releases` |
+| `PR-scorchkit-restore-integrity-before-effect-001` | Verify snapshot identity immediately before restore and after consumption, and restore only into a separately bounded destination. | `AAR-026-reproducible-releases` |
+
+| `PR-scorchkit-control-recovery-exact-candidate-001` | Materialize one bounded sentinel-checked recovery candidate set, authorize every target in that set, and mutate only those exact identities. | `AAR-027-control-api` |
+| `PR-scorchkit-secretless-control-target-001` | Revalidate stored and new control targets as canonical secretless URLs before persistence, public projection, or lifecycle continuation. | `AAR-027-control-api` |
+| `PR-scorchkit-immutable-store-pagination-001` | Implement continuation at the store with immutable ordered keys and explicit missing-cursor failure; never page a capped compatibility collection. | `AAR-027-control-api` |
+| `PR-scorchkit-focused-raw-artifact-preservation-001` | Copy completed mutation inventories and raw outcomes to a ticket-specific immutable slot before any follow-up invocation. | `AAR-027-control-api` |
 
 ## Register
 
@@ -230,3 +241,13 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-optional-lock-activation-assumption-001` | verification-plan gap | `AAR-024-dependency-debt` |
 | `BF-scorchkit-layered-config-error-redaction-001` | security test gap | `AAR-024-dependency-debt` |
 | `BF-scorchkit-validation-note-receipt-drift-001` | process failure | `AAR-024-dependency-debt` |
+| `BF-scorchkit-partial-mutation-survivor-overstatement-001` | mutation-measurement failure | `AAR-025-quality-ratchet` |
+| `BF-scorchkit-awk-end-status-overwrite-001` | validation bug | `AAR-025-quality-ratchet` |
+| `BF-scorchkit-release-filename-platform-substitution-001` | release-integrity bug | `AAR-026-reproducible-releases` |
+| `BF-scorchkit-release-runner-default-toolchain-001` | reproducibility bug | `AAR-026-reproducible-releases` |
+| `BF-scorchkit-postgres-expected-error-conflation-001` | recovery-test bug | `AAR-026-reproducible-releases` |
+| `BF-scorchkit-snapshot-post-effect-verification-001` | recovery-integrity bug | `AAR-026-reproducible-releases` |
+| `BF-scorchkit-control-recovery-moving-candidate-001` | authorization-order bug | `AAR-027-control-api` |
+| `BF-scorchkit-control-url-secret-roundtrip-001` | secret-handling bug | `AAR-027-control-api` |
+| `BF-scorchkit-control-materialized-page-tail-001` | resource-bound bug | `AAR-027-control-api` |
+| `BF-scorchkit-focused-baseline-overwrite-001` | mutation-evidence failure | `AAR-027-control-api` |

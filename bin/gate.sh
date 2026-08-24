@@ -183,6 +183,7 @@ shellcheck_gate() {
     bash bin/mutants.sh --selftest || return 1
     bash bin/focused-mutation-evidence.sh --selftest || return 1
     bash bin/sealed-mutation-baseline.sh --selftest || return 1
+    bash bin/release.sh --selftest || return 1
     bash bin/pipeline.sh selftest || return 1
     bash .githooks/pre-commit --selftest || return 1
     GATE_SELFTEST=1 bash bin/gate.sh
