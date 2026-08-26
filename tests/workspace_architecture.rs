@@ -9,7 +9,7 @@ const PACKAGES: &[(&str, &[&str])] = &[
     ("scorchkit-cli", &[]),
     ("scorchkit-cloud", &["scorchkit-core"]),
     ("scorchkit-code", &["scorchkit-core"]),
-    ("scorchkit-config", &["scorchkit-core", "scorchkit-policy"]),
+    ("scorchkit-config", &["scorchkit-control", "scorchkit-core", "scorchkit-policy"]),
     ("scorchkit-control", &[]),
     ("scorchkit-core", &["scorchkit-policy"]),
     ("scorchkit-executor", &["scorchkit-config", "scorchkit-core", "scorchkit-policy"]),

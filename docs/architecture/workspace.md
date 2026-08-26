@@ -67,9 +67,15 @@ The root facade preserves existing import paths and type identity. For example,
 policy, configuration, control, scheduler, job, process, family-category, storage, MCP, CLI, and agent
 contracts covered by the architecture test.
 
-Root defaults remain inert. The root forwards `storage`, `mcp`, `control-api`, `infra`, and `cloud`
-only to packages that need those parser or configuration variants. Package extraction does
-not authorize a target or enable a stronger effect class.
+Root defaults remain inert. The root forwards `storage`, `mcp`, `control-api`, `team`, `infra`, and
+`cloud` only to packages that need those parser or configuration variants. Package extraction
+does not authorize a target or enable a stronger effect class.
+
+The optional `team` feature composes `control-api`, storage, Ring AEAD, the team CLI variant, and
+the configuration contract only at the root. `scorchkit-control` owns provider-neutral team DTOs;
+`scorchkit-config` owns serializable environment references and hard bounds. PostgreSQL,
+filesystem, credential, encryption, HTTP, and recovery effects stay in root composition. See
+[Authenticated team service](team-service.md).
 
 ## Workspace quality contract
 

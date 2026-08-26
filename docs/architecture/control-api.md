@@ -118,6 +118,11 @@ identity headers, rechecks engagement eligibility, and applies hard resource bou
 control hosting, direct TLS, OAuth/OIDC, tenants, RBAC, and multiple selectable engagements remain
 unsupported; authenticated remote MCP is the supported remote automation profile.
 
+The optional `team` feature wraps this unchanged application service with a separate
+database-per-project routing, RBAC, audit, encrypted-object, and trusted-proxy transport boundary.
+It does not widen or retrofit the local control listener. See
+[Authenticated team service](team-service.md).
+
 ## Optional local console client
 
 The separately locked `apps/scorchkit-console` Rustal app consumes these public HTTP contracts; it

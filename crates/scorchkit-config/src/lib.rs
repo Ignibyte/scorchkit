@@ -11,6 +11,8 @@ pub mod mcp;
 pub mod model_analysis;
 pub mod network_credentials;
 pub mod run_pipeline;
+#[cfg(feature = "team")]
+pub mod team;
 pub mod webhook;
 
 #[cfg(feature = "cloud")]
@@ -26,6 +28,11 @@ pub use model_analysis::{
 };
 pub use network_credentials::NetworkCredentials;
 pub use run_pipeline::RunProcessorConfig;
+#[cfg(feature = "team")]
+pub use team::{
+    TeamCellConfig, TeamKeyReferenceConfig, TeamPrincipalBindingConfig, TeamQuotaConfig,
+    TeamRetentionConfig, TeamServiceConfig, TeamTlsTermination,
+};
 pub use types::*;
 pub use webhook::WebhookConfig;
 

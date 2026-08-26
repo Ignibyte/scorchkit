@@ -1,9 +1,9 @@
 ---
 title: INTAKE-team-suite
-status: candidate
+status: promoted
 created: 2026-08-21
-ticket:
-pipeline_spec:
+ticket: TICKET-034
+pipeline_spec: docs/planning/pipeline/active/team-suite.spec.md
 ---
 
 # Authenticated multi-user ScorchKit suite

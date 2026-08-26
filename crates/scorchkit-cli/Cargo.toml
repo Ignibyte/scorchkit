@@ -9,6 +9,7 @@ license = "MIT"
 default = []
 cloud = []
 control-api = ["storage"]
+team = ["control-api"]
 infra = []
 mcp = []
 storage = []

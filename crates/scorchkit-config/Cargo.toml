@@ -8,8 +8,11 @@ license = "MIT"
 [features]
 default = []
 cloud = []
+team = ["dep:chrono", "dep:scorchkit-control"]
 
 [dependencies]
+chrono = { version = "0.4", optional = true }
+scorchkit-control = { version = "=3.0.0", path = "../scorchkit-control", optional = true }
 scorchkit-core = { version = "=3.0.0", path = "../scorchkit-core" }
 scorchkit-policy = { version = "=3.0.0", path = "../scorchkit-policy" }
 serde = { version = "1", features = ["derive"] }

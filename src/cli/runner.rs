@@ -315,6 +315,9 @@ pub async fn execute(cli: Cli) -> Result<()> {
             crate::cli::control_api::run_control_api(&config, database_url.as_deref()).await
         }
 
+        #[cfg(feature = "team")]
+        Commands::TeamApi => crate::cli::team::run_team_api(config).await,
+
         #[cfg(feature = "infra")]
         Commands::Infra { target, profile, modules, skip, quiet } => {
             run_infra(

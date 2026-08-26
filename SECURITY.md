@@ -74,6 +74,12 @@ infrastructure. The test suite never treats a timeout against an external addres
 - The local control API is absent by default and requires an environment-backed bearer, exact
   principal-to-engagement binding, loopback bind and Host, constant-time credential verification,
   credential scrubbing, and bounded bodies, responses, concurrency, journals, and subscribers.
+- The optional team service binds each environment-backed bearer to one subject, role, cell,
+  organization, project, and engagement before routing. Cells require distinct live PostgreSQL
+  databases, non-overlapping exact-authorized object roots and key rings, per-cell queues,
+  journals, quotas, append-only intent/outcome audit, authenticated encryption, and
+  distinct-destination snapshot verification. The backend remains loopback-only behind a trusted
+  same-host TLS proxy.
 - Webhook events are redacted before durable enqueue, and every delivery requires an exact
   `webhook-delivery`/`active-safe` grant for the configured URL, redirects, and resolved addresses.
 - Release publication requires one immutable semantic-version tag and revision, exact native
@@ -142,6 +148,11 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
   serialization; finding triage children additionally verify ordered state, exact contributor and
   evidence ownership, suppression scope and time bounds, and current-state parity. Divergence fails
   the complete query.
+- A build with `team` adds the separate `scorchkit team-api` startup path. It supports static
+  environment-indirect bearer bindings and database-per-project cells only. Direct TLS/public
+  binds, OAuth/OIDC/password/session ownership, browser-held bearers, row-shared tenants,
+  cross-cell superadministration, cloud object credentials, and in-place restore are unsupported.
+  See [team-service architecture](docs/architecture/team-service.md).
 - Durable CLI and MCP job hosts may deliver configured webhooks through PostgreSQL. Queue records
   contain a destination identity, redacted event payload, and engagement snapshot, never the
   destination URL or authorization value. Each direct and redirected request uses the shared

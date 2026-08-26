@@ -315,6 +315,10 @@ pub enum Commands {
         database_url: Option<String>,
     },
 
+    /// Start the authenticated multi-user team service behind a trusted TLS proxy.
+    #[cfg(feature = "team")]
+    TeamApi,
+
     /// Run a unified assessment: DAST + SAST + Infra + Cloud combined.
     ///
     /// At least one of `--url`, `--code`, `--infra`, or `--cloud` is
@@ -761,5 +765,17 @@ mod control_api_tests {
     fn control_api_listener_is_an_explicit_subcommand() {
         let cli = Cli::try_parse_from(["scorchkit", "control-api"]).expect("control API arguments");
         assert!(matches!(cli.command, Commands::ControlApi { database_url: None }));
+    }
+}
+
+#[cfg(all(test, feature = "team"))]
+mod team_api_tests {
+    use super::*;
+
+    #[test]
+    fn team_listener_is_an_explicit_subcommand_without_secret_flags() {
+        let cli = Cli::try_parse_from(["scorchkit", "team-api"]).expect("team API arguments");
+        assert!(matches!(cli.command, Commands::TeamApi));
+        assert!(Cli::try_parse_from(["scorchkit", "team-api", "--token", "secret"]).is_err());
     }
 }

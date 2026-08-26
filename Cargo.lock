@@ -4616,6 +4616,7 @@ dependencies = [
  "predicates",
  "regex",
  "reqwest 0.12.28",
+ "ring",
  "rmcp",
  "rustix",
  "rustls",
@@ -4699,6 +4700,8 @@ dependencies = [
 name = "scorchkit-config"
 version = "3.0.0"
 dependencies = [
+ "chrono",
+ "scorchkit-control",
  "scorchkit-core",
  "scorchkit-policy",
  "serde",

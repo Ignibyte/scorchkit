@@ -163,6 +163,12 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-closed-presentation-token-001` | Map untrusted display values through a closed vocabulary before using them as CSS classes, IDs, selectors, or token lists. | `AAR-033-rustal-console` |
 | `PR-scorchkit-adapter-error-provenance-001` | Preserve local validation, transport/integrity, and authenticated-service error classes through adapters and prove whether rejection reached the next boundary. | `AAR-033-rustal-console` |
 | `PR-scorchkit-optional-app-gate-parity-001` | Wire out-of-workspace app format, lint, tests, audit, dependency hygiene, generated-tree exclusions, and UI evidence into appropriately ordered root lanes. | `AAR-033-rustal-console` |
+| `PR-scorchkit-immutable-object-publication-001` | Publish encrypted objects as immutable digest-addressed versions and reconcile retirement through a durable transactional deletion ledger. | `AAR-034-team-suite` |
+| `PR-scorchkit-cell-service-exclusive-lease-001` | Hold one database-scoped connection-lifetime lease for every service cell whose correctness includes process-local journals, quotas, or admission state. | `AAR-034-team-suite` |
+| `PR-scorchkit-resolved-secret-uniqueness-001` | Compare resolved credential and key values across isolation cells at startup, then zeroize the comparison state. | `AAR-034-team-suite` |
+| `PR-scorchkit-mutation-coordinate-baseline-001` | Resolve survivor coordinates against preserved baseline source and assert the immediate predicate truth table before exact recheck. | `AAR-034-team-suite` |
+| `PR-scorchkit-pinned-sibling-validation-mirror-001` | When a separately pinned sibling checkout is active, validate a fingerprint-identical worktree mirror beside a clean exact-pin sibling and bind the receipt to the original tree. | `AAR-034-team-suite` |
+| `PR-scorchkit-package-database-env-boundary-001` | Expose each database URL only to the package or test lane that owns it, especially when one gate builds independent SQLx consumers. | `AAR-034-team-suite` |
 
 ## Register
 
@@ -307,3 +313,9 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-untrusted-css-class-token-001` | presentation-integrity bug | `AAR-033-rustal-console` |
 | `BF-scorchkit-local-upstream-error-erasure-001` | error-semantics bug | `AAR-033-rustal-console` |
 | `BF-scorchkit-nested-app-generated-scan-scope-001` | gate-scope failure | `AAR-033-rustal-console` |
+| `BF-scorchkit-object-version-overwrite-001` | crash-consistency bug | `AAR-034-team-suite` |
+| `BF-scorchkit-cell-service-state-split-001` | process-isolation bug | `AAR-034-team-suite` |
+| `BF-scorchkit-resolved-secret-alias-001` | credential-isolation bug | `AAR-034-team-suite` |
+| `BF-scorchkit-mutation-coordinate-misread-001` | mutation test gap | `AAR-034-team-suite` |
+| `BF-scorchkit-validation-root-fixture-leak-001` | validation harness failure | `AAR-034-team-suite` |
+| `BF-scorchkit-sibling-database-env-leak-001` | validation environment failure | `AAR-034-team-suite` |

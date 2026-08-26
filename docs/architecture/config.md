@@ -182,8 +182,78 @@ default_page_size = 50
 `bind` must be loopback, and the UUID must equal the enabled, unexpired `[engagement]`. The bearer
 value is 32–4096 printable non-whitespace ASCII bytes resolved from `token_env`, hashed, and
 zeroized before binding. The adapter accepts only loopback Host values and exposes fixed v1
-description, control, and event routes. Non-loopback values fail startup and should use the
-authenticated remote MCP profile until team identity and isolation are implemented.
+description, control, and event routes. Non-loopback values fail startup. Use the separately
+enabled team profile for multi-user routing; the local control bearer never becomes a team
+credential.
+
+## Authenticated team profile
+
+The `team` Cargo feature adds an optional `[team]` profile and the explicit `scorchkit team-api`
+command. The backend must remain loopback-only behind a trusted same-host TLS proxy. Credentials,
+database URLs, and 32-byte AES keys are environment-indirect; each environment name begins with
+`SCORCHKIT_TEAM_`, is unique, and never appears as a CLI secret flag.
+
+```toml
+[team]
+bind = "127.0.0.1:7445"
+tls_termination = "trusted_reverse_proxy"
+allowed_hosts = ["security.example.test"]
+allowed_origins = ["https://security.example.test"]
+max_body_bytes = 262144
+max_response_bytes = 4194304
+max_concurrent_requests = 64
+
+[[team.cells]]
+cell_id = "acme-payments"
+organization_id = "acme"
+project_id = "00000000-0000-0000-0000-000000000101"
+database_url_env = "SCORCHKIT_TEAM_ACME_DATABASE_URL"
+object_root = "/var/lib/scorchkit/acme-payments/objects"
+write_key_id = "2026-08"
+
+[team.cells.engagement]
+id = "00000000-0000-0000-0000-000000000201"
+name = "Acme payments assessment"
+enabled = true
+
+[team.cells.engagement.policy]
+allowed_scope = [
+  { kind = "exact", value = "payments.example.test" },
+  { kind = "path_prefix", value = "/var/lib/scorchkit/acme-payments/objects" },
+]
+capabilities = ["dast-scan", "local-state"]
+effects = ["passive", "active-safe"]
+
+[[team.cells.keys]]
+key_id = "2026-08"
+key_env = "SCORCHKIT_TEAM_ACME_KEY_2026_08"
+
+[team.cells.quotas]
+max_active_jobs = 16
+max_requests_per_minute = 600
+max_journal_events = 4096
+max_event_bytes = 262144
+max_subscribers = 32
+default_page_size = 50
+max_object_bytes = 16777216
+max_objects = 100000
+max_storage_bytes = 107374182400
+
+[team.cells.retention]
+object_days = 90
+
+[[team.bindings]]
+subject = "operator@example.test"
+cell_id = "acme-payments"
+role = "operator"
+token_env = "SCORCHKIT_TEAM_ACME_OPERATOR_TOKEN"
+```
+
+The database must already contain exactly `project_id`; startup permanently binds the migrated
+database to the cell identity. The object directory must already exist as the exact canonical path
+granted by the cell engagement and, on Unix, must grant no group or other permissions (`0700` is
+recommended). Roots may not overlap. A subject that uses another cell receives a different binding
+and bearer. See [Authenticated team service](team-service.md).
 
 ## Durable webhooks
 

@@ -35,6 +35,12 @@ control-api = [
   "dep:zeroize",
   "scorchkit-cli/control-api",
 ]
+team = [
+  "control-api",
+  "dep:ring",
+  "scorchkit-cli/team",
+  "scorchkit-config/team",
+]
 infra = ["dep:ipnet", "dep:hickory-resolver", "scorchkit-cli/infra"]
 # SHA-256 is always available for supply-chain and evidence integrity; infra reuses it for
 # content-addressed CVE cache filenames.
@@ -232,6 +238,10 @@ features = ["dnssec-aws-lc-rs"]
 
 [dependencies.ipnet]
 version = "2"
+optional = true
+
+[dependencies.ring]
+version = "0.17"
 optional = true
 
 [dependencies.rmcp]

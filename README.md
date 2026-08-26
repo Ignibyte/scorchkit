@@ -69,6 +69,11 @@ and MCP persistence; direct scans do not need a database. `--all-features` is a 
 mode, not the recommended operator build, because it also compiles quarantined native cloud SDK
 modules that are not in the production registry.
 
+Authenticated multi-user deployments are separately opt-in. Build with `--features team`, prepare
+one PostgreSQL database and exact-authorized encrypted object root per project cell, then start the
+loopback backend with `scorchkit team-api --config /path/to/team.toml` behind a trusted same-host TLS
+proxy. See the [team-service architecture](docs/architecture/team-service.md).
+
 ### Optional scanner integrations
 
 Built-in checks work without external scanners. Install only the integrations used by the selected
@@ -300,6 +305,12 @@ CLI and MCP operation remain complete without Rustal. See the
   environment-backed bearer and exact engagement binding, accepts only a loopback bind and Host,
   and exposes bounded v1 description, command/query, and replayable SSE event routes. Remote or
   public control hosting is not supported.
+- The authenticated team profile is opt-in through the `team` feature and `scorchkit team-api`.
+  Static environment-backed credentials bind one subject and RBAC role to one database-isolated
+  organization/project cell and engagement. Each cell owns its queues, journal, encrypted object
+  root/key ring, quotas, immutable audit, retention, and distinct-destination recovery evidence.
+  Direct public binds, built-in identity-provider flows, row-shared tenants, and in-place restore
+  remain unsupported.
 - Finding triage mutations require `local-state`/`active-safe` grants for the exact canonical
   runtime, source, artifact, network, or cloud target before append-only storage changes. A project,
   model recommendation, or stored compatibility status is never sufficient authority.

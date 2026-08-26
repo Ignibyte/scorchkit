@@ -84,6 +84,8 @@ pub mod scanner;
 #[cfg(feature = "storage")]
 pub mod storage;
 pub mod supply_chain;
+#[cfg(feature = "team")]
+pub mod team;
 pub mod tools;
 mod trusted_nuclei;
 pub mod webhooks;

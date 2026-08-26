@@ -37,6 +37,12 @@ projects (id, name, description, settings JSONB, created_at, updated_at)
 
 scan_jobs (id, root_job_id, parent_job_id, attempt, state, revision, owner_id, lease_expires_at, document JSONB, timestamps)
     └── scan_job_audit_events (job_id, revision, state, occurred_at, event JSONB)
+
+team_cell_identity (immutable singleton cell/organization/project/engagement binding)
+team_request_ids (immutable admitted request identities)
+    └── team_audit_events (append-only cell/principal/action/outcome sequence)
+team_objects (plaintext identity, ciphertext digest/size, key ID, retention times)
+    └── team_object_deletions (restart-recoverable retired ciphertext queue)
 ```
 
 ## Finding identity and evidence preservation
@@ -99,8 +105,13 @@ src/storage/
   jobs.rs       — provider-neutral job store adapter with transactional revision audit
   migrate.rs    — run embedded migrations
 migrations/
-  001_initial.sql … 013_finding_triage.sql
+  001_initial.sql … 014_team_service.sql
 ```
+
+Migration 014 is inert for local profiles. A team host provisions the singleton only after proving
+that the cell database contains exactly its configured project. Triggers reject cell-identity,
+request-claim, and audit mutation/deletion; encrypted object metadata remains mutable only for
+audited key rotation and retention. See [Authenticated team service](team-service.md).
 
 Scan job domain types, `JobStore`, and the in-memory store live in `scorchkit-executor::job`. The
 root `runner::job` module owns the composed scan service, and `src/storage/jobs.rs` owns the

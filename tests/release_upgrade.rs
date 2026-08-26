@@ -235,8 +235,8 @@ async fn verify_forward_upgrade(
     )
     .fetch_one(&pool)
     .await?;
-    if migration_state.try_get::<i64, _>("migration_count")? != 13
-        || migration_state.try_get::<Option<i64>, _>("latest_version")? != Some(13)
+    if migration_state.try_get::<i64, _>("migration_count")? != 14
+        || migration_state.try_get::<Option<i64>, _>("latest_version")? != Some(14)
     {
         return Err(other_error("current migration ledger is incomplete").into());
     }

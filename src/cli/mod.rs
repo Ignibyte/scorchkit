@@ -18,6 +18,8 @@ pub mod runner;
 pub mod schedule;
 #[cfg(feature = "mcp")]
 pub mod serve;
+#[cfg(feature = "team")]
+pub mod team;
 #[cfg(feature = "storage")]
 pub mod webhook;
 

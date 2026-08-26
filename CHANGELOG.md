@@ -41,6 +41,14 @@ All notable changes to ScorchKit will be documented in this file.
   89/22 complete registries, 39 MCP tools, five report formats, and engagement-safe examples.
 
 ### Added
+- **Authenticated multi-user team profile (TICKET-034 / SK-056)** — Added an opt-in, trusted-proxy
+  loopback team service whose environment-backed bearer bindings select one subject, RBAC role,
+  engagement, and hard organization/project cell before routing. Each cell owns a distinct live
+  PostgreSQL database, durable queues, bounded journal and admission state, exact-authorized
+  AES-256-GCM object root/key ring, retention, immutable intent/outcome audit, and versioned
+  distinct-destination recovery manifest. Two-cell HTTP/PostgreSQL qualification proves wrong-cell
+  absence, role narrowing, encrypted storage, audit immutability, and `pg_dump`/`pg_restore`
+  verification while default builds and local hosts remain unchanged.
 - **Optional Rustal local operator console (TICKET-033 / SK-055)** — Added a separately locked,
   loopback-only Rustal app over the authenticated v1 control API for engagement posture, projects,
   registered targets, jobs, canonical findings/evidence, append-only triage, correlations,

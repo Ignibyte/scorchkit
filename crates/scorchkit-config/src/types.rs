@@ -40,6 +40,10 @@ pub struct AppConfig {
     /// Optional bearer-authenticated loopback control API.
     #[serde(default)]
     pub control_api: crate::control_api::ControlApiConfig,
+    /// Optional authenticated multi-user team-service profile.
+    #[cfg(feature = "team")]
+    #[serde(default)]
+    pub team: Option<crate::team::TeamServiceConfig>,
     /// Explicit digest-bound isolated extension registrations.
     #[serde(default)]
     pub extensions: crate::extension::ExtensionConfig,

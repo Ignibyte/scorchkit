@@ -402,7 +402,12 @@ database_gate() {
         echo "DATABASE_URL is required for the delivery-tier database tests" >&2
         return 1
     fi
-    cargo test --all-features --test storage --test storage_integration --test mcp_tools
+    cargo test --all-features \
+        --test storage \
+        --test storage_integration \
+        --test mcp_tools \
+        --test team_service \
+        --test team_recovery
 }
 
 contract_gate() {
