@@ -238,6 +238,8 @@ pub async fn execute(cli: Cli) -> Result<()> {
             list_modules(&config, check_tools, include_compatibility)
         }
 
+        Commands::Catalog { command } => run_catalog_command(&config, command),
+
         Commands::Init { target, project, database_url } => {
             super::init::run_init(target.as_deref(), project.as_deref(), database_url.as_deref())
                 .await
@@ -1352,6 +1354,43 @@ async fn run_code_scan(
     Ok(())
 }
 
+fn run_catalog_command(config: &AppConfig, command: args::CatalogCommands) -> Result<()> {
+    let engagement = config.engagement.as_ref().ok_or_else(|| {
+        ScorchError::Config("extension catalog operation has no active engagement".to_string())
+    })?;
+    let lifecycle = crate::extension::CatalogLifecycle::new(&config.extensions, engagement);
+    let value = match command {
+        args::CatalogCommands::Inspect { catalog, release } => {
+            serde_json::to_value(lifecycle.inspect(&catalog, &release)?)
+        }
+        args::CatalogCommands::Approve {
+            catalog,
+            release,
+            payload_sha256,
+            permission_diff_sha256,
+        } => serde_json::to_value(lifecycle.approve(
+            &catalog,
+            &release,
+            &payload_sha256,
+            &permission_diff_sha256,
+        )?),
+        args::CatalogCommands::Activate { approval } => {
+            serde_json::to_value(lifecycle.activate(&approval)?)
+        }
+        args::CatalogCommands::Rollback { extension, approval } => {
+            serde_json::to_value(lifecycle.rollback(&extension, &approval)?)
+        }
+        args::CatalogCommands::Status => serde_json::to_value(lifecycle.status()?),
+    }
+    .map_err(|_| ScorchError::Config("catalog result cannot be encoded".to_string()))?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&value)
+            .map_err(|_| ScorchError::Config("catalog result cannot be rendered".to_string()))?
+    );
+    Ok(())
+}
+
 fn list_modules(config: &AppConfig, check_tools: bool, include_compatibility: bool) -> Result<()> {
     let modules = if include_compatibility {
         crate::runner::orchestrator::all_modules()
@@ -1408,6 +1447,25 @@ fn list_modules(config: &AppConfig, check_tools: bool, include_compatibility: bo
                 loaded.manifest.id.cyan(),
                 loaded.manifest.description,
                 " [isolated wasm]".dimmed(),
+            );
+        }
+    }
+    if config.extensions.lifecycle_root.is_some() {
+        let engagement = config.engagement.as_ref().ok_or_else(|| {
+            ScorchError::Config(
+                "configured extension lifecycle has no active engagement".to_string(),
+            )
+        })?;
+        let active = crate::extension::CatalogLifecycle::new(&config.extensions, engagement)
+            .load_active()?;
+        for loaded in active {
+            claim_extension_catalog_identity(&mut module_identities, &loaded.manifest.id)?;
+            println!(
+                "  {:>8} | {:<20} {}{}",
+                ModuleCategory::Scanner.to_string().dimmed(),
+                loaded.manifest.id.cyan(),
+                loaded.manifest.description,
+                " [approved catalog wasm]".dimmed(),
             );
         }
     }

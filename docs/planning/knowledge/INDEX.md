@@ -169,6 +169,12 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `PR-scorchkit-mutation-coordinate-baseline-001` | Resolve survivor coordinates against preserved baseline source and assert the immediate predicate truth table before exact recheck. | `AAR-034-team-suite` |
 | `PR-scorchkit-pinned-sibling-validation-mirror-001` | When a separately pinned sibling checkout is active, validate a fingerprint-identical worktree mirror beside a clean exact-pin sibling and bind the receipt to the original tree. | `AAR-034-team-suite` |
 | `PR-scorchkit-package-database-env-boundary-001` | Expose each database URL only to the package or test lane that owns it, especially when one gate builds independent SQLx consumers. | `AAR-034-team-suite` |
+| `PR-scorchkit-approval-preview-exact-binding-001` | Bind approval to the exact candidate and normalized-diff digests returned by inspection, and reject either mismatch before durable publication. | `AAR-035-extension-catalog` |
+| `PR-scorchkit-durable-lifecycle-single-writer-001` | Serialize approval and pointer transitions with one cross-process lock, and require an append-preserved approval transition before activation. | `AAR-035-extension-catalog` |
+| `PR-scorchkit-monotonic-sequence-payload-binding-001` | Store the exact payload digest with every accepted highest sequence and treat same-sequence digest changes as equivocation. | `AAR-035-extension-catalog` |
+| `PR-scorchkit-configured-source-absence-identity-001` | Determine offline status with no-follow metadata and accept only exact not-found as absence; validate every present object through the normal source boundary. | `AAR-035-extension-catalog` |
+| `PR-scorchkit-state-history-reconstruction-001` | Reconstruct bounded durable pointers from the full append-preserved transition ledger and compare the result to every published pointer. | `AAR-035-extension-catalog` |
+| `PR-scorchkit-platform-branch-mutation-seam-001` | Keep platform-conditioned security branches executable in tests on the validation host when that preserves release behavior and exact mutation identity. | `AAR-035-extension-catalog` |
 
 ## Register
 
@@ -319,3 +325,9 @@ or architecture document. Capture reusable knowledge here and in the current AAR
 | `BF-scorchkit-mutation-coordinate-misread-001` | mutation test gap | `AAR-034-team-suite` |
 | `BF-scorchkit-validation-root-fixture-leak-001` | validation harness failure | `AAR-034-team-suite` |
 | `BF-scorchkit-sibling-database-env-leak-001` | validation environment failure | `AAR-034-team-suite` |
+| `BF-scorchkit-reviewed-approval-subject-drift-001` | approval-integrity bug | `AAR-035-extension-catalog` |
+| `BF-scorchkit-lifecycle-writer-split-001` | crash/concurrency bug | `AAR-035-extension-catalog` |
+| `BF-scorchkit-catalog-sequence-equivocation-001` | replay-integrity bug | `AAR-035-extension-catalog` |
+| `BF-scorchkit-dangling-catalog-offline-bypass-001` | filesystem-boundary bug | `AAR-035-extension-catalog` |
+| `BF-scorchkit-lifecycle-pointer-without-history-001` | durable-integrity bug | `AAR-035-extension-catalog` |
+| `BF-scorchkit-platform-cfg-mutation-blindspot-001` | mutation test gap | `AAR-035-extension-catalog` |

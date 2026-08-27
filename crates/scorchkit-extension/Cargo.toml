@@ -13,6 +13,7 @@ host-contract = [
   "dep:scorchkit-core",
   "dep:scorchkit-policy",
   "dep:thiserror",
+  "dep:url",
 ]
 
 [dependencies]
@@ -22,6 +23,7 @@ semver = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = { version = "2", optional = true }
+url = { version = "2", features = ["serde"], optional = true }
 
 [lints.rust]
 unsafe_code = "forbid"

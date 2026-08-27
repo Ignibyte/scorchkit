@@ -18,7 +18,7 @@ use crate::engine::finding::Finding;
 use crate::engine::scan_context::ScanContext;
 use crate::runner::subprocess::{spawn_owned_process, stop_owned_process};
 
-use super::broker::{broker_effect, convert_output};
+use super::broker::broker_effect;
 use super::loader::LoadedExtension;
 use super::EXTENSION_WORKER_ARGUMENT;
 
@@ -33,12 +33,16 @@ pub(super) struct WorkerStartV1 {
     pub module_bytes: u64,
 }
 
+// JUSTIFICATION: The parent/worker handshake, bounded turn loop, and owned-process cleanup form
+// one denial-ordered protocol transaction; splitting it would obscure cleanup on every exit.
+#[allow(clippy::too_many_lines)]
 pub(super) async fn run(
     context: &ScanContext,
     loaded: &LoadedExtension,
     worker_program: &Path,
     inputs: &[ExtensionInvocationInputV1],
 ) -> Result<Vec<Finding>> {
+    super::catalog_host::assert_not_revoked(context, loaded)?;
     context.authorize_extension_execution(loaded.manifest.adapter.strongest_effect)?;
     let timeout = Duration::from_millis(loaded.manifest.budgets.timeout_ms);
     let worker_started = Instant::now();
@@ -97,8 +101,7 @@ pub(super) async fn run(
                     if !request_ids.insert(request.request_id.clone()) {
                         return Err(worker_error("extension reused an effect request identity"));
                     }
-                    let result =
-                        broker_effect(context, &loaded.manifest, &invocation, &request).await;
+                    let result = broker_effect(context, loaded, &invocation, &request).await;
                     write_json_frame(
                         &mut stdin,
                         &ExtensionTurnInputV1::EffectResult(result),
@@ -109,7 +112,12 @@ pub(super) async fn run(
                     .await?;
                 }
                 ExtensionTurnOutputV1::Complete(output) => {
-                    return convert_output(context, &loaded.manifest, &invocation, output);
+                    return super::broker::convert_loaded_output(
+                        context,
+                        loaded,
+                        &invocation,
+                        output,
+                    );
                 }
                 ExtensionTurnOutputV1::Failure(failure) => {
                     let code = crate::engine::observation::redact_text(&failure.code);

@@ -85,7 +85,9 @@ impl Orchestrator {
         self.modules = all_modules();
         self.registration_error = None;
 
-        if !self.ctx.config.extensions.manifests.is_empty() {
+        if !self.ctx.config.extensions.manifests.is_empty()
+            || self.ctx.config.extensions.lifecycle_root.is_some()
+        {
             match std::env::current_exe() {
                 Ok(worker_program) => {
                     for manifest in self.ctx.config.extensions.manifests.clone() {
@@ -93,6 +95,37 @@ impl Orchestrator {
                             self.registration_error =
                                 Some(crate::engine::observation::redact_text(&error.to_string()));
                             break;
+                        }
+                    }
+                    if self.registration_error.is_none()
+                        && self.ctx.config.extensions.lifecycle_root.is_some()
+                    {
+                        let active = self.ctx.active_engagement().and_then(|engagement| {
+                            crate::extension::CatalogLifecycle::new(
+                                &self.ctx.config.extensions,
+                                engagement,
+                            )
+                            .load_active()
+                        });
+                        match active {
+                            Ok(active) => {
+                                for loaded in active {
+                                    if let Err(error) =
+                                        self.register_loaded_extension(loaded, &worker_program)
+                                    {
+                                        self.registration_error =
+                                            Some(crate::engine::observation::redact_text(
+                                                &error.to_string(),
+                                            ));
+                                        break;
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                self.registration_error = Some(
+                                    crate::engine::observation::redact_text(&error.to_string()),
+                                );
+                            }
                         }
                     }
                 }
@@ -144,6 +177,22 @@ impl Orchestrator {
     ) -> Result<()> {
         let module =
             crate::extension::WasmExtensionModule::load(&self.ctx, manifest_path, worker_program)?;
+        if self.modules.iter().any(|existing| existing.id() == module.id()) {
+            return Err(crate::engine::error::ScorchError::Config(format!(
+                "duplicate extension module identity '{}'",
+                crate::engine::observation::redact_text(module.id())
+            )));
+        }
+        self.modules.push(Box::new(module));
+        Ok(())
+    }
+
+    fn register_loaded_extension(
+        &mut self,
+        loaded: crate::extension::LoadedExtension,
+        worker_program: impl Into<PathBuf>,
+    ) -> Result<()> {
+        let module = crate::extension::WasmExtensionModule::from_loaded(loaded, worker_program)?;
         if self.modules.iter().any(|existing| existing.id() == module.id()) {
             return Err(crate::engine::error::ScorchError::Config(format!(
                 "duplicate extension module identity '{}'",
@@ -2223,7 +2272,9 @@ mod tests {
             .next()
             .expect("production source");
         let compact: String = production.split_whitespace().collect();
-        assert!(compact.contains("if!self.ctx.config.extensions.manifests.is_empty(){"));
+        assert!(compact.contains(
+            "if!self.ctx.config.extensions.manifests.is_empty()||self.ctx.config.extensions.lifecycle_root.is_some(){"
+        ));
         assert!(compact.contains("existing.id()==module.id()"));
     }
 }

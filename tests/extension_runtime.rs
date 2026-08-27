@@ -469,7 +469,10 @@ async fn configured_extension_uses_the_shared_control_and_mcp_module_projection(
     let engagement_id = engagement.id;
     let config = scorchkit::config::AppConfig {
         engagement: Some(engagement),
-        extensions: scorchkit::config::ExtensionConfig { manifests: vec![manifest_path] },
+        extensions: scorchkit::config::ExtensionConfig {
+            manifests: vec![manifest_path],
+            ..scorchkit::config::ExtensionConfig::default()
+        },
         ..scorchkit::config::AppConfig::default()
     };
     let service = ControlService::in_memory(Arc::new(config));

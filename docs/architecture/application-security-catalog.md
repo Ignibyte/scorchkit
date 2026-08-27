@@ -37,8 +37,9 @@ The root composition package assigns concrete module IDs to these fields. Family
 shared descriptor shape, and agent, CLI, MCP, and orchestrator code read the resulting descriptor.
 Scanner IDs and serialized findings are unchanged.
 
-Configured isolated extensions join the same application web catalog after explicit digest and
-policy validation. CLI, control, and MCP projections expose their trust/runtime labels; manifests
+Configured isolated extensions and exact active signed-catalog approvals join the same application
+web catalog after explicit digest and policy validation. CLI, control, and MCP projections expose
+their trust/runtime labels; manifests
 cannot select compatibility domains or claim first-party trust.
 
 Nuclei, Semgrep, PHPStan, CodeQL, and Psalm use typed parser outcomes. Their execution paths

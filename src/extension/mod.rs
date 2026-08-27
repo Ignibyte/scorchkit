@@ -1,11 +1,15 @@
 //! Digest-bound isolated extension registration and execution.
 
 mod broker;
+#[path = "catalog.rs"]
+mod catalog_host;
+mod lifecycle;
 mod loader;
 mod module;
 mod runtime;
 mod worker;
 
+pub use lifecycle::{CatalogLifecycle, CatalogPreview, CatalogStatus};
 pub use loader::LoadedExtension;
 pub use module::WasmExtensionModule;
 pub use scorchkit_extension::*;
@@ -93,9 +97,11 @@ pub(super) mod test_support {
     pub fn loaded(module_bytes: Vec<u8>) -> LoadedExtension {
         LoadedExtension {
             manifest: manifest(&module_bytes),
+            manifest_bytes: Vec::new(),
             manifest_path: PathBuf::from("fixture.json"),
             module_path: PathBuf::from("fixture.wasm"),
             module_bytes,
+            catalog_identity: None,
         }
     }
 

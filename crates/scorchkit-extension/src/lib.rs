@@ -4,12 +4,16 @@
 //! adapter. Root composition validates registrations, owns the worker, brokers effects, and
 //! persists normalized output.
 
+#[cfg(feature = "host-contract")]
+pub mod catalog;
 pub mod constants;
 #[cfg(feature = "host-contract")]
 pub mod manifest;
 pub mod protocol;
 pub mod sdk;
 
+#[cfg(feature = "host-contract")]
+pub use catalog::*;
 pub use constants::*;
 #[cfg(feature = "host-contract")]
 pub use manifest::{

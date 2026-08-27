@@ -1576,25 +1576,26 @@ fn module_views(config: &AppConfig) -> Result<Vec<ModuleViewV1>, ControlErrorV1>
                     "configured extension registration is invalid or unauthorized",
                 )
             })?;
-            if modules.iter().any(|module| module.id == loaded.manifest.id) {
-                return Err(ControlErrorV1::new(
-                    ControlErrorCodeV1::InvalidRequest,
-                    "configured extension identity duplicates an application module",
-                ));
-            }
-            modules.push(ModuleViewV1 {
-                id: loaded.manifest.id,
-                family: "web".to_string(),
-                name: loaded.manifest.name,
-                description: loaded.manifest.description,
-                security_domain: enum_name(loaded.manifest.adapter.security_domain)?,
-                lifecycle_stage: enum_name(loaded.manifest.adapter.lifecycle_stage)?,
-                strongest_effect: enum_name(loaded.manifest.adapter.strongest_effect)?,
-                trust: enum_name(scorchkit_core::AdapterTrust::ThirdParty)?,
-                runtime: enum_name(scorchkit_core::AdapterRuntime::WasmWorker)?,
-                requires_external_tool: false,
-                required_tool: None,
-            });
+            push_extension_view(&mut modules, loaded)?;
+        }
+    }
+    if config.extensions.lifecycle_root.is_some() {
+        let engagement = config.engagement.as_ref().ok_or_else(|| {
+            ControlErrorV1::new(
+                ControlErrorCodeV1::PolicyDenied,
+                "configured extension lifecycle has no active engagement",
+            )
+        })?;
+        let active = crate::extension::CatalogLifecycle::new(&config.extensions, engagement)
+            .load_active()
+            .map_err(|_| {
+                ControlErrorV1::new(
+                    ControlErrorCodeV1::PolicyDenied,
+                    "configured extension lifecycle is invalid or unauthorized",
+                )
+            })?;
+        for loaded in active {
+            push_extension_view(&mut modules, loaded)?;
         }
     }
     for module in crate::runner::code_orchestrator::application_code_modules() {
@@ -1615,6 +1616,32 @@ fn module_views(config: &AppConfig) -> Result<Vec<ModuleViewV1>, ControlErrorV1>
     }
     modules.sort_by(|left, right| (&left.family, &left.id).cmp(&(&right.family, &right.id)));
     Ok(modules)
+}
+
+fn push_extension_view(
+    modules: &mut Vec<ModuleViewV1>,
+    loaded: crate::extension::LoadedExtension,
+) -> Result<(), ControlErrorV1> {
+    if modules.iter().any(|module| module.id == loaded.manifest.id) {
+        return Err(ControlErrorV1::new(
+            ControlErrorCodeV1::InvalidRequest,
+            "configured extension identity duplicates an application module",
+        ));
+    }
+    modules.push(ModuleViewV1 {
+        id: loaded.manifest.id,
+        family: "web".to_string(),
+        name: loaded.manifest.name,
+        description: loaded.manifest.description,
+        security_domain: enum_name(loaded.manifest.adapter.security_domain)?,
+        lifecycle_stage: enum_name(loaded.manifest.adapter.lifecycle_stage)?,
+        strongest_effect: enum_name(loaded.manifest.adapter.strongest_effect)?,
+        trust: enum_name(scorchkit_core::AdapterTrust::ThirdParty)?,
+        runtime: enum_name(scorchkit_core::AdapterRuntime::WasmWorker)?,
+        requires_external_tool: false,
+        required_tool: None,
+    });
+    Ok(())
 }
 
 fn enum_name(value: impl serde::Serialize) -> Result<String, ControlErrorV1> {

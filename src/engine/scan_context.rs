@@ -46,6 +46,15 @@ pub struct ScanContext {
 }
 
 impl ScanContext {
+    /// Return the exact engagement authorizer bound to this scan.
+    pub(crate) fn active_engagement(&self) -> Result<&Engagement> {
+        self.engagement.as_deref().ok_or_else(|| {
+            crate::engine::error::ScorchError::Config(
+                "extension catalog denied: no active engagement authorizer".to_string(),
+            )
+        })
+    }
+
     /// Build the proposal ceiling from the exact grants already sealed into this context.
     pub(crate) fn run_pipeline_authority<I, S>(
         &self,

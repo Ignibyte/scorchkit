@@ -165,6 +165,12 @@ pub enum Commands {
         include_compatibility: bool,
     },
 
+    /// Inspect and operate the local signed extension catalog lifecycle
+    Catalog {
+        #[command(subcommand)]
+        command: CatalogCommands,
+    },
+
     /// Initialize a config file, optionally binding a safe engagement to a target
     Init {
         /// Target URL to resolve and pin without sending an HTTP request
@@ -444,6 +450,45 @@ pub enum SupplyChainCommands {
         /// JSON file matching the versioned provider refresh request contract.
         request: PathBuf,
     },
+}
+
+/// Local-only signed extension catalog operations.
+#[derive(Subcommand, Debug)]
+pub enum CatalogCommands {
+    /// Verify a signed release and print its exact permission difference.
+    Inspect {
+        /// Exact configured local catalog path.
+        catalog: PathBuf,
+        /// Signed immutable release identity.
+        release: String,
+    },
+    /// Record an explicit immutable approval for a verified release.
+    Approve {
+        /// Exact configured local catalog path.
+        catalog: PathBuf,
+        /// Signed immutable release identity.
+        release: String,
+        /// Exact payload digest returned by `catalog inspect`.
+        #[arg(long)]
+        payload_sha256: String,
+        /// Exact normalized permission-difference digest returned by `catalog inspect`.
+        #[arg(long)]
+        permission_diff_sha256: String,
+    },
+    /// Activate one exact approval after artifact and startup revalidation.
+    Activate {
+        /// Content-addressed approval identity.
+        approval: String,
+    },
+    /// Reactivate one exact prior approval.
+    Rollback {
+        /// Extension identity whose pointer may change.
+        extension: String,
+        /// Prior content-addressed approval identity.
+        approval: String,
+    },
+    /// Print current active pointers and append-preserved transitions.
+    Status,
 }
 
 /// Database management subcommands.
@@ -740,6 +785,42 @@ pub enum WebhookCommands {
 pub fn print_completions(shell: Shell) {
     let mut cmd = Cli::command();
     generate(shell, &mut cmd, "scorchkit", &mut std::io::stdout());
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+
+    #[test]
+    fn catalog_lifecycle_commands_require_explicit_subjects() {
+        let inspect = Cli::try_parse_from([
+            "scorchkit",
+            "catalog",
+            "inspect",
+            "/approved/catalog.json",
+            "publisher.release-1",
+        ])
+        .expect("catalog inspect arguments");
+        assert!(matches!(
+            inspect.command,
+            Commands::Catalog {
+                command: CatalogCommands::Inspect { catalog, release }
+            } if catalog.as_path() == std::path::Path::new("/approved/catalog.json")
+                && release == "publisher.release-1"
+        ));
+        assert!(Cli::try_parse_from(["scorchkit", "catalog", "approve"]).is_err());
+        assert!(Cli::try_parse_from([
+            "scorchkit",
+            "catalog",
+            "approve",
+            "/approved/catalog.json",
+            "publisher.release-1",
+        ])
+        .is_err());
+        assert!(
+            Cli::try_parse_from(["scorchkit", "catalog", "rollback", "fixture.extension"]).is_err()
+        );
+    }
 }
 
 #[cfg(all(test, feature = "mcp"))]

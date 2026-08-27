@@ -3,6 +3,7 @@
 /examples/*/Cargo.lock
 *.swp
 *.swo
+*.profraw
 .env
 .mcp.json
 reports/

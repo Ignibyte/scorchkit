@@ -89,6 +89,12 @@ infrastructure. The test suite never treats a timeout against an external addres
   WebAssembly modules. They run without WASI or ambient imports in a bounded owned worker; every
   host effect is separately authorized and its awaited audit event is published before it begins,
   and guest output is treated as an untrusted proposal rather than engine evidence or authority.
+- Signed extension catalogs accept only configured local regular files and locally configured
+  Ed25519 key-to-publisher bindings. Exact payload, manifest, module, permission, provenance, and
+  conformance identities are pinned in immutable approvals; active pointers change atomically;
+  sequence replay, changed artifacts, and current signed release/key revocations deny before
+  worker startup. Missing catalogs permit only exact already-approved offline bytes and cannot
+  trigger discovery, fetching, update, or trust enrollment.
 
 The current implementation has direct regression coverage for absence denial, HTTP redirects and
 DNS answers, project membership, stored schedule snapshots, CVE-provider endpoints and cache paths,
@@ -102,11 +108,13 @@ The executable gate and its exact-worktree receipt remain the delivery evidence.
   application source, dependency, artifact, runtime, and attack-path modules. Network, enterprise,
   and cloud-account posture adapters require explicit compatibility selection. Selection never
   supplies an engagement or a missing capability or effect grant.
-- Isolated third-party extensions are disabled by default and registered only through exact
-  manifest paths. Version 1 supports credential-free, no-redirect HTTP `GET` and `HEAD` plus
-  opaque pre-opened inputs; filesystem, credential, subprocess, native-library, automatic
-  discovery, and direct storage access are unsupported. Trusted Rust modules and legacy command
-  wrappers remain separate in-process or configured trust surfaces, not sandboxed extensions.
+- Isolated third-party extensions are disabled by default and registered through exact manifest
+  paths or explicitly approved signed local-catalog releases. Version 1 supports credential-free,
+  no-redirect HTTP `GET` and `HEAD` plus opaque pre-opened inputs; a catalog release can further
+  narrow HTTP requests to signed exact origins. Filesystem, credential, subprocess, native-library,
+  remote catalog transport, automatic discovery/update, and direct guest storage access are
+  unsupported. Trusted Rust modules and legacy command wrappers remain separate in-process or
+  configured trust surfaces, not sandboxed extensions.
 - Typed local run processors are available only in the standard DAST and code runners. They execute
   through the policy-sealed process owner with exact input, output, and wall-time ceilings. Required
   failures abort; optional failures retain only a redacted degraded outcome. Local notification

@@ -1,6 +1,6 @@
 # ScorchKit roadmap
 
-**Status:** SK-056 is complete; SK-057 is next
+**Status:** SK-057 is complete; every ordered product and platform backlog item is complete
 **Started:** 2026-08-14  
 **Last reviewed:** 2026-08-26
 **Direction:** agent-neutral application-security evidence and execution engine with Codex as the
@@ -161,6 +161,7 @@ file-mode observations while the index retains authoritative modes.
 | SK-054 | Added an optional provider-neutral MCP Apps workbench for canonical posture, finding/evidence/triage, and attack-path results while preserving complete headless MCP contracts and routing actions through ordinary authorized tools. | Exact capability/resource/headless parity contracts; browser interaction and representative render/CSS lanes; 85.62% line coverage; 2,196 strict cases; authenticated PostgreSQL and CLI/MCP contracts; one 25-mutant DIFF caught 20/20 viable mutations with five unviable and zero survivors. |
 | SK-055 | Added a separately locked, loopback-only Rustal operator console over the authenticated control API for bounded canonical project, target, job, finding, evidence, triage, and event views without adding Rustal to the core workspace. | Exact Rustal revision and dependency-direction checks; 13 unit and five real HTTP integration tests; browser interaction and representative render/CSS lanes; 85.62% line coverage; 2,197 strict cases; authenticated PostgreSQL and CLI/MCP contracts; DIFF proved an explicit empty root mutation selection with zero survivors. |
 | SK-056 | Added an optional authenticated trusted-proxy team profile whose credentials select one exact subject, RBAC role, engagement, and hard organization/project deployment cell with distinct database, queues, journal, encrypted object storage, key ring, quotas, immutable audit, and recovery identity. | Fifteen inspection findings repaired; two-cell HTTP/PostgreSQL and distinct-destination recovery tests; 85.85% line coverage; 2,246 strict cases; browser and CLI/MCP contracts green; sealed focused evidence catches 656/656 viable mutations at 100% MSI. |
+| SK-057 | Added a local-first signed extension catalog whose locally trusted Ed25519 publisher keys bind exact release, artifact, compatibility, provenance, conformance, permission, sequence, and validity identities to explicit approval, activation, rollback, revocation, and offline execution state. | Eight inspection findings repaired; signed lifecycle, revocation, offline, permission, health, replay, and provenance tests; 86.00% line coverage; 2,290 strict cases; browser, PostgreSQL, and CLI/MCP contracts green; sealed focused evidence catches 366/366 viable mutations at 100% MSI. |
 
 The sealed Codex Security scan `efe30eaf-9b1b-4572-949a-0e8391d48247` reviewed 603 changed paths and
 closed 192/192 semantic rows. Its eight high-confidence findings have code fixes and regression
@@ -170,34 +171,33 @@ evidence.
 
 ## Current validation evidence
 
-Evidence produced through the TICKET-034 pre-completion worktree:
+Evidence produced through the TICKET-035 pre-completion worktree:
 
 | Signal | Last result | Final requirement |
 |---|---:|---:|
 | Compiler | all targets, workspace packages, and features passed | pass after final edits |
 | Strict Clippy | zero diagnostics across every derived feature state and workspace package | pass after final edits and every feature state |
 | All-feature tests | Workspace library, package, integration, and doctest suites passed; strict feature-matrix Clippy had zero diagnostics | pass after final edits with PostgreSQL |
-| Canonical line coverage | 85.85% in the TICKET-034 focused-repair gate | at least the unchanged 62% floor |
-| SK-056 focused mutation evidence | One completed 732-mutant DIFF and exact survivor-only follow-ups reconstruct 656/656 viable outcomes caught at 100% MSI with zero misses | remain at or above the unchanged 95% floor |
+| Canonical line coverage | 86.00% in the TICKET-035 focused-repair gate | at least the unchanged 62% floor |
+| SK-057 focused mutation evidence | One completed 399-mutant DIFF and the exact 101-survivor recheck reconstruct 366/366 viable outcomes caught at 100% MSI with zero misses | remain at or above the unchanged 95% floor |
 | Browser/render/CSS evidence | Gates 17–19 passed conversation-workbench and Rustal-console interaction, canonical representative rendering, responsive/high-contrast behavior, and reviewed CSS/source policy against the clean pinned Rustal dependency | pass whenever either optional frontend ships |
-| Nextest strictness | 2,246 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
-| PostgreSQL integration | 105 MCP, storage, recovery, and two-cell isolation tests passed against an authenticated local database | pass |
+| Nextest strictness | 2,290 executed cases passed and 10 live-tool/network cases were skipped by reason; exact contract-only library harnesses remain explicitly allowlisted | pass |
+| PostgreSQL integration | MCP, storage, recovery, and two-cell isolation tests passed against an authenticated local database | pass |
 | CLI/MCP contracts | 24 CLI, 2 code-scan, 78 MCP, and 12 scan-plan tests passed | pass |
-| Delivery receipt | TICKET-034 focused repair passed all 22 lanes with no failures or skips and verified sealed 656/656 mutation evidence | post-archive focused-repair receipt for the exact completed tree |
+| Delivery receipt | TICKET-035 focused repair passed all 22 lanes with no failures or skips and verified sealed 366/366 mutation evidence | post-archive focused-repair receipt for the exact completed tree |
 
 The test count is historical evidence, not a promised final count. The gate output after all source and
 documentation edits is authoritative.
 
 ## Baseline blockers
 
-None. The feature-readiness baseline and SK-028 through SK-056 are closed above.
+None. The feature-readiness baseline and SK-028 through SK-057 are closed above.
 
 ## Ordered product and platform backlog
 
-The pipeline permits one active ticket. TICKET-034 closes the authenticated team-service boundary;
-SK-057 is next.
-Each later row has a specified candidate intake under `docs/planning/intake/` and becomes a numbered
-ticket only when promoted. Backlog status is not a waiver of a safety invariant.
+The pipeline permits one active ticket. TICKET-035 completes SK-057, the final ordered product and
+platform item. No later ordered item remains; future work requires a new reviewed intake and does
+not inherit authority from this completed backlog.
 
 | Order | Batch | Planned outcome | Depends on | Planning artifact |
 |---:|---|---|---|---|
@@ -218,7 +218,7 @@ ticket only when promoted. Backlog status is not a waiver of a safety invariant.
 | 15 | SK-054 (completed) | Add optional conversation-native result views for scan summaries, evidence, triage, and attack paths while keeping every MCP and API workflow complete without UI. | SK-031, SK-032, SK-042, SK-049, SK-053 | [TICKET-032](tickets/closed/TICKET-032-conversation-workbench.md) |
 | 16 | SK-055 (completed) | Add an optional Rustal-based local operator console that consumes the control API for jobs, evidence, triage, read-only engagement posture, target registration, and live progress. | SK-049, SK-053, SK-054 | [TICKET-033](tickets/closed/TICKET-033-rustal-console.md) |
 | 17 | SK-056 (completed) | Add an authenticated multi-user deployment profile with tenant and project isolation, RBAC, shared queues, object storage, audit, backup, and recovery. | SK-043, SK-044, SK-048, SK-049, SK-055 | [TICKET-034](tickets/closed/TICKET-034-team-suite.md) |
-| 18 | SK-057 | Add a signed extension catalog with compatibility, provenance, permission review, upgrade, rollback, revocation, and conformance checks. | SK-048, SK-050, SK-051, SK-052 | [intake](intake/INTAKE-extension-catalog.md) |
+| 18 | SK-057 (completed) | Add a signed extension catalog with compatibility, provenance, permission review, upgrade, rollback, revocation, and conformance checks. | SK-048, SK-050, SK-051, SK-052 | [TICKET-035](tickets/closed/TICKET-035-extension-catalog.md) |
 
 The former native cloud-provider restoration item is removed from the core sequence. General cloud
 posture may return only as an explicit optional extension; application IaC and deployment artifacts

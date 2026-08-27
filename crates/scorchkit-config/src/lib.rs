@@ -19,7 +19,7 @@ pub mod webhook;
 pub use cloud_credentials::CloudCredentials;
 pub use control_api::ControlApiConfig;
 pub use cve::{CompositeConfig, CompositeSource, CveBackendKind, CveConfig, NvdConfig};
-pub use extension::ExtensionConfig;
+pub use extension::{ExtensionConfig, ExtensionTrustKeyConfig};
 pub use mcp::{McpConfig, RemoteMcpConfig, RemoteMcpPrincipalBinding, RemoteMcpTlsTermination};
 pub use model_analysis::{
     ModelAdapterConfig, ModelAnalysisConfig, ModelRoleBindingConfig, ModelServiceDataPolicy,

@@ -23,6 +23,14 @@ pub struct WasmExtensionModule {
 }
 
 impl WasmExtensionModule {
+    pub(crate) fn from_loaded(
+        loaded: LoadedExtension,
+        worker_program: impl Into<PathBuf>,
+    ) -> Result<Self> {
+        loaded.require_v1_web_adapter()?;
+        Ok(Self { loaded, worker_program: worker_program.into(), inputs: Vec::new() })
+    }
+
     /// Validate and retain one manifest/module pair using the supplied trusted worker binary.
     ///
     /// # Errors

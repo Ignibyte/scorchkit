@@ -35,12 +35,7 @@ control-api = [
   "dep:zeroize",
   "scorchkit-cli/control-api",
 ]
-team = [
-  "control-api",
-  "dep:ring",
-  "scorchkit-cli/team",
-  "scorchkit-config/team",
-]
+team = ["control-api", "scorchkit-cli/team", "scorchkit-config/team"]
 infra = ["dep:ipnet", "dep:hickory-resolver", "scorchkit-cli/infra"]
 # SHA-256 is always available for supply-chain and evidence integrity; infra reuses it for
 # content-addressed CVE cache filenames.
@@ -220,6 +215,9 @@ optional = true
 version = "3"
 optional = true
 
+[dependencies.fs2]
+version = "0.4"
+
 # WORK-127: GCP auth for native posture checks.
 [dependencies.google-cloud-auth]
 version = "1"
@@ -242,7 +240,6 @@ optional = true
 
 [dependencies.ring]
 version = "0.17"
-optional = true
 
 [dependencies.rmcp]
 version = "1.3"

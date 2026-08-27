@@ -9,6 +9,7 @@ use scorchkit_extension::{
 };
 use url::Url;
 
+use super::loader::LoadedExtension;
 use crate::engine::error::{Result, ScorchError};
 use crate::engine::events::ScanEvent;
 use crate::engine::observation::redact_text;
@@ -20,11 +21,12 @@ const MAX_EXTENSION_VALUE_BYTES: usize = 64 * 1024;
 
 pub(super) async fn broker_effect(
     context: &ScanContext,
-    manifest: &ExtensionManifestV1,
+    loaded: &LoadedExtension,
     invocation: &ExtensionInvocationV1,
     request: &ExtensionEffectRequestV1,
 ) -> ExtensionEffectResultV1 {
-    let prepared = prepare_effect(context, manifest, invocation, request);
+    let manifest = &loaded.manifest;
+    let prepared = prepare_effect(context, loaded, invocation, request);
     let (decision, denial) = match &prepared {
         Ok(_) => (ExtensionEffectDecisionV1::Allowed, None),
         Err(reason) => (ExtensionEffectDecisionV1::Denied, Some(redact_text(reason))),
@@ -58,10 +60,11 @@ enum PreparedEffect {
 
 fn prepare_effect(
     context: &ScanContext,
-    manifest: &ExtensionManifestV1,
+    loaded: &LoadedExtension,
     invocation: &ExtensionInvocationV1,
     request: &ExtensionEffectRequestV1,
 ) -> std::result::Result<PreparedEffect, String> {
+    let manifest = &loaded.manifest;
     if !valid_id(&request.request_id) {
         return Err("extension effect request identity is invalid".to_string());
     }
@@ -69,6 +72,15 @@ fn prepare_effect(
         ExtensionEffectV1::Http { method, url } => {
             require_capability(manifest, ExtensionCapabilityV1::NetworkHttp)?;
             let url = safe_url(url)?;
+            if let Some(identity) = &loaded.catalog_identity {
+                let origin = url.origin().ascii_serialization();
+                if !identity.network_endpoints.iter().any(|allowed| allowed == &origin) {
+                    return Err(
+                        "extension HTTP endpoint is outside its approved catalog allowance"
+                            .to_string(),
+                    );
+                }
+            }
             context
                 .authorize_extension_target(&url, manifest.adapter.strongest_effect)
                 .map_err(|error| error.to_string())?;
@@ -224,6 +236,34 @@ pub(super) fn convert_output(
     invocation: &ExtensionInvocationV1,
     output: ExtensionOutputV1,
 ) -> Result<Vec<Finding>> {
+    convert_output_with_identity(context, manifest, invocation, output, None)
+}
+
+pub(super) fn convert_loaded_output(
+    context: &ScanContext,
+    loaded: &LoadedExtension,
+    invocation: &ExtensionInvocationV1,
+    output: ExtensionOutputV1,
+) -> Result<Vec<Finding>> {
+    if loaded.catalog_identity.is_none() {
+        return convert_output(context, &loaded.manifest, invocation, output);
+    }
+    convert_output_with_identity(
+        context,
+        &loaded.manifest,
+        invocation,
+        output,
+        loaded.catalog_identity.as_ref(),
+    )
+}
+
+fn convert_output_with_identity(
+    context: &ScanContext,
+    manifest: &ExtensionManifestV1,
+    invocation: &ExtensionInvocationV1,
+    output: ExtensionOutputV1,
+    catalog_identity: Option<&super::catalog_host::CatalogExecutionIdentity>,
+) -> Result<Vec<Finding>> {
     if output.findings.len() > MAX_EXTENSION_FINDINGS
         || output.diagnostics.len() > MAX_EXTENSION_NESTED_ITEMS
         || output.diagnostics.iter().any(|value| !valid_required_text(value))
@@ -250,7 +290,7 @@ pub(super) fn convert_output(
     }
     let mut findings = Vec::with_capacity(output.findings.len());
     for proposed in output.findings {
-        findings.push(convert_finding(context, manifest, invocation, proposed)?);
+        findings.push(convert_finding(context, manifest, invocation, proposed, catalog_identity)?);
     }
     Ok(findings)
 }
@@ -260,16 +300,40 @@ fn convert_finding(
     manifest: &ExtensionManifestV1,
     invocation: &ExtensionInvocationV1,
     proposed: ExtensionFindingV1,
+    catalog_identity: Option<&super::catalog_host::CatalogExecutionIdentity>,
 ) -> Result<Finding> {
     validate_finding(manifest, &proposed)?;
     let affected = safe_url(&proposed.affected_target)
         .map_err(|_| output_error("extension finding target is invalid"))?;
     context.authorize_extension_target(&affected, manifest.adapter.strongest_effect)?;
     let severity = parse_severity(&proposed.severity)?;
+    let catalog_provenance = catalog_identity.map_or_else(
+        || "registration=explicit".to_string(),
+        |identity| {
+            format!(
+                "registration=catalog;approval={};catalog={};publisher={};key={};sequence={};payload={};release={};manifest={};permissions={};revision={};build={};conformance={}",
+                identity.approval_id,
+                identity.catalog_id,
+                identity.publisher_id,
+                identity.key_id,
+                identity.catalog_sequence,
+                identity.payload_sha256,
+                identity.release_id,
+                identity.manifest_sha256,
+                identity.permissions_sha256,
+                identity.provenance_revision,
+                identity.provenance_build_sha256,
+                identity.conformance_report_sha256,
+            )
+        },
+    );
     let provenance = ScannerProvenance::new(&manifest.id, chrono::Utc::now())
         .with_version(&manifest.version)
         .with_rule("extension-module", Some(manifest.module.sha256.clone()))
-        .with_config(format!("extension-invocation:{};parser:validated", invocation.invocation_id));
+        .with_config(format!(
+            "extension-invocation:{};parser:validated;{}",
+            invocation.invocation_id, catalog_provenance
+        ));
     let mut finding = Finding::new(
         &manifest.id,
         severity,
@@ -531,8 +595,8 @@ mod tests {
     #[test]
     fn unsupported_effects_validate_their_operation_identity_before_denial() {
         let context = test_support::context();
-        let mut manifest = test_support::manifest(b"module");
-        manifest.capabilities = vec![
+        let mut loaded = test_support::loaded(b"module".to_vec());
+        loaded.manifest.capabilities = vec![
             ExtensionCapabilityV1::Filesystem,
             ExtensionCapabilityV1::Credential,
             ExtensionCapabilityV1::Subprocess,
@@ -544,11 +608,53 @@ mod tests {
             ExtensionEffectV1::Subprocess { operation: "INVALID".to_string() },
         ] {
             let request = ExtensionEffectRequestV1 { request_id: "request-1".to_string(), effect };
-            let reason = prepare_effect(&context, &manifest, &invocation, &request)
+            let reason = prepare_effect(&context, &loaded, &invocation, &request)
                 .err()
                 .expect("invalid operation");
             assert!(reason.contains("operation is invalid"), "unexpected reason: {reason}");
         }
+    }
+
+    #[test]
+    fn catalog_http_allowance_is_an_exact_origin_ceiling() {
+        let context = test_support::context();
+        let mut loaded = test_support::loaded(b"module".to_vec());
+        loaded.catalog_identity = Some(super::super::catalog_host::CatalogExecutionIdentity {
+            approval_id: "a".repeat(64),
+            catalog_path: std::path::PathBuf::from("catalog.json"),
+            catalog_id: "fixture.catalog".to_string(),
+            publisher_id: "fixture.publisher".to_string(),
+            key_id: "fixture.key".to_string(),
+            catalog_sequence: 1,
+            catalog_checkpoint_sha256: "b".repeat(64),
+            payload_sha256: "b".repeat(64),
+            release_id: "fixture.release-1".to_string(),
+            manifest_sha256: "f".repeat(64),
+            permissions_sha256: "c".repeat(64),
+            provenance_revision: "revision-1".to_string(),
+            provenance_build_sha256: "d".repeat(64),
+            conformance_report_sha256: "e".repeat(64),
+            network_endpoints: vec!["https://allowed.example".to_string()],
+        });
+        let invocation = test_support::invocation();
+        let request = ExtensionEffectRequestV1 {
+            request_id: "request-1".to_string(),
+            effect: ExtensionEffectV1::Http {
+                method: scorchkit_extension::ExtensionHttpMethodV1::Get,
+                url: "https://example.com/path".to_string(),
+            },
+        };
+        let error = prepare_effect(&context, &loaded, &invocation, &request)
+            .err()
+            .expect("unapproved origin");
+        assert!(error.contains("approved catalog allowance"));
+
+        loaded.catalog_identity.as_mut().expect("catalog identity").network_endpoints =
+            vec!["https://example.com".to_string()];
+        let subsequent = prepare_effect(&context, &loaded, &invocation, &request)
+            .err()
+            .expect("ordinary target policy remains authoritative");
+        assert!(!subsequent.contains("approved catalog allowance"));
     }
 
     #[tokio::test]

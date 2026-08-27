@@ -19,9 +19,11 @@ const MAX_MANIFEST_BYTES: usize = MAX_EXTENSION_TEXT_BYTES * 16;
 #[derive(Debug, Clone)]
 pub struct LoadedExtension {
     pub manifest: ExtensionManifestV1,
+    pub(crate) manifest_bytes: Vec<u8>,
     pub manifest_path: PathBuf,
     pub module_path: PathBuf,
     pub module_bytes: Vec<u8>,
+    pub(super) catalog_identity: Option<super::catalog_host::CatalogExecutionIdentity>,
 }
 
 impl LoadedExtension {
@@ -73,7 +75,7 @@ impl LoadedExtension {
         Ok(())
     }
 
-    fn load_authorized(
+    pub(super) fn load_authorized(
         config: &crate::config::ExtensionConfig,
         manifest_path: &Path,
         authorize: &dyn Fn(&Path) -> Result<()>,
@@ -108,11 +110,18 @@ impl LoadedExtension {
         if sha256_hex(&module_bytes) != manifest.module.sha256 {
             return Err(ScorchError::Config("extension module digest mismatch".to_string()));
         }
-        Ok(Self { manifest, manifest_path, module_path, module_bytes })
+        Ok(Self {
+            manifest,
+            manifest_bytes,
+            manifest_path,
+            module_path,
+            module_bytes,
+            catalog_identity: None,
+        })
     }
 }
 
-fn open_bounded(
+pub(super) fn open_bounded(
     path: &Path,
     limit: usize,
     authorize: &dyn Fn(&Path) -> Result<()>,
